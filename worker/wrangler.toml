@@ -1,0 +1,31 @@
+name = "koe-worker"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# KV: per-device rate-limit counters + furigana cache.
+# Replace the id/preview_id with your own after `wrangler kv namespace create koe_cache`.
+[[kv_namespaces]]
+binding = "KOE_KV"
+id = "REPLACE_ME"
+preview_id = "REPLACE_ME"
+
+# R2: TTS audio cache (optional but recommended).
+# [[r2_buckets]]
+# binding = "TTS_BUCKET"
+# bucket_name = "koe-tts-cache"
+
+[vars]
+# Non-secret config.
+RATE_LIMIT_TTS = "500"
+RATE_LIMIT_LLM = "200"
+RATE_LIMIT_STT_SECONDS = "360000"
+INWORLD_MODEL = "inworld-tts-1.5-max"
+CLAUDE_MODEL = "claude-sonnet-4-5"
+GEMINI_MODEL = "gemini-2.5-flash"
+
+# Secrets — set via `wrangler secret put <NAME>`:
+#   INWORLD_API_KEY
+#   SONIOX_API_KEY
+#   ANTHROPIC_API_KEY
+#   GEMINI_API_KEY

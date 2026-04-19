@@ -1,0 +1,59 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+.expo-shared/
+
+# native
+ios/
+android/
+*.xcworkspace
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# build artifacts
+build/
+*.tsbuildinfo
+
+# env + secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# worker
+worker/.wrangler/
+worker/node_modules/
+worker/dist/
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# dict build outputs
+assets/dict.db
+assets/strokes/
+scripts/.cache/
+
+# logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+
+# test
+coverage/
