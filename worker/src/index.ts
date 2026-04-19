@@ -4,12 +4,12 @@
  * Routes:
  *   POST /tts        → Inworld TTS, streams audio (mp3) back
  *   GET  /stt/token  → returns a short-lived Soniox streaming URL + temp key
- *   POST /llm/chat   → proxies Anthropic Claude, SSE pass-through
- *   POST /llm/flash  → proxies Gemini 2.5 Flash for suggestions/grading/examples
+ *   POST /llm/chat   → proxies Gemini 3.1 Flash-Lite streaming (SSE pass-through)
+ *   POST /llm/flash  → proxies Gemini 3.1 Flash-Lite for suggestions/grading/examples
  *   POST /furigana   → Gemini-powered furigana annotation with KV caching
  *
  * Secrets (wrangler secret put):
- *   INWORLD_API_KEY, SONIOX_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY
+ *   INWORLD_API_KEY, SONIOX_API_KEY, GEMINI_API_KEY
  */
 
 import { Hono } from 'hono';
@@ -19,14 +19,13 @@ type Env = {
   KOE_KV: KVNamespace;
   INWORLD_API_KEY: string;
   SONIOX_API_KEY: string;
-  ANTHROPIC_API_KEY: string;
   GEMINI_API_KEY: string;
   RATE_LIMIT_TTS: string;
   RATE_LIMIT_LLM: string;
   RATE_LIMIT_STT_SECONDS: string;
   INWORLD_MODEL: string;
-  CLAUDE_MODEL: string;
-  GEMINI_MODEL: string;
+  GEMINI_TUTOR_MODEL: string;
+  GEMINI_FLASH_MODEL: string;
 };
 
 const app = new Hono<{ Bindings: Env }>();
@@ -152,62 +151,48 @@ app.get('/stt/token', async (c) => {
   });
 });
 
-// ---- LLM chat (Claude streaming) ---------------------------------------
+// ---- LLM chat (Gemini streaming) ---------------------------------------
 
 app.post('/llm/chat', async (c) => {
   const body = await c.req.json<{
     system: string;
     messages: Array<{ role: 'user' | 'assistant'; content: string }>;
     model?: string;
-    max_tokens?: number;
-    stream?: boolean;
+    maxTokens?: number;
   }>();
 
   const dev = deviceId(c);
   const ok = await bumpCounter(c.env.KOE_KV, `rl:llm:${dev}:${today()}`, 1, Number(c.env.RATE_LIMIT_LLM));
   if (!ok) return c.text('rate limit', 429);
 
-  const anthRes = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'x-api-key': c.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: body.model ?? c.env.CLAUDE_MODEL,
-      max_tokens: body.max_tokens ?? 600,
-      system: body.system,
-      messages: body.messages,
-      stream: true,
-    }),
-  });
+  const model = body.model ?? c.env.GEMINI_TUTOR_MODEL;
+  const contents = body.messages.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
 
-  if (!anthRes.ok || !anthRes.body) {
-    return c.text(`anthropic error: ${await anthRes.text().catch(() => '')}`, 502);
-  }
-
-  // Re-emit the SSE stream 1:1 with content-block-delta flattened so the client
-  // can pull `delta.text` directly.
-  const { readable, writable } = new TransformStream();
-  anthRes.body
-    .pipeThrough(new TextDecoderStream())
-    .pipeTo(
-      new WritableStream({
-        write: async (chunk) => {
-          const writer = writable.getWriter();
-          // forward raw SSE — client handles anthropic-style events
-          await writer.write(new TextEncoder().encode(chunk));
-          writer.releaseLock();
-        },
-        close: async () => {
-          const writer = writable.getWriter();
-          await writer.close();
+  const gemRes = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${c.env.GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: body.system }] },
+        contents,
+        generationConfig: {
+          maxOutputTokens: body.maxTokens ?? 600,
+          temperature: 0.7,
         },
       }),
-    );
+    },
+  );
 
-  return new Response(readable, {
+  if (!gemRes.ok || !gemRes.body) {
+    return c.text(`gemini error: ${await gemRes.text().catch(() => '')}`, 502);
+  }
+
+  // Pass-through Gemini SSE; client parses `candidates[0].content.parts[].text`.
+  return new Response(gemRes.body, {
     headers: {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -241,7 +226,7 @@ Return ONLY valid JSON: {"phonemeScore":0-100,"pitchScore":0-100,"overallScore":
   }
 
   const gemRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${c.env.GEMINI_MODEL}:generateContent?key=${c.env.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${c.env.GEMINI_FLASH_MODEL}:generateContent?key=${c.env.GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -281,7 +266,7 @@ Return ONLY valid JSON: {"runs":[{"base":"今日","reading":"きょう"},{"base"
 Text: ${text}`;
 
   const gemRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${c.env.GEMINI_MODEL}:generateContent?key=${c.env.GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${c.env.GEMINI_FLASH_MODEL}:generateContent?key=${c.env.GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

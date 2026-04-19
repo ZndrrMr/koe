@@ -2,7 +2,7 @@
 
 **Japanese pitch-first speaking app** — listen to native TTS, shadow it, see your pitch contour vs the target, and practice conversation with an AI tutor that corrects pronunciation, particles, and register.
 
-React Native (Expo SDK 52) · TypeScript strict · NativeWind · Zustand · Drizzle + expo-sqlite · Inworld TTS · Soniox STT · Anthropic Claude · Google Gemini · Cloudflare Worker proxy.
+React Native (Expo SDK 55) · TypeScript strict · NativeWind · Zustand · Drizzle + expo-sqlite · Inworld TTS · Soniox STT · Gemini 3.1 Flash-Lite · Cloudflare Worker proxy.
 
 ---
 
@@ -29,7 +29,6 @@ npx wrangler kv namespace create koe_cache --preview
 # Put your provider secrets:
 npx wrangler secret put INWORLD_API_KEY      # https://inworld.ai
 npx wrangler secret put SONIOX_API_KEY        # https://soniox.com
-npx wrangler secret put ANTHROPIC_API_KEY     # https://console.anthropic.com
 npx wrangler secret put GEMINI_API_KEY        # https://aistudio.google.com/apikey
 
 # Deploy
@@ -94,8 +93,8 @@ Because the app uses native modules (expo-audio, react-native-mmkv, react-native
 │  Cloudflare Worker (worker/src/index.ts)                    │
 │   POST /tts        → Inworld TTS  (cached in KV up to 25MB) │
 │   GET  /stt/token  → Soniox temp streaming token            │
-│   POST /llm/chat   → Claude streaming (SSE)                 │
-│   POST /llm/flash  → Gemini 2.5 Flash (suggestions/grading) │
+│   POST /llm/chat   → Gemini 3.1 Flash-Lite streaming (SSE)  │
+│   POST /llm/flash  → Gemini 3.1 Flash-Lite (bulk tasks)     │
 │   POST /furigana   → Gemini furigana JSON (KV-cached 30d)   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -118,8 +117,7 @@ Because the app uses native modules (expo-audio, react-native-mmkv, react-native
 | `SENTRY_DSN` | `.env.local` (client) | Optional; crash reporting |
 | `INWORLD_API_KEY` | `wrangler secret put` | Inworld TTS-1.5 Max |
 | `SONIOX_API_KEY` | `wrangler secret put` | Soniox streaming STT |
-| `ANTHROPIC_API_KEY` | `wrangler secret put` | Claude Sonnet 4.5 tutor |
-| `GEMINI_API_KEY` | `wrangler secret put` | Gemini 2.5 Flash for cheap bulk tasks |
+| `GEMINI_API_KEY` | `wrangler secret put` | Gemini 3.1 Flash-Lite — tutor + furigana + grading |
 
 ---
 

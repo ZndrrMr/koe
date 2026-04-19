@@ -75,9 +75,7 @@ export async function* streamConversation(opts: {
   const body = {
     system,
     messages: [...opts.history, { role: 'user', content: opts.userTurn }],
-    model: 'claude-sonnet-4-5',
-    max_tokens: 600,
-    stream: true,
+    maxTokens: 600,
   };
 
   const res = await postStream('/llm/chat', body);
@@ -92,19 +90,20 @@ export async function* streamConversation(opts: {
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
+    // Gemini SSE frames are separated by blank lines.
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+    for (const frame of frames) {
+      const dataLine = frame
+        .split('\n')
+        .find((l) => l.startsWith('data:'));
+      if (!dataLine) continue;
+      const payload = dataLine.slice(5).trim();
       if (!payload || payload === '[DONE]') continue;
       try {
         const evt = JSON.parse(payload);
-        const delta =
-          evt?.delta?.text ??
-          evt?.content_block_delta?.delta?.text ??
-          evt?.choices?.[0]?.delta?.content ??
-          '';
+        const parts = evt?.candidates?.[0]?.content?.parts ?? [];
+        const delta = parts.map((p: { text?: string }) => p.text ?? '').join('');
         if (delta) {
           full += delta;
           yield delta;

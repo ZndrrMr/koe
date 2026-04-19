@@ -23,7 +23,7 @@ export default function AboutScreen() {
           Dictionary data: JMdict/EDICT and KANJIDIC2 — © EDRDG, CC-BY-SA 4.0.{'\n\n'}
           Pitch accent data: Kanjium by mifunetoshiro, CC0.{'\n\n'}
           Stroke order: KanjiVG by Ulrich Apel, CC-BY-SA 3.0.{'\n\n'}
-          TTS via Inworld. STT via Soniox. Tutor via Anthropic Claude. Furigana and grading via Google Gemini.
+          TTS via Inworld. STT via Soniox. Tutor, furigana, and grading via Google Gemini 3.1 Flash-Lite.
         </Text>
 
         <Pressable onPress={() => Linking.openURL('https://www.edrdg.org/edrdg/licence.html')} className="mt-4">

@@ -7,8 +7,8 @@ compatibility_flags = ["nodejs_compat"]
 # Replace the id/preview_id with your own after `wrangler kv namespace create koe_cache`.
 [[kv_namespaces]]
 binding = "KOE_KV"
-id = "REPLACE_ME"
-preview_id = "REPLACE_ME"
+id = "7d6da1cd60a84fdab945c30039328f7f"
+preview_id = "504331f175724996856f42055c519da3"
 
 # R2: TTS audio cache (optional but recommended).
 # [[r2_buckets]]
@@ -21,11 +21,12 @@ RATE_LIMIT_TTS = "500"
 RATE_LIMIT_LLM = "200"
 RATE_LIMIT_STT_SECONDS = "360000"
 INWORLD_MODEL = "inworld-tts-1.5-max"
-CLAUDE_MODEL = "claude-sonnet-4-5"
-GEMINI_MODEL = "gemini-2.5-flash"
+# Tutor: streaming conversation. Flash-Lite is the cheapest + fastest Gemini (~$0.25/$1.50 per 1M, ~360 tok/s).
+GEMINI_TUTOR_MODEL = "gemini-3.1-flash-lite-preview"
+# Bulk tasks: furigana, suggested replies, pronunciation grading, example generation.
+GEMINI_FLASH_MODEL = "gemini-3.1-flash-lite-preview"
 
 # Secrets — set via `wrangler secret put <NAME>`:
 #   INWORLD_API_KEY
 #   SONIOX_API_KEY
-#   ANTHROPIC_API_KEY
 #   GEMINI_API_KEY
