@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'expo-crypto';
 import { SCENARIOS } from '@/data/scenarios';
 import { ScenarioCard } from '@/components/ScenarioCard';
 
@@ -21,7 +21,7 @@ export default function SpeakScreen() {
             key={scenario.id}
             scenario={scenario}
             onPress={(s) => {
-              const id = uuidv4();
+              const id = randomUUID();
               router.push({ pathname: '/session/[id]', params: { id, scenario: s.id } });
             }}
           />

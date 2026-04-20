@@ -3,7 +3,7 @@ import { View, Text, Pressable, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { X, Lightbulb, Volume2 } from 'lucide-react-native';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'expo-crypto';
 import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
 
 import { getScenario } from '@/data/scenarios';
@@ -54,7 +54,7 @@ export default function SessionScreen() {
     session.start(id, scenario.id, scenario.registerTarget, scenario.difficulty);
 
     const opener: ChatTurn = {
-      id: uuidv4(),
+      id: randomUUID(),
       role: 'assistant',
       textJa: scenario.openingLine,
       textEn: scenario.openingTranslation,
@@ -73,6 +73,11 @@ export default function SessionScreen() {
 
   const playAssistant = useCallback(async (turn: ChatTurn) => {
     try {
+      if (turn.audioUri) {
+        await play(turn.audioUri);
+        return;
+      }
+      if (!turn.textJa || !turn.textJa.trim()) return;
       const res = await synthesize(turn.textJa, { voice: settings.voice });
       await play(res.audioUri);
     } catch (e) {
@@ -136,7 +141,7 @@ export default function SessionScreen() {
     async (text: string, audioUri?: string) => {
       if (!scenario) return;
       const userTurn: ChatTurn = {
-        id: uuidv4(),
+        id: randomUUID(),
         role: 'user',
         textJa: text,
         audioUri,
@@ -147,7 +152,7 @@ export default function SessionScreen() {
       success();
 
       const assistantTurn: ChatTurn = {
-        id: uuidv4(),
+        id: randomUUID(),
         role: 'assistant',
         textJa: '',
         streaming: true,
@@ -170,26 +175,29 @@ export default function SessionScreen() {
           history: history.slice(0, -1) as any,
           userTurn: text,
         });
-        let buffer = '';
         let reply = '';
         while (true) {
           const { value, done } = await gen.next();
           if (done) {
             const result = value;
+            const finalText = result.fullText || reply;
             session.patchTurn(assistantTurn.id, {
-              textJa: result.fullText || reply,
+              textJa: finalText,
               textEn: result.translation,
               corrections: result.corrections,
+              audioUri: result.audioUri,
               streaming: false,
             });
             bumpXp(10);
             tickDay();
-            annotateTurn({ ...assistantTurn, textJa: result.fullText || reply });
-            const finalText = result.fullText || reply;
-            try {
-              const res = await synthesize(finalText, { voice: settings.voice });
-              await play(res.audioUri);
-            } catch {}
+            annotateTurn({ ...assistantTurn, textJa: finalText });
+            if (result.audioUri) {
+              play(result.audioUri).catch(() => {});
+            } else if (finalText) {
+              synthesize(finalText, { voice: settings.voice })
+                .then((res) => play(res.audioUri))
+                .catch(() => {});
+            }
             refreshSuggestions([
               ...history,
               { role: 'user', content: text },
@@ -197,9 +205,7 @@ export default function SessionScreen() {
             ] as any);
             break;
           }
-          buffer += value;
-          const cutIdx = buffer.indexOf('---CORRECTIONS---');
-          reply = cutIdx >= 0 ? buffer.slice(0, cutIdx) : buffer;
+          reply = value;
           session.patchTurn(assistantTurn.id, { textJa: reply });
         }
       } catch (e) {

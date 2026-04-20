@@ -26,6 +26,9 @@ export async function synthesize(
   text: string,
   opts?: { voice?: TTSVoice; speed?: number; withTimestamps?: boolean },
 ): Promise<SynthesizeResult> {
+  if (!text || !text.trim()) {
+    return { audioUri: '', durationMs: 0 };
+  }
   const voice = opts?.voice ?? 'ja-female-1';
   const speed = opts?.speed ?? 1.0;
   const key = await sha256(`${text}|${voice}|${speed}`);
@@ -84,7 +87,20 @@ export async function synthesize(
 
 declare function btoa(data: string): string;
 
+export async function saveAudioFromBase64(
+  base64: string,
+  cacheKey: string,
+  format: string = 'wav',
+): Promise<string> {
+  await ensureCacheDir();
+  const ext = ['flac', 'mp3', 'wav', 'ogg', 'aac', 'm4a'].includes(format) ? format : 'wav';
+  const file = `${CACHE_DIR}/${cacheKey}.${ext}`;
+  await FileSystem.writeAsStringAsync(file, base64, { encoding: FileSystem.EncodingType.Base64 });
+  return file;
+}
+
 export async function play(audioUri: string, opts?: { rate?: number }): Promise<void> {
+  if (!audioUri) return;
   try {
     await stop();
     const player = createAudioPlayer({ uri: audioUri }, { updateInterval: 50 });

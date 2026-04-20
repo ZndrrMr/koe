@@ -21,10 +21,11 @@ function shuffle<T>(arr: readonly T[]): T[] { return [...arr].sort(() => Math.ra
 
 function buildQuestions(): Q[] {
   const pool = [...HIRAGANA, ...KATAKANA];
+  const allRomaji = Array.from(new Set(pool.map(([, a]) => a)));
   return shuffle(pool)
     .slice(0, 10)
     .map(([char, answer]) => {
-      const otherAnswers = shuffle(pool.filter(([, a]) => a !== answer)).slice(0, 3).map(([, a]) => a);
+      const otherAnswers = shuffle(allRomaji.filter((a) => a !== answer)).slice(0, 3);
       return { char, answer, choices: shuffle([answer, ...otherAnswers]) };
     });
 }

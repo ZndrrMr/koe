@@ -1,13 +1,16 @@
-import { postJson, postStream } from '@/services/api';
+import { postJson } from '@/services/api';
 import { tutorSystemPrompt } from '@/prompts/tutor';
 import { getScenario, type Register, type JlptLevel } from '@/data/scenarios';
 import { hasWorker } from '@/utils/config';
 import { log } from '@/utils/log';
+import { saveAudioFromBase64 } from '@/services/tts';
+import { sha256 } from '@/utils/hash';
 
 export type ConvoTurn = { role: 'user' | 'assistant'; content: string };
 
 export type ConversationResult = {
   fullText: string;
+  audioUri?: string;
   corrections: {
     particles: Array<{ original: string; corrected: string; explanation: string }>;
     register: { consistent: boolean; note?: string };
@@ -16,37 +19,11 @@ export type ConversationResult = {
   translation: string;
 };
 
-const EMPTY_RESULT: ConversationResult = {
-  fullText: '',
-  corrections: { particles: [], register: { consistent: true }, other: [] },
-  translation: '',
+const EMPTY_CORRECTIONS = {
+  particles: [] as Array<{ original: string; corrected: string; explanation: string }>,
+  register: { consistent: true } as { consistent: boolean; note?: string },
+  other: [] as Array<{ original: string; corrected: string; explanation: string }>,
 };
-
-function parseResult(full: string): ConversationResult {
-  const correctionsMark = '---CORRECTIONS---';
-  const translationMark = '---TRANSLATION---';
-  const parts = full.split(correctionsMark);
-  const mainText = (parts[0] ?? '').trim();
-  let corrections = EMPTY_RESULT.corrections;
-  let translation = '';
-
-  if (parts[1]) {
-    const [corrRaw, transRaw = ''] = parts[1].split(translationMark);
-    try {
-      const parsed = JSON.parse((corrRaw ?? '').trim());
-      corrections = {
-        particles: parsed.particles ?? [],
-        register: parsed.register ?? { consistent: true },
-        other: parsed.other ?? [],
-      };
-    } catch (e) {
-      log.warn('Failed to parse CORRECTIONS JSON', e);
-    }
-    translation = (transRaw ?? '').trim();
-  }
-
-  return { fullText: mainText, corrections, translation };
-}
 
 export async function* streamConversation(opts: {
   scenarioId: string;
@@ -67,54 +44,67 @@ export async function* streamConversation(opts: {
 
   if (!hasWorker()) {
     log.warn('LLM: worker unset, yielding stub reply.');
-    const stub = `${scenario.openingLine}\n---CORRECTIONS---\n{"particles":[],"register":{"consistent":true},"other":[]}\n---TRANSLATION---\n${scenario.openingTranslation}`;
-    yield stub;
-    return parseResult(stub);
+    yield scenario.openingLine;
+    return {
+      fullText: scenario.openingLine,
+      corrections: EMPTY_CORRECTIONS,
+      translation: scenario.openingTranslation,
+    };
   }
 
-  const body = {
+  const chatBody = {
     system,
     messages: [...opts.history, { role: 'user', content: opts.userTurn }],
-    maxTokens: 600,
+    maxTokens: 300,
   };
 
-  const res = await postStream('/llm/chat', body);
-  if (!res.body) throw new Error('No response body from /llm/chat');
+  const chatPromise = postJson<{ text: string; audioBase64?: string; audioFormat?: string }>(
+    '/llm/chat',
+    chatBody,
+  );
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let full = '';
-  let buffer = '';
+  const chat = await chatPromise;
+  const fullText = (chat.text ?? '').trim();
+  if (fullText) yield fullText;
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    // Gemini SSE frames are separated by blank lines.
-    const frames = buffer.split('\n\n');
-    buffer = frames.pop() ?? '';
-    for (const frame of frames) {
-      const dataLine = frame
-        .split('\n')
-        .find((l) => l.startsWith('data:'));
-      if (!dataLine) continue;
-      const payload = dataLine.slice(5).trim();
-      if (!payload || payload === '[DONE]') continue;
-      try {
-        const evt = JSON.parse(payload);
-        const parts = evt?.candidates?.[0]?.content?.parts ?? [];
-        const delta = parts.map((p: { text?: string }) => p.text ?? '').join('');
-        if (delta) {
-          full += delta;
-          yield delta;
-        }
-      } catch {
-        // swallow malformed SSE frames
-      }
+  let audioUri: string | undefined;
+  if (chat.audioBase64) {
+    try {
+      const key = await sha256(`${fullText}|Asuka`);
+      audioUri = await saveAudioFromBase64(chat.audioBase64, key, chat.audioFormat ?? 'flac');
+    } catch (e) {
+      log.warn('Failed to persist reply audio', e);
     }
   }
 
-  return parseResult(full);
+  const feedbackPromise = postJson<{
+    translation?: string;
+    corrections?: typeof EMPTY_CORRECTIONS;
+  }>('/llm/flash', {
+    task: 'feedback',
+    registerTarget: opts.registerTarget,
+    jlptTarget: opts.jlptTarget,
+    history: opts.history,
+    userTurn: opts.userTurn,
+    tutorReply: fullText,
+  }).catch((e) => {
+    log.warn('feedback fetch failed', e);
+    return { translation: '', corrections: EMPTY_CORRECTIONS };
+  });
+
+  const feedback = await feedbackPromise;
+  const corrections = feedback.corrections ?? EMPTY_CORRECTIONS;
+
+  return {
+    fullText,
+    audioUri,
+    translation: feedback.translation ?? '',
+    corrections: {
+      particles: corrections.particles ?? [],
+      register: corrections.register ?? { consistent: true },
+      other: corrections.other ?? [],
+    },
+  };
 }
 
 export async function generateSuggestedReplies(opts: {
@@ -172,4 +162,3 @@ export async function gradePronunciation(opts: {
   }
 }
 
-export { parseResult as _parseResult };

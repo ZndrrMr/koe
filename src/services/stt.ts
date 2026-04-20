@@ -2,13 +2,14 @@ import * as FileSystem from 'expo-file-system/legacy';
 import {
   AudioModule,
   RecordingPresets,
+  setAudioModeAsync,
   useAudioRecorder,
   type AudioRecorder,
 } from 'expo-audio';
-import { getJson } from '@/services/api';
+import { authHeaders, workerUrl } from '@/services/api';
 import { config, hasWorker } from '@/utils/config';
 import { log } from '@/utils/log';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'expo-crypto';
 
 export type STTChunk = {
   text: string;
@@ -33,16 +34,27 @@ export async function ensurePermission() {
   return status.granted;
 }
 
-type SonioxToken = { token: string; url: string; expiresAt: number };
-
-async function fetchSonioxToken(): Promise<SonioxToken | null> {
-  if (!hasWorker()) return null;
-  try {
-    return await getJson<SonioxToken>('/stt/token');
-  } catch (e) {
-    log.error('Soniox token fetch failed', e);
-    return null;
+async function transcribeFile(uri: string, languageHint: string): Promise<string> {
+  if (!hasWorker()) {
+    log.warn('STT: worker URL unset — cannot transcribe.');
+    return '';
   }
+  const res = await fetch(uri);
+  const bytes = await res.arrayBuffer();
+  const up = await fetch(
+    `${workerUrl('/stt/transcribe')}?lang=${encodeURIComponent(languageHint)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/m4a', ...authHeaders() },
+      body: bytes,
+    },
+  );
+  if (!up.ok) {
+    const body = await up.text().catch(() => '');
+    throw new Error(`STT ${up.status}: ${body}`);
+  }
+  const { text } = (await up.json()) as { text: string };
+  return text ?? '';
 }
 
 export async function startStreaming(opts: {
@@ -54,54 +66,13 @@ export async function startStreaming(opts: {
   if (!ok) throw new Error('Microphone permission denied');
 
   await ensureRecDir();
-  const audioUri = `${REC_DIR}/${uuidv4()}.m4a`;
+  const audioUri = `${REC_DIR}/${randomUUID()}.m4a`;
 
+  await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
   await opts.recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
   opts.recorder.record();
   const startedAt = Date.now();
-
-  const token = await fetchSonioxToken();
-  let ws: WebSocket | null = null;
-  let partialText = '';
-  let finalText = '';
-
-  if (token) {
-    try {
-      ws = new WebSocket(token.url);
-      ws.onopen = () => {
-        ws?.send(
-          JSON.stringify({
-            api_key: token.token,
-            language_hints: (opts.languageHint ?? 'ja,en').split(','),
-            model: 'stt-rt-preview',
-            enable_non_final_tokens: true,
-          }),
-        );
-      };
-      ws.onmessage = (ev) => {
-        try {
-          const data = JSON.parse(typeof ev.data === 'string' ? ev.data : '');
-          if (data.tokens) {
-            const text = (data.tokens as Array<{ text: string; is_final?: boolean }>)
-              .map((t) => t.text)
-              .join('');
-            const anyFinal = (data.tokens as Array<{ is_final?: boolean }>).some((t) => t.is_final);
-            if (anyFinal) finalText += text;
-            partialText = finalText + text;
-            opts.onChunk({ text: partialText, isFinal: anyFinal, confidence: data.confidence ?? 0.8 });
-          }
-        } catch (e) {
-          log.warn('Soniox parse error', e);
-        }
-      };
-      ws.onerror = (e) => log.warn('Soniox WS error', e);
-    } catch (e) {
-      log.warn('Soniox WS connect failed; falling back to local transcript only.', e);
-      ws = null;
-    }
-  } else {
-    log.info('STT: no Soniox token — recording audio without live transcription.');
-  }
+  const languageHint = opts.languageHint ?? 'ja,en';
 
   return {
     stop: async () => {
@@ -109,6 +80,11 @@ export async function startStreaming(opts: {
         await opts.recorder.stop();
       } catch (e) {
         log.warn('Recorder stop error', e);
+      }
+      try {
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      } catch (e) {
+        log.warn('Audio mode reset failed', e);
       }
       const srcUri = opts.recorder.uri;
       if (srcUri && srcUri !== audioUri) {
@@ -118,16 +94,27 @@ export async function startStreaming(opts: {
           log.warn('Recording copy failed; using source uri.', e);
         }
       }
-      try { ws?.close(); } catch {}
+      const finalUri = srcUri ?? audioUri;
+
+      let fullText = '';
+      try {
+        fullText = await transcribeFile(finalUri, languageHint);
+        if (fullText) {
+          opts.onChunk({ text: fullText, isFinal: true, confidence: 0.9 });
+        }
+      } catch (e) {
+        log.error('STT transcribe failed', e);
+      }
+
       return {
-        fullText: partialText.trim(),
+        fullText: fullText.trim(),
         durationMs: Date.now() - startedAt,
-        audioUri: srcUri ?? audioUri,
+        audioUri: finalUri,
       };
     },
     cancel: async () => {
       try { await opts.recorder.stop(); } catch {}
-      try { ws?.close(); } catch {}
+      try { await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }); } catch {}
     },
   };
 }
