@@ -338,6 +338,9 @@ Return ONLY valid JSON: {"phonemeScore":0-100,"pitchScore":0-100,"overallScore":
     prompt = `Give 3 natural example sentences using the word ${body.word} (reading: ${body.kana}, meaning: ${body.gloss}). Keep them JLPT N5-N4 level. Return ONLY valid JSON: {"examples":["...","...","..."]}.`;
   } else if (task === 'feedback') {
     prompt = `You analyze a Japanese tutoring exchange silently.
+
+HARD RULE: The "translation" field MUST be written in English. Never output Japanese in this field except inside quotes for teaching terms.
+
 TARGET REGISTER: ${body.registerTarget ?? 'teineigo'}
 TARGET LEVEL: JLPT N${body.jlptTarget ?? 5}
 Prior dialogue: ${JSON.stringify(body.history ?? [])}
