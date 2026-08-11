@@ -13,6 +13,7 @@ test("every lifecycle phase has deterministic UI copy", () => {
     "recoverableError",
     "retry",
     "speaking",
+    "success",
     "understanding",
   ]);
 });

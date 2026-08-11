@@ -4,7 +4,7 @@ import { config, hasWorker } from "@/utils/config";
 import { authHeaders, workerUrl } from "@/services/api";
 import { sha256 } from "@/utils/hash";
 import { log } from "@/utils/log";
-import { pcmBase64ToWavBase64 } from "@/services/pcm";
+import { pcm16EnergyFromBase64, pcmBase64ToWavBase64 } from "@/services/pcm";
 
 export type TTSVoice = "ja-female-1" | "ja-female-2" | "ja-male-1";
 
@@ -186,6 +186,7 @@ type PCMPlaybackQueueOptions = {
   onStarted?: () => void;
   onFinished?: () => void;
   onError?: (error: Error) => void;
+  onEnergy?: (energy: number) => void;
 };
 
 export class PCMPlaybackQueue {
@@ -210,6 +211,7 @@ export class PCMPlaybackQueue {
     channels = 1,
   ): Promise<void> {
     if (!audioBase64 || this.stopped) return Promise.resolve();
+    this.options.onEnergy?.(pcm16EnergyFromBase64(audioBase64));
     this.writeChain = this.writeChain.then(async () => {
       if (this.stopped) return;
       await ensureCacheDir();
@@ -253,6 +255,7 @@ export class PCMPlaybackQueue {
       ),
     );
     if (currentStream === this) currentStream = null;
+    this.options.onEnergy?.(0);
     this.resolveDone();
   }
 
@@ -299,6 +302,7 @@ export class PCMPlaybackQueue {
     )
       return;
     if (currentStream === this) currentStream = null;
+    this.options.onEnergy?.(0);
     this.options.onFinished?.();
     this.resolveDone();
   }

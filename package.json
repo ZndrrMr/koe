@@ -15,7 +15,7 @@
     "deploy": "npx expo export -p web && wrangler deploy",
     "preview": "npx expo export -p web && wrangler dev",
     "test:prompts": "tsx --test src/prompts/tutor.test.ts",
-    "test:voice": "tsx --test src/voice/*.test.ts src/services/sse.test.ts src/services/pcm.test.ts"
+    "test:voice": "tsx --test src/voice/*.test.ts src/services/sse.test.ts src/services/pcm.test.ts src/theme/interaction.test.ts"
   },
   "dependencies": {
     "@gorhom/bottom-sheet": "^5.2.9",

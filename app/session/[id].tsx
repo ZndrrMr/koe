@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Alert,
   Linking,
+  Modal,
   Pressable,
-  ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
@@ -36,13 +36,16 @@ import {
   play,
   stop as stopSpeech,
 } from "@/services/tts";
-import { annotate } from "@/services/furigana";
 import { MicButton } from "@/components/MicButton";
 import { SuggestedReplyChips } from "@/components/SuggestedReplyChips";
-import { JapaneseText } from "@/components/JapaneseText";
+import { AcousticVoiceForm } from "@/components/AcousticVoiceForm";
 import { tap, fail as failHaptic, success } from "@/utils/haptics";
 import { log } from "@/utils/log";
-import { colors } from "@/theme/colors";
+import {
+  type ConversationPalette,
+  useConversationPalette,
+} from "@/theme/conversation";
+import { CONVERSATION_TARGET } from "@/theme/interaction";
 import {
   VoiceLatencyTracker,
   VOICE_PHASE_COPY,
@@ -56,6 +59,7 @@ type FailedReply = { text: string; audioUri?: string; assistantTurnId: string };
 
 export default function SessionScreen() {
   const router = useRouter();
+  const palette = useConversationPalette();
   const { id, scenario: scenarioId } = useLocalSearchParams<{
     id: string;
     scenario?: string;
@@ -72,22 +76,26 @@ export default function SessionScreen() {
   const [showPhraseHelp, setShowPhraseHelp] = useState(false);
   const [draftTranscript, setDraftTranscript] = useState("");
   const [draftAudioUri, setDraftAudioUri] = useState<string | undefined>();
-  const [furiganaCache, setFuriganaCache] = useState<
-    Record<string, Awaited<ReturnType<typeof annotate>>>
-  >({});
-
+  const [audioEnergy, setAudioEnergy] = useState(0);
+  const [showCoda, setShowCoda] = useState(false);
+  const [dismissedCorrectionId, setDismissedCorrectionId] = useState<
+    string | null
+  >(null);
   const sttHandleRef = useRef<Awaited<
     ReturnType<typeof startStreaming>
   > | null>(null);
   const pressStartRef = useRef(0);
-  const scrollRef = useRef<ScrollView>(null);
   const responseRunsRef = useRef(new ResponseRunController());
   const failedReplyRef = useRef<FailedReply | null>(null);
   const latencyTrackerRef = useRef(new VoiceLatencyTracker());
+  const voiceSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   useEffect(() => {
     if (!id || useSession.getState().id === id) return;
-    useSession.getState().start(
+    const store = useSession.getState();
+    store.start(
       id,
       scenario
         ? {
@@ -98,6 +106,46 @@ export default function SessionScreen() {
           }
         : {},
     );
+    if (__DEV__) {
+      const reviewPhase = process.env.EXPO_PUBLIC_KOE_REVIEW_PHASE as
+        | VoiceLifecycle["phase"]
+        | undefined;
+      if (reviewPhase && reviewPhase in VOICE_PHASE_COPY) {
+        store.setVoicePhase(reviewPhase);
+        if (reviewPhase === "correction") {
+          setDraftTranscript("明日は友達と京都へ行きます。");
+        }
+        if (reviewPhase === "listening" || reviewPhase === "speaking") {
+          setAudioEnergy(0.62);
+        }
+      }
+      if (process.env.EXPO_PUBLIC_KOE_REVIEW_CODA === "1") {
+        store.addTurn({
+          id: "review-user-1",
+          role: "user",
+          textJa: "明日は友達と京都に行きます。",
+          createdAt: Date.now() - 2_000,
+        });
+        store.addTurn({
+          id: "review-assistant-1",
+          role: "assistant",
+          textJa: "いいですね。京都では何を見たいですか？",
+          createdAt: Date.now() - 1_000,
+          corrections: {
+            particles: [
+              {
+                original: "京都に行きます",
+                corrected: "京都へ行きます",
+                explanation: "へ emphasizes the direction of travel.",
+              },
+            ],
+            register: { consistent: true },
+            other: [],
+          },
+        });
+        setShowCoda(true);
+      }
+    }
   }, [id, scenario?.id]);
 
   useEffect(
@@ -105,9 +153,26 @@ export default function SessionScreen() {
       responseRunsRef.current.interrupt();
       void sttHandleRef.current?.cancel();
       void stopSpeech();
+      if (voiceSettleTimerRef.current)
+        clearTimeout(voiceSettleTimerRef.current);
     },
     [],
   );
+
+  const settleReply = useCallback((successfulRetry: boolean) => {
+    setAudioEnergy(0);
+    if (!successfulRetry) {
+      useSession.getState().setVoicePhase("idle");
+      return;
+    }
+    useSession.getState().setVoicePhase("success");
+    success();
+    if (voiceSettleTimerRef.current) clearTimeout(voiceSettleTimerRef.current);
+    voiceSettleTimerRef.current = setTimeout(() => {
+      if (useSession.getState().voice.phase === "success")
+        useSession.getState().setVoicePhase("idle");
+    }, 1_400);
+  }, []);
 
   const updateLatency = useCallback(
     (latency: VoiceLatency, stage: keyof VoiceLatency) => {
@@ -122,27 +187,32 @@ export default function SessionScreen() {
     [id],
   );
 
-  const annotateTurn = useCallback(async (turn: ChatTurn) => {
-    const runs = await annotate(turn.textJa);
-    setFuriganaCache((previous) => ({ ...previous, [turn.id]: runs }));
-  }, []);
-
   const playAssistant = useCallback(
     async (turn: ChatTurn) => {
       try {
+        setAudioEnergy(0);
+        useSession.getState().setVoicePhase("speaking");
+        const playbackCallbacks = {
+          onFinished: () => settleReply(false),
+          onError: () => {
+            setAudioEnergy(0);
+            useSession.getState().setVoice(voiceError("playbackFailure"));
+          },
+        };
         if (turn.audioUri) {
-          await play(turn.audioUri);
+          await play(turn.audioUri, playbackCallbacks);
           return;
         }
         if (!turn.textJa.trim()) return;
         const result = await synthesize(turn.textJa, { voice: settings.voice });
-        await play(result.audioUri);
+        await play(result.audioUri, playbackCallbacks);
       } catch (error) {
         log.warn("TTS replay failed", error);
+        setAudioEnergy(0);
         useSession.getState().setVoice(voiceError("playbackFailure"));
       }
     },
-    [settings.voice],
+    [settings.voice, settleReply],
   );
 
   const refreshSuggestions = useCallback(
@@ -167,12 +237,10 @@ export default function SessionScreen() {
 
       const interruptedTurnId = responseRunsRef.current.interrupt();
       if (interruptedTurnId && interruptedTurnId !== retryAssistantTurnId) {
-        useSession
-          .getState()
-          .patchTurn(interruptedTurnId, {
-            streaming: false,
-            interrupted: true,
-          });
+        useSession.getState().patchTurn(interruptedTurnId, {
+          streaming: false,
+          interrupted: true,
+        });
       }
       await stopSpeech();
 
@@ -201,7 +269,6 @@ export default function SessionScreen() {
         };
         useSession.getState().addTurn(userTurn);
         useSession.getState().addTurn(assistantTurn);
-        void annotateTurn(userTurn);
         success();
       }
 
@@ -229,6 +296,8 @@ export default function SessionScreen() {
         log.warn("response playback failed", error);
         failedReplyRef.current = { text: trimmed, audioUri, assistantTurnId };
         responseRunsRef.current.interrupt();
+        setAudioEnergy(0);
+        failHaptic();
         useSession.getState().setVoice(voiceError("playbackFailure"));
       };
       const audioQueue = new PCMPlaybackQueue({
@@ -240,9 +309,10 @@ export default function SessionScreen() {
         },
         onFinished: () => {
           if (!responseRunsRef.current.complete(assistantTurnId)) return;
-          useSession.getState().setVoicePhase("idle");
+          settleReply(Boolean(retryAssistantTurnId));
         },
         onError: handlePlaybackFailure,
+        onEnergy: setAudioEnergy,
       });
 
       try {
@@ -263,19 +333,11 @@ export default function SessionScreen() {
               streaming: false,
             });
             void result.feedback.then((corrections) => {
-              useSession
-                .getState()
-                .patchTurn(assistantTurnId, { corrections });
+              useSession.getState().patchTurn(assistantTurnId, { corrections });
             });
             failedReplyRef.current = null;
             bumpXp(10);
             tickDay();
-            void annotateTurn({
-              id: assistantTurnId,
-              role: "assistant",
-              textJa: finalText,
-              createdAt: Date.now(),
-            });
             if (showPhraseHelp) {
               void refreshSuggestions([
                 ...historyWithUser,
@@ -297,11 +359,9 @@ export default function SessionScreen() {
                 const synthesized = await synthesize(finalText, {
                   voice: settings.voice,
                 });
-                useSession
-                  .getState()
-                  .patchTurn(assistantTurnId, {
-                    audioUri: synthesized.audioUri,
-                  });
+                useSession.getState().patchTurn(assistantTurnId, {
+                  audioUri: synthesized.audioUri,
+                });
                 if (synthesized.durationMs > 0) {
                   await play(synthesized.audioUri, {
                     onStarted: () => {
@@ -315,17 +375,17 @@ export default function SessionScreen() {
                     onFinished: () => {
                       if (!responseRunsRef.current.complete(assistantTurnId))
                         return;
-                      useSession.getState().setVoicePhase("idle");
+                      settleReply(Boolean(retryAssistantTurnId));
                     },
                     onError: handlePlaybackFailure,
                   });
                 } else {
                   responseRunsRef.current.complete(assistantTurnId);
-                  useSession.getState().setVoicePhase("idle");
+                  settleReply(Boolean(retryAssistantTurnId));
                 }
               } else {
                 responseRunsRef.current.complete(assistantTurnId);
-                useSession.getState().setVoicePhase("idle");
+                settleReply(Boolean(retryAssistantTurnId));
               }
             }
             break;
@@ -393,10 +453,10 @@ export default function SessionScreen() {
       }
     },
     [
-      annotateTurn,
       bumpXp,
       refreshSuggestions,
       settings.voice,
+      settleReply,
       showPhraseHelp,
       tickDay,
       updateLatency,
@@ -407,18 +467,16 @@ export default function SessionScreen() {
     if (useSession.getState().isRecording) return;
     const wasResponding = Boolean(
       responseRunsRef.current.hasActiveRun() ||
-        useSession.getState().isStreaming,
+      useSession.getState().isStreaming,
     );
     if (wasResponding) {
       useSession.getState().setVoicePhase("interrupted");
       const interruptedTurnId = responseRunsRef.current.interrupt();
       if (interruptedTurnId) {
-        useSession
-          .getState()
-          .patchTurn(interruptedTurnId, {
-            streaming: false,
-            interrupted: true,
-          });
+        useSession.getState().patchTurn(interruptedTurnId, {
+          streaming: false,
+          interrupted: true,
+        });
       }
       useSession.getState().setStreaming(false);
       await stopSpeech();
@@ -430,12 +488,14 @@ export default function SessionScreen() {
     useSession.getState().setLatency({});
     setDraftTranscript("");
     setDraftAudioUri(undefined);
+    setAudioEnergy(0);
     useSession.getState().setRecording(true);
     useSession.getState().setVoicePhase("listening", { interimTranscript: "" });
 
     try {
       sttHandleRef.current = await startStreaming({
         languageHint: "ja,en",
+        onAudioEnergy: setAudioEnergy,
         onChunk: (chunk) => {
           const previous =
             useSession.getState().latency.listeningToTranscriptMs;
@@ -449,6 +509,7 @@ export default function SessionScreen() {
     } catch (error) {
       log.error("start STT failed", error);
       failHaptic();
+      setAudioEnergy(0);
       useSession.getState().setRecording(false);
       if (error instanceof STTError && error.kind === "permission-denied") {
         useSession.getState().setVoice(voiceError("permissionDenied"));
@@ -464,6 +525,7 @@ export default function SessionScreen() {
     if (!useSession.getState().isRecording) return;
     const duration = Date.now() - pressStartRef.current;
     useSession.getState().setRecording(false);
+    setAudioEnergy(0);
     const handle = sttHandleRef.current;
     sttHandleRef.current = null;
     if (!handle) return;
@@ -534,24 +596,23 @@ export default function SessionScreen() {
   const discardTranscript = useCallback(() => {
     setDraftTranscript("");
     setDraftAudioUri(undefined);
+    setAudioEnergy(0);
     useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
   }, []);
 
   const endSession = () => {
-    Alert.alert("End session", "Finish this conversation?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "End",
-        style: "destructive",
-        onPress: () => {
-          responseRunsRef.current.interrupt();
-          void sttHandleRef.current?.cancel();
-          void stopSpeech();
-          useSession.getState().end();
-          router.back();
-        },
-      },
-    ]);
+    tap();
+    responseRunsRef.current.interrupt();
+    void sttHandleRef.current?.cancel();
+    void stopSpeech();
+    setAudioEnergy(0);
+    setShowCoda(true);
+  };
+
+  const finishSession = () => {
+    setShowCoda(false);
+    useSession.getState().end();
+    router.back();
   };
 
   const togglePhraseHelp = () => {
@@ -571,63 +632,95 @@ export default function SessionScreen() {
     session.voice.phase,
   );
 
+  const latestTurn = [...session.turns]
+    .reverse()
+    .find((turn) => Boolean(turn.textJa));
+  const latestAssistant = [...session.turns]
+    .reverse()
+    .find((turn) => turn.role === "assistant" && Boolean(turn.textJa));
+  const latestCorrection = [...session.turns]
+    .reverse()
+    .find(
+      (turn) =>
+        turn.role === "assistant" &&
+        turn.id !== dismissedCorrectionId &&
+        correctionNotesForTurn(turn).length > 0,
+    );
+  const liveText =
+    session.voice.phase === "interimTranscript"
+      ? session.voice.interimTranscript
+      : session.voice.phase === "correction"
+        ? ""
+        : (latestTurn?.textJa ?? "");
+
   return (
-    <SafeAreaView className="flex-1 bg-bg dark:bg-bg-dark">
-      <View className="flex-row items-center justify-between border-b border-black/5 px-4 py-3 dark:border-white/5">
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: palette.canvas }]}
+    >
+      <AcousticAtmosphere palette={palette} />
+
+      <View style={styles.header}>
         <Pressable
+          testID="end-session"
           accessibilityRole="button"
+          accessibilityLabel="End conversation"
           onPress={endSession}
-          className="min-h-11 min-w-11 flex-row items-center gap-1"
+          style={[
+            styles.headerPill,
+            {
+              borderColor: palette.hairline,
+              backgroundColor: "transparent",
+            },
+          ]}
         >
-          <X color={colors.muted} size={22} />
-          <Text className="text-muted">End</Text>
+          <X color={palette.ink} size={16} />
+          <Text style={[styles.headerAction, { color: palette.ink }]}>End</Text>
         </Pressable>
-        <View className="items-center">
-          <Text className="font-semibold text-fg dark:text-fg-dark">
-            {scenario?.title ?? "Conversation"}
+
+        <View style={styles.sessionLabel} pointerEvents="none">
+          <Text style={[styles.sessionKicker, { color: palette.muted }]}>
+            LIVE CONVERSATION
           </Text>
-          {scenario && (
-            <Text className="mt-0.5 text-[10px] text-muted">
-              Optional topic
-            </Text>
-          )}
+          <Text style={[styles.sessionTitle, { color: palette.ink }]}>
+            {scenario?.title ?? "Open conversation"}
+          </Text>
         </View>
-        <View style={{ width: 40 }} />
+
+        <Pressable
+          testID="phrase-help"
+          accessibilityRole="button"
+          accessibilityLabel={
+            showPhraseHelp ? "Hide phrase help" : "Show phrase help"
+          }
+          accessibilityState={{ expanded: showPhraseHelp }}
+          onPress={togglePhraseHelp}
+          style={[
+            styles.headerIcon,
+            {
+              borderColor: palette.hairline,
+              backgroundColor: showPhraseHelp
+                ? palette.seamSoft
+                : "transparent",
+            },
+          ]}
+        >
+          <MessageCircleMore color={palette.ink} size={19} />
+        </Pressable>
       </View>
 
-      <ScrollView
-        ref={scrollRef}
-        className="flex-1 px-3"
-        contentContainerClassName="py-4"
-        contentContainerStyle={{ flexGrow: 1 }}
-        onContentSizeChange={() =>
-          scrollRef.current?.scrollToEnd({ animated: true })
-        }
-      >
-        {!session.turns.length && (
-          <View className="flex-1 items-center justify-center px-8 py-20">
-            <Text className="text-center font-jpBold text-2xl text-fg dark:text-fg-dark">
-              何でも話してみてください
-            </Text>
-            <Text className="mt-3 text-center leading-5 text-muted">
-              Hold the mic and speak in Japanese. Ask for help, translation,
-              correction, or roleplay whenever you want it.
-            </Text>
-          </View>
-        )}
-        {session.turns.map((turn) => (
-          <TurnBubble
-            key={turn.id}
-            turn={turn}
-            runs={furiganaCache[turn.id] ?? [{ base: turn.textJa }]}
-            onReplay={() => playAssistant(turn)}
-          />
-        ))}
-      </ScrollView>
+      <View style={styles.stage}>
+        <AcousticVoiceForm phase={session.voice.phase} energy={audioEnergy} />
+        <CurrentUtterance
+          text={liveText}
+          isKoe={latestTurn?.role === "assistant"}
+          palette={palette}
+        />
+      </View>
 
       <VoiceLifecyclePanel
         voice={session.voice}
         latency={session.latency}
+        palette={palette}
         draftTranscript={draftTranscript}
         onChangeTranscript={setDraftTranscript}
         onSubmit={submitTranscript}
@@ -635,38 +728,49 @@ export default function SessionScreen() {
         onRecover={recoverVoice}
       />
 
-      {showPhraseHelp && (
-        <View className="mx-4 mb-2 rounded-2xl bg-accent/10 px-3 py-3">
-          <Text className="mb-2 text-xs font-semibold text-accent">
-            Try one of these
+      {showPhraseHelp ? (
+        <View
+          style={[
+            styles.phraseHelp,
+            { borderColor: palette.hairline, backgroundColor: palette.canvas },
+          ]}
+        >
+          <Text style={[styles.editorialLabel, { color: palette.seam }]}>
+            PHRASE PROMPTS / 任意
           </Text>
           <SuggestedReplyChips
             replies={suggested}
             onPick={(reply) => void sendUser(reply.ja)}
           />
         </View>
-      )}
+      ) : null}
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityState={{ expanded: showPhraseHelp }}
-        onPress={togglePhraseHelp}
-        className="min-h-11 flex-row items-center gap-2 px-4 py-2"
-      >
-        <MessageCircleMore color={colors.accent} size={17} />
-        <Text className="text-xs font-semibold text-accent">
-          {showPhraseHelp ? "Hide phrase help" : "Need a phrase?"}
-        </Text>
-      </Pressable>
+      {latestCorrection && session.voice.phase === "idle" ? (
+        <CorrectionMoment
+          turn={latestCorrection}
+          palette={palette}
+          onDismiss={() => setDismissedCorrectionId(latestCorrection.id)}
+          onReplay={() => playAssistant(latestAssistant ?? latestCorrection)}
+        />
+      ) : null}
 
-      <View className="border-t border-black/5 dark:border-white/5">
+      <View style={[styles.speakDock, { borderColor: palette.hairline }]}>
         <MicButton
           recording={session.isRecording}
           onPressIn={onPressIn}
           onPressOut={onPressOut}
           prompt={canInterrupt ? "Hold to interrupt" : undefined}
+          palette={palette}
         />
       </View>
+
+      <SessionCoda
+        visible={showCoda}
+        turns={session.turns}
+        palette={palette}
+        onContinue={() => setShowCoda(false)}
+        onFinish={finishSession}
+      />
     </SafeAreaView>
   );
 }
@@ -674,6 +778,7 @@ export default function SessionScreen() {
 function VoiceLifecyclePanel({
   voice,
   latency,
+  palette,
   draftTranscript,
   onChangeTranscript,
   onSubmit,
@@ -682,6 +787,7 @@ function VoiceLifecyclePanel({
 }: {
   voice: VoiceLifecycle;
   latency: VoiceLatency;
+  palette: ConversationPalette;
   draftTranscript: string;
   onChangeTranscript: (value: string) => void;
   onSubmit: () => void;
@@ -697,75 +803,128 @@ function VoiceLifecyclePanel({
         : voice.recovery === "resume"
           ? "Resume"
           : "Try again";
+  const isVisible =
+    voice.phase === "correction" || voice.phase === "recoverableError";
 
   return (
-    <View className="mx-4 mb-2 rounded-2xl bg-surface px-4 py-3 dark:bg-surface-dark">
-      <View accessibilityLiveRegion="polite" accessibilityRole="summary">
-        <Text className="text-sm font-semibold text-fg dark:text-fg-dark">
-          {copy.title}
-        </Text>
-        <Text className="mt-0.5 text-xs text-muted">
-          {voice.message ?? copy.detail}
-        </Text>
+    <View>
+      <View
+        accessible
+        accessibilityLiveRegion="polite"
+        accessibilityRole="summary"
+        style={styles.srStatus}
+      >
+        <Text>{voice.message ?? `${copy.title}. ${copy.detail}`}</Text>
       </View>
 
-      {voice.phase === "interimTranscript" && voice.interimTranscript ? (
-        <Text className="mt-2 font-jp text-base text-fg dark:text-fg-dark">
-          {voice.interimTranscript}
-        </Text>
-      ) : null}
+      {isVisible ? (
+        <View
+          style={[
+            styles.lifecyclePanel,
+            { borderColor: palette.hairline, backgroundColor: palette.canvas },
+          ]}
+        >
+          {voice.phase === "correction" ? (
+            <View>
+              <Text style={[styles.editorialLabel, { color: palette.proof }]}>
+                TRANSCRIPT / 聞き取り
+              </Text>
+              <Text style={[styles.panelInstruction, { color: palette.muted }]}>
+                Correct only what Koe misheard, then send.
+              </Text>
+              <TextInput
+                accessibilityLabel="Correct transcript"
+                value={draftTranscript}
+                onChangeText={onChangeTranscript}
+                multiline
+                selectionColor={palette.proof}
+                style={[
+                  styles.transcriptInput,
+                  { color: palette.ink, borderColor: palette.hairline },
+                ]}
+              />
+              <View style={styles.actionRow}>
+                <Pressable
+                  testID="discard-transcript"
+                  accessibilityRole="button"
+                  accessibilityLabel="Try recording again"
+                  onPress={onDiscard}
+                  style={[
+                    styles.secondaryAction,
+                    {
+                      borderColor: palette.hairline,
+                      backgroundColor: "transparent",
+                    },
+                  ]}
+                >
+                  <RotateCcw color={palette.ink} size={16} />
+                  <Text style={[styles.actionText, { color: palette.ink }]}>
+                    Try again
+                  </Text>
+                </Pressable>
+                <Pressable
+                  testID="send-transcript"
+                  accessibilityRole="button"
+                  accessibilityLabel="Send corrected transcript"
+                  onPress={onSubmit}
+                  style={[
+                    styles.primaryAction,
+                    {
+                      backgroundColor: palette.control,
+                    },
+                  ]}
+                >
+                  <Send color={palette.controlText} size={16} />
+                  <Text
+                    style={[styles.actionText, { color: palette.controlText }]}
+                  >
+                    Send line
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
 
-      {voice.phase === "correction" ? (
-        <View className="mt-3">
-          <TextInput
-            accessibilityLabel="Correct transcript"
-            value={draftTranscript}
-            onChangeText={onChangeTranscript}
-            multiline
-            className="min-h-11 rounded-xl bg-bg px-3 py-2 font-jp text-base text-fg dark:bg-bg-dark dark:text-fg-dark"
-          />
-          <View className="mt-2 flex-row gap-2">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Try recording again"
-              onPress={onDiscard}
-              className="min-h-11 flex-1 flex-row items-center justify-center gap-2 rounded-xl bg-black/5 px-3 dark:bg-white/10"
-            >
-              <RotateCcw color={colors.muted} size={16} />
-              <Text className="font-semibold text-muted">Try again</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Send corrected transcript"
-              onPress={onSubmit}
-              className="min-h-11 flex-1 flex-row items-center justify-center gap-2 rounded-xl bg-accent px-3"
-            >
-              <Send color="white" size={16} />
-              <Text className="font-semibold text-white">Send</Text>
-            </Pressable>
-          </View>
+          {voice.phase === "recoverableError" ? (
+            <View>
+              <Text style={[styles.editorialLabel, { color: palette.proof }]}>
+                VOICE PAUSED / 回復
+              </Text>
+              <Text style={[styles.panelInstruction, { color: palette.ink }]}>
+                {voice.message ?? copy.detail}
+              </Text>
+              <Pressable
+                testID="recover-voice"
+                accessibilityRole="button"
+                accessibilityLabel={recoveryLabel}
+                onPress={onRecover}
+                style={[
+                  styles.recoveryAction,
+                  {
+                    backgroundColor: palette.control,
+                  },
+                ]}
+              >
+                {voice.recovery === "openSettings" ? (
+                  <Settings color={palette.controlText} size={16} />
+                ) : (
+                  <RotateCcw color={palette.controlText} size={16} />
+                )}
+                <Text
+                  style={[styles.actionText, { color: palette.controlText }]}
+                >
+                  {recoveryLabel}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       ) : null}
 
-      {voice.phase === "recoverableError" ? (
-        <Pressable
-          accessibilityRole="button"
-          onPress={onRecover}
-          className="mt-3 min-h-11 flex-row items-center justify-center gap-2 rounded-xl bg-accent px-4"
-        >
-          {voice.recovery === "openSettings" ? (
-            <Settings color="white" size={16} />
-          ) : (
-            <RotateCcw color="white" size={16} />
-          )}
-          <Text className="font-semibold text-white">{recoveryLabel}</Text>
-        </Pressable>
-      ) : null}
-
       {Object.values(latency).some((value) => value !== undefined) ? (
-        <Text className="mt-2 text-[10px] text-muted">
-          Transcript {formatLatency(latency.listeningToTranscriptMs)} · First
-          words {formatLatency(latency.transcriptToFirstTextMs)} · Audio{" "}
+        <Text style={[styles.latency, { color: palette.muted }]}>
+          HEARD {formatLatency(latency.listeningToTranscriptMs)} · WORDS{" "}
+          {formatLatency(latency.transcriptToFirstTextMs)} · VOICE{" "}
           {formatLatency(latency.firstTextToFirstAudioMs)}
         </Text>
       ) : null}
@@ -773,21 +932,181 @@ function VoiceLifecyclePanel({
   );
 }
 
+function CurrentUtterance({
+  text,
+  isKoe,
+  palette,
+}: {
+  text: string;
+  isKoe: boolean;
+  palette: ConversationPalette;
+}) {
+  if (!text) return <View style={styles.utterancePlaceholder} />;
+  return (
+    <View
+      accessible
+      accessibilityLabel={`${isKoe ? "Koe" : "You"}: ${text}`}
+      style={styles.utterance}
+    >
+      <Text style={[styles.utteranceRole, { color: palette.muted }]}>
+        {isKoe ? "KOE / 応答" : "YOU / 発話"}
+      </Text>
+      <Text
+        numberOfLines={3}
+        style={[styles.utteranceText, { color: palette.ink }]}
+      >
+        {text}
+      </Text>
+    </View>
+  );
+}
+
+function CorrectionMoment({
+  turn,
+  palette,
+  onDismiss,
+  onReplay,
+}: {
+  turn: ChatTurn;
+  palette: ConversationPalette;
+  onDismiss: () => void;
+  onReplay: () => void;
+}) {
+  const note = correctionNotesForTurn(turn)[0];
+  if (!note) return null;
+  return (
+    <View
+      accessibilityRole="summary"
+      style={[styles.correctionMoment, { borderColor: palette.proof }]}
+    >
+      <View style={styles.correctionCopy}>
+        <Text style={[styles.editorialLabel, { color: palette.proof }]}>
+          ONE THING TO KEEP
+        </Text>
+        <Text style={[styles.correctionText, { color: palette.ink }]}>
+          {note}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Replay Koe's line"
+        onPress={onReplay}
+        style={[styles.inlineIconButton, { borderColor: palette.hairline }]}
+      >
+        <Volume2 color={palette.ink} size={17} />
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Dismiss correction"
+        onPress={onDismiss}
+        style={[styles.inlineIconButton, { borderColor: palette.hairline }]}
+      >
+        <X color={palette.ink} size={17} />
+      </Pressable>
+    </View>
+  );
+}
+
+function SessionCoda({
+  visible,
+  turns,
+  palette,
+  onContinue,
+  onFinish,
+}: {
+  visible: boolean;
+  turns: ChatTurn[];
+  palette: ConversationPalette;
+  onContinue: () => void;
+  onFinish: () => void;
+}) {
+  const moments = memorableMoments(turns);
+  const visibleMoments = moments.length
+    ? moments
+    : ["The conversation is ready to continue."];
+  return (
+    <Modal visible={visible} animationType="fade" onRequestClose={onContinue}>
+      <SafeAreaView
+        style={[styles.codaSafeArea, { backgroundColor: palette.canvas }]}
+      >
+        <View style={styles.codaHeader}>
+          <Text style={[styles.sessionKicker, { color: palette.muted }]}>
+            SESSION / 余韻
+          </Text>
+          <Pressable
+            testID="continue-conversation"
+            accessibilityRole="button"
+            accessibilityLabel="Continue conversation"
+            onPress={onContinue}
+            style={[styles.headerIcon, { borderColor: palette.hairline }]}
+          >
+            <X color={palette.ink} size={19} />
+          </Pressable>
+        </View>
+        <View style={styles.codaBody}>
+          <Text style={[styles.codaTitle, { color: palette.ink }]}>
+            今日、残った声
+          </Text>
+          <Text style={[styles.codaSubtitle, { color: palette.muted }]}>
+            A few moments worth carrying forward—not a transcript.
+          </Text>
+          <View style={styles.momentList}>
+            {visibleMoments.map((moment, index) => (
+              <View
+                key={`${moment}-${index}`}
+                style={[styles.momentRow, { borderColor: palette.hairline }]}
+              >
+                <Text style={[styles.momentNumber, { color: palette.proof }]}>
+                  {String(index + 1).padStart(2, "0")}
+                </Text>
+                <Text style={[styles.momentText, { color: palette.ink }]}>
+                  {moment}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+        <View style={styles.codaActions}>
+          <Pressable
+            testID="resume-conversation"
+            accessibilityRole="button"
+            accessibilityLabel="Keep talking"
+            onPress={onContinue}
+            style={[
+              styles.codaSecondary,
+              {
+                borderColor: palette.hairline,
+                backgroundColor: "transparent",
+              },
+            ]}
+          >
+            <Text style={[styles.actionText, { color: palette.ink }]}>
+              Keep talking
+            </Text>
+          </Pressable>
+          <Pressable
+            testID="finish-session"
+            accessibilityRole="button"
+            accessibilityLabel="Finish session"
+            onPress={onFinish}
+            style={[styles.codaPrimary, { backgroundColor: palette.control }]}
+          >
+            <Text style={[styles.actionText, { color: palette.controlText }]}>
+              Finish session
+            </Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
 function formatLatency(value?: number): string {
   return value === undefined ? "—" : `${Math.round(value)} ms`;
 }
 
-function TurnBubble({
-  turn,
-  runs,
-  onReplay,
-}: {
-  turn: ChatTurn;
-  runs: Awaited<ReturnType<typeof annotate>>;
-  onReplay: () => void;
-}) {
-  const isUser = turn.role === "user";
-  const correctionNotes = turn.corrections
+function correctionNotesForTurn(turn: ChatTurn): string[] {
+  return turn.corrections
     ? [
         ...turn.corrections.particles.map(
           (item) =>
@@ -803,62 +1122,271 @@ function TurnBubble({
           : []),
       ]
     : [];
+}
 
+function memorableMoments(turns: ChatTurn[]): string[] {
+  const correctionMoments = turns.flatMap((turn) =>
+    correctionNotesForTurn(turn).map((note) => note.split(" — ")[0]),
+  );
+  const spokenMoments = turns
+    .filter((turn) => turn.role === "user" && turn.textJa.trim())
+    .map((turn) => turn.textJa.trim());
+  return [...new Set([...correctionMoments, ...spokenMoments])].slice(-3);
+}
+
+function AcousticAtmosphere({ palette }: { palette: ConversationPalette }) {
   return (
-    <View
-      className={`my-2 max-w-[85%] ${isUser ? "self-end items-end" : "self-start items-start"}`}
-    >
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       <View
-        className={`rounded-2xl px-4 py-3 ${isUser ? "bg-primary" : "bg-surface dark:bg-surface-dark"}`}
-      >
-        {turn.textJa ? (
-          <JapaneseText
-            runs={runs}
-            color={isUser ? "#fff" : undefined}
-            fontSize={18}
-          />
-        ) : (
-          <Text className="text-sm text-muted">
-            {turn.streaming ? "Koe is thinking…" : "No reply"}
-          </Text>
-        )}
-        {turn.textEn && (
-          <Text
-            className={`mt-2 text-xs ${isUser ? "text-white/70" : "text-muted"}`}
-          >
-            {turn.textEn}
-          </Text>
-        )}
-        {!isUser && turn.textJa ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Replay response"
-            onPress={onReplay}
-            className="-mb-2 mt-1 min-h-11 flex-row items-center gap-1"
-          >
-            <Volume2 color={colors.accent} size={14} />
-            <Text className="text-xs text-accent">Replay</Text>
-          </Pressable>
-        ) : null}
-      </View>
-      {turn.interrupted ? (
-        <Text className="mt-1 text-[10px] text-muted">Interrupted</Text>
-      ) : null}
-      {!isUser && correctionNotes.length > 0 && (
-        <View className="mt-1 max-w-full rounded-xl bg-warning/10 px-3 py-2">
-          <Text className="text-[10px] font-bold uppercase text-warning">
-            Quick note
-          </Text>
-          {correctionNotes.map((note, index) => (
-            <Text
-              key={index}
-              className="mt-1 text-xs text-fg dark:text-fg-dark"
-            >
-              {note}
-            </Text>
-          ))}
-        </View>
-      )}
+        style={[
+          styles.ambientRule,
+          { backgroundColor: palette.hairline, left: "18%" },
+        ]}
+      />
+      <View
+        style={[
+          styles.ambientRule,
+          { backgroundColor: palette.hairline, right: "18%" },
+        ]}
+      />
+      <View
+        style={[
+          styles.ambientCircle,
+          { borderColor: palette.seamSoft, backgroundColor: palette.seamSoft },
+        ]}
+      />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  safeArea: { flex: 1 },
+  header: {
+    minHeight: 68,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    zIndex: 2,
+  },
+  headerPill: {
+    minWidth: 72,
+    height: CONVERSATION_TARGET.minimum,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 22,
+    paddingHorizontal: 13,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  headerAction: { fontSize: 13, fontWeight: "600" },
+  sessionLabel: {
+    position: "absolute",
+    left: 96,
+    right: 96,
+    alignItems: "center",
+  },
+  sessionKicker: {
+    fontFamily: "SFMono-Medium",
+    fontSize: 9,
+    letterSpacing: 1.4,
+    lineHeight: 13,
+  },
+  sessionTitle: { fontSize: 12, fontWeight: "600", marginTop: 2 },
+  headerIcon: {
+    width: CONVERSATION_TARGET.roundIcon,
+    height: CONVERSATION_TARGET.roundIcon,
+    borderRadius: 24,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stage: {
+    flex: 1,
+    minHeight: 390,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
+  utterancePlaceholder: { height: 76 },
+  utterance: {
+    minHeight: 76,
+    maxWidth: 620,
+    alignItems: "center",
+    paddingHorizontal: 18,
+  },
+  utteranceRole: {
+    fontFamily: "SFMono-Medium",
+    fontSize: 9,
+    letterSpacing: 1.2,
+    marginBottom: 7,
+  },
+  utteranceText: {
+    fontFamily: "Hiragino Mincho ProN",
+    fontSize: 20,
+    lineHeight: 30,
+    textAlign: "center",
+  },
+  srStatus: { position: "absolute", width: 1, height: 1, opacity: 0 },
+  lifecyclePanel: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 20,
+    paddingTop: 13,
+    paddingBottom: 12,
+  },
+  editorialLabel: {
+    fontFamily: "SFMono-Medium",
+    fontSize: 9,
+    letterSpacing: 1.35,
+    lineHeight: 13,
+  },
+  panelInstruction: { fontSize: 12, lineHeight: 17, marginTop: 3 },
+  transcriptInput: {
+    minHeight: CONVERSATION_TARGET.action,
+    maxHeight: 92,
+    borderBottomWidth: 1,
+    fontFamily: "Hiragino Mincho ProN",
+    fontSize: 18,
+    lineHeight: 26,
+    paddingHorizontal: 0,
+    paddingVertical: 10,
+  },
+  actionRow: { flexDirection: "row", gap: 10, marginTop: 12 },
+  secondaryAction: {
+    flex: 1,
+    minHeight: CONVERSATION_TARGET.action,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+  },
+  primaryAction: {
+    flex: 1,
+    minHeight: CONVERSATION_TARGET.action,
+    borderRadius: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+  },
+  recoveryAction: {
+    minHeight: CONVERSATION_TARGET.action,
+    borderRadius: 4,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: 12,
+    paddingHorizontal: 16,
+  },
+  actionText: { fontSize: 14, fontWeight: "700" },
+  latency: {
+    fontFamily: "SFMono-Regular",
+    fontSize: 8,
+    letterSpacing: 0.8,
+    textAlign: "center",
+    paddingVertical: 4,
+  },
+  phraseHelp: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  correctionMoment: {
+    minHeight: 74,
+    borderLeftWidth: 2,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingLeft: 12,
+  },
+  correctionCopy: { flex: 1 },
+  correctionText: { fontSize: 12, lineHeight: 17, marginTop: 4 },
+  inlineIconButton: {
+    width: CONVERSATION_TARGET.minimum,
+    height: CONVERSATION_TARGET.minimum,
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  speakDock: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 4,
+  },
+  ambientRule: {
+    position: "absolute",
+    top: 76,
+    bottom: 86,
+    width: StyleSheet.hairlineWidth,
+    opacity: 0.52,
+  },
+  ambientCircle: {
+    position: "absolute",
+    width: 430,
+    height: 430,
+    borderRadius: 215,
+    borderWidth: 1,
+    opacity: 0.18,
+    left: "50%",
+    top: "47%",
+    marginLeft: -215,
+    marginTop: -215,
+  },
+  codaSafeArea: { flex: 1 },
+  codaHeader: {
+    minHeight: 112,
+    paddingHorizontal: 20,
+    paddingTop: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  codaBody: { flex: 1, justifyContent: "center", paddingHorizontal: 26 },
+  codaTitle: {
+    fontFamily: "Hiragino Mincho ProN",
+    fontSize: 32,
+    fontWeight: "600",
+    lineHeight: 44,
+  },
+  codaSubtitle: { fontSize: 13, lineHeight: 19, marginTop: 6, maxWidth: 380 },
+  momentList: { marginTop: 34 },
+  momentRow: {
+    minHeight: 76,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 18,
+  },
+  momentNumber: { fontFamily: "SFMono-Medium", fontSize: 10 },
+  momentText: {
+    flex: 1,
+    fontFamily: "Hiragino Mincho ProN",
+    fontSize: 17,
+    lineHeight: 25,
+  },
+  codaActions: { paddingHorizontal: 20, paddingBottom: 10, gap: 10 },
+  codaSecondary: {
+    minHeight: CONVERSATION_TARGET.codaAction,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 4,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  codaPrimary: {
+    minHeight: CONVERSATION_TARGET.codaAction,
+    borderRadius: 4,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+});

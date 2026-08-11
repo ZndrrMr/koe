@@ -8,6 +8,7 @@ export type VoicePhase =
   | "interrupted"
   | "correction"
   | "retry"
+  | "success"
   | "recoverableError";
 
 export type VoiceErrorKind =
@@ -61,6 +62,10 @@ export const VOICE_PHASE_COPY: Record<
     detail: "Edit the transcript or try again.",
   },
   retry: { title: "Retrying…", detail: "Reconnecting to the voice provider." },
+  success: {
+    title: "Back with you",
+    detail: "The retry landed. Keep speaking when you are ready.",
+  },
   recoverableError: {
     title: "Voice paused",
     detail: "Choose a recovery action below.",

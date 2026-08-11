@@ -1,13 +1,13 @@
-import '../global.css';
-import React, { useEffect, useState } from 'react';
-import { Stack, useRouter, useSegments } from 'expo-router';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { StatusBar } from 'expo-status-bar';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { openDb } from '@/db';
-import { useSettings } from '@/stores/useSettings';
-import { log } from '@/utils/log';
+import "../global.css";
+import React, { useEffect, useState } from "react";
+import { Stack, useRouter, useSegments } from "expo-router";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { SafeAreaProvider } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { openDb } from "@/db";
+import { useSettings } from "@/stores/useSettings";
+import { log } from "@/utils/log";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,13 +20,17 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   const onboardingDone = useSettings((s) => s.onboardingDone);
+  const reviewStatusBarStyle =
+    __DEV__ && process.env.EXPO_PUBLIC_KOE_REVIEW_SCHEME === "dark"
+      ? "light"
+      : "auto";
 
   useEffect(() => {
     (async () => {
       try {
         await openDb();
       } catch (e) {
-        log.error('DB open failed', e);
+        log.error("DB open failed", e);
       } finally {
         setReady(true);
       }
@@ -36,10 +40,25 @@ export default function RootLayout() {
   useEffect(() => {
     if (!ready) return;
     const first = segments[0];
-    if (!onboardingDone && first !== 'onboarding') {
-      router.replace('/onboarding/welcome');
-    } else if (onboardingDone && first === 'onboarding') {
-      router.replace('/(tabs)/speak');
+    const reviewRoute = __DEV__
+      ? process.env.EXPO_PUBLIC_KOE_REVIEW_ROUTE
+      : undefined;
+    if (reviewRoute === "visual-study" && first !== "visual-study") {
+      router.replace("/visual-study");
+      return;
+    }
+    if (reviewRoute === "session" && first !== "session") {
+      router.replace({
+        pathname: "/session/[id]",
+        params: { id: "zan-849-simulator-review" },
+      });
+      return;
+    }
+    const isDevelopmentStudy = __DEV__ && first === "visual-study";
+    if (!onboardingDone && first !== "onboarding" && !isDevelopmentStudy) {
+      router.replace("/onboarding/welcome");
+    } else if (onboardingDone && first === "onboarding") {
+      router.replace("/(tabs)/speak");
     }
   }, [ready, onboardingDone, segments]);
 
@@ -49,12 +68,16 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
-          <StatusBar style="auto" />
+          <StatusBar style={reviewStatusBarStyle} />
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="onboarding" />
-            <Stack.Screen name="session/[id]" options={{ presentation: 'fullScreenModal' }} />
-            <Stack.Screen name="about" options={{ presentation: 'modal' }} />
+            <Stack.Screen
+              name="session/[id]"
+              options={{ presentation: "fullScreenModal" }}
+            />
+            <Stack.Screen name="about" options={{ presentation: "modal" }} />
+            <Stack.Screen name="visual-study" />
           </Stack>
         </SafeAreaProvider>
       </GestureHandlerRootView>

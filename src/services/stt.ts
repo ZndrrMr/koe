@@ -69,6 +69,7 @@ export async function ensurePermission(): Promise<boolean> {
 
 export async function startStreaming(opts: {
   onChunk: (chunk: STTChunk) => void;
+  onAudioEnergy?: (energy: number) => void;
   languageHint?: "ja" | "ja,en";
   /** Kept optional for pitch-drill callers created before native live recognition. */
   recorder?: AudioRecorder;
@@ -115,6 +116,11 @@ export async function startStreaming(opts: {
     ExpoSpeechRecognitionModule.addListener("audioend", (event) => {
       audioUri = event.uri ?? audioUri;
     }),
+    ExpoSpeechRecognitionModule.addListener("volumechange", (event) => {
+      // Native metering is -2...10 and values below zero are inaudible.
+      // Keep normalization here so visual consumers remain platform-agnostic.
+      opts.onAudioEnergy?.(Math.max(0, Math.min(1, event.value / 10)));
+    }),
     ExpoSpeechRecognitionModule.addListener("error", (event) => {
       const kind = failureKind(event.error);
       if (cancelled && kind === "cancelled") return;
@@ -138,6 +144,9 @@ export async function startStreaming(opts: {
       addsPunctuation: true,
       iosTaskHint: "dictation",
       iosVoiceProcessingEnabled: true,
+      volumeChangeEventOptions: opts.onAudioEnergy
+        ? { enabled: true, intervalMillis: 80 }
+        : undefined,
       recordingOptions: ExpoSpeechRecognitionModule.supportsRecording()
         ? {
             persist: true,
