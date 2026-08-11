@@ -5,6 +5,7 @@ import type { ConversationContext } from "@/stores/useSession";
 import { hasWorker } from "@/utils/config";
 import { log } from "@/utils/log";
 import { extractSSEEvents } from "@/services/sse";
+import type { CorrectionStyle } from "@/stores/useSettings";
 
 export type ConvoTurn = { role: "user" | "assistant"; content: string };
 
@@ -62,6 +63,7 @@ export async function* streamConversation(opts: {
   history: ConvoTurn[];
   userTurn: string;
   voice?: "ja-female-1" | "ja-female-2" | "ja-male-1";
+  correctionStyle?: CorrectionStyle;
   signal?: AbortSignal;
 }): AsyncGenerator<ConversationChunk, ConversationResult, void> {
   const system = tutorSystemPrompt({
@@ -185,6 +187,7 @@ export async function* streamConversation(opts: {
       task: "feedback",
       registerTarget: opts.context?.registerTarget,
       jlptTarget: opts.context?.jlptTarget,
+      correctionStyle: opts.correctionStyle ?? "essential",
       history: opts.history,
       userTurn: opts.userTurn,
       tutorReply: fullText,

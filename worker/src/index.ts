@@ -456,13 +456,17 @@ Dialogue: ${JSON.stringify(body.history ?? [])}`;
 
 OPTIONAL REGISTER CONTEXT: ${body.registerTarget ?? "none selected"}
 OPTIONAL LEVEL CONTEXT: ${body.jlptTarget ? `JLPT N${body.jlptTarget}` : "none selected"}
+COACHING DETAIL: ${body.correctionStyle ?? "essential"}
 Prior dialogue: ${JSON.stringify(body.history ?? [])}
 User's utterance: ${JSON.stringify(body.userTurn ?? "")}
 Conversation reply: ${JSON.stringify(body.tutorReply ?? "")}
 
 DEFAULT COACHING CONTRACT:
-- Usually return no correction. Do not praise, score, teach, or manufacture a problem for a natural understandable utterance.
-- If one error materially changes the meaning or makes the utterance notably unnatural, return one compact correction total. Prefer the smallest useful replacement and a one-sentence explanation.
+- Never praise, score, teach, or manufacture a problem for a natural understandable utterance.
+- With essential coaching, return a correction only when one issue materially changes the meaning or makes the utterance notably unnatural.
+- With balanced coaching, return at most one compact correction when it offers a useful improvement.
+- With detailed coaching, return up to three compact corrections covering grammar or naturalness without rewriting the whole utterance.
+- Prefer the smallest useful replacement and a one-sentence explanation.
 - A compact note supplements the separate conversation reply; it must never demand a retry or assign an exercise.
 - If the learner explicitly asks for strict correction, translation, or teaching, analyze as requested. Even then, keep this payload to corrections only; the conversation reply handles the direct answer.
 - Optional register and level are context, not requirements. Do not correct a valid register merely because another register was selected.

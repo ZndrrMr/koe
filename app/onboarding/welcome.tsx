@@ -1,61 +1,57 @@
-import React from 'react';
-import { View, Text, Pressable } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import Svg, { Path } from 'react-native-svg';
-import { colors } from '@/theme/colors';
-import { tap } from '@/utils/haptics';
-import { useSettings } from '@/stores/useSettings';
+import React, { useEffect, useRef } from "react";
+import { StyleSheet, Text, View } from "react-native";
+import { randomUUID } from "expo-crypto";
+import { useRouter } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
 
+import { useSettings } from "@/stores/useSettings";
+import { useConversationPalette } from "@/theme/conversation";
+
+/**
+ * Onboarding is an entry seam, not a questionnaire. New learners are taken
+ * straight to a neutral conversation; the session itself explains the mic at
+ * the moment it becomes relevant.
+ */
 export default function WelcomeScreen() {
   const router = useRouter();
+  const palette = useConversationPalette();
   const complete = useSettings((state) => state.complete);
+  const sessionId = useRef(randomUUID()).current;
 
-  const startTalking = () => {
-    tap();
+  useEffect(() => {
     complete({});
-    router.replace('/(tabs)/speak');
-  };
+    router.replace({
+      pathname: "/session/[id]",
+      params: { id: sessionId, intro: "1" },
+    });
+  }, [complete, router, sessionId]);
 
   return (
-    <SafeAreaView className="flex-1 bg-bg dark:bg-bg-dark items-center justify-between p-8">
-      <View />
-      <View className="items-center">
-        <Text className="font-jpBold text-[120px] text-primary" style={{ lineHeight: 130 }}>
-          声
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: palette.canvas }]}
+      accessibilityLabel="Opening your first conversation"
+    >
+      <View style={styles.mark}>
+        <Text style={[styles.kanji, { color: palette.seam }]}>声</Text>
+        <Text style={[styles.label, { color: palette.muted }]}>
+          OPENING KOE
         </Text>
-        <Text className="text-fg dark:text-fg-dark text-3xl font-bold mt-4">Speak Japanese.</Text>
-        <Text className="text-fg dark:text-fg-dark text-3xl font-bold">Hear yourself.</Text>
-        <View className="mt-10">
-          <Svg width={260} height={80} viewBox="0 0 260 80">
-            <Path
-              d="M0 60 Q 30 20, 60 40 T 120 30 T 180 50 T 260 20"
-              stroke={colors.accent}
-              strokeWidth={3}
-              fill="none"
-            />
-          </Svg>
-        </View>
-      </View>
-      <View className="w-full gap-2">
-        <Pressable
-          accessibilityRole="button"
-          onPress={startTalking}
-          className="bg-primary w-full min-h-14 px-5 py-4 rounded-full items-center justify-center"
-        >
-          <Text className="text-white font-semibold text-lg">Start talking</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => {
-            tap();
-            router.push('/onboarding/kana-check');
-          }}
-          className="w-full min-h-11 px-5 py-3 items-center justify-center"
-        >
-          <Text className="text-muted font-semibold">Personalize first</Text>
-        </Pressable>
       </View>
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  safeArea: { flex: 1, alignItems: "center", justifyContent: "center" },
+  mark: { alignItems: "center", gap: 10 },
+  kanji: {
+    fontFamily: "Hiragino Mincho ProN",
+    fontSize: 72,
+    lineHeight: 84,
+  },
+  label: {
+    fontFamily: "SFMono-Medium",
+    fontSize: 9,
+    letterSpacing: 1.8,
+  },
+});

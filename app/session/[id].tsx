@@ -65,6 +65,8 @@ import {
   type VoiceLifecycle,
 } from "@/voice/lifecycle";
 import { ResponseRunController } from "@/voice/responseRun";
+import { shouldAutoSendFirstTranscript } from "@/voice/firstExchange";
+import { conversationTopicForGoal } from "@/voice/conversationPreferences";
 import {
   buildSessionCloseout,
   type LearningMomentDecision,
@@ -76,9 +78,14 @@ type FailedReply = { text: string; audioUri?: string; assistantTurnId: string };
 export default function SessionScreen() {
   const router = useRouter();
   const palette = useConversationPalette();
-  const { id, scenario: scenarioId } = useLocalSearchParams<{
+  const {
+    id,
+    scenario: scenarioId,
+    intro,
+  } = useLocalSearchParams<{
     id: string;
     scenario?: string;
+    intro?: string;
   }>();
   const scenario = getScenario(scenarioId ?? "");
   const settings = useSettings();
@@ -123,7 +130,11 @@ export default function SessionScreen() {
             registerTarget: scenario.registerTarget,
             jlptTarget: scenario.difficulty,
           }
-        : {},
+        : {
+            topic: conversationTopicForGoal(settings.goal),
+            registerTarget: settings.registerTarget,
+            jlptTarget: settings.jlptTarget,
+          },
     );
     if (__DEV__) {
       const reviewPhase = process.env.EXPO_PUBLIC_KOE_REVIEW_PHASE as
@@ -363,6 +374,7 @@ export default function SessionScreen() {
           history: historyWithUser.slice(0, -1),
           userTurn: trimmed,
           voice: settings.voice,
+          correctionStyle: settings.correctionStyle,
           signal: responseRun.signal,
         });
         while (true) {
@@ -513,6 +525,7 @@ export default function SessionScreen() {
       analyzeUserPronunciation,
       refreshSuggestions,
       settings.voice,
+      settings.correctionStyle,
       settleReply,
       showPhraseHelp,
       tickDay,
@@ -600,6 +613,21 @@ export default function SessionScreen() {
       }
       setDraftTranscript(result.fullText);
       setDraftAudioUri(result.audioUri || undefined);
+      if (
+        shouldAutoSendFirstTranscript({
+          intro,
+          existingTurnCount: useSession.getState().turns.length,
+          transcript: result.fullText,
+        })
+      ) {
+        setDraftTranscript("");
+        setDraftAudioUri(undefined);
+        useSession
+          .getState()
+          .setVoicePhase("understanding", { interimTranscript: "" });
+        void sendUser(result.fullText, result.audioUri || undefined);
+        return;
+      }
       useSession
         .getState()
         .setVoicePhase("correction", { interimTranscript: result.fullText });
@@ -620,7 +648,7 @@ export default function SessionScreen() {
         useSession.getState().setVoice(voiceError("sttFailure"));
       }
     }
-  }, []);
+  }, [intro, sendUser]);
 
   const submitPronunciationRetry = useCallback(
     async (previous: ChatTurn, transcript: string, audioUri: string) => {
@@ -773,6 +801,16 @@ export default function SessionScreen() {
     useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
   }, []);
 
+  const leaveFirstExchange = useCallback(async () => {
+    responseRunsRef.current.interrupt();
+    await Promise.allSettled([
+      sttHandleRef.current?.cancel() ?? Promise.resolve(),
+      stopSpeech(),
+    ]);
+    await useSession.getState().end();
+    router.replace("/(tabs)/speak");
+  }, [router]);
+
   const latestTurn = [...session.turns]
     .reverse()
     .find((turn) => Boolean(turn.textJa));
@@ -806,6 +844,8 @@ export default function SessionScreen() {
   const closeout =
     session.closeout ??
     (session.id ? buildSessionCloseout(session.id, session.turns) : undefined);
+  const isFirstExchange = intro === "1" && session.turns.length === 0;
+  const isVoiceRecovery = session.voice.phase === "recoverableError";
 
   return (
     <SafeAreaView
@@ -817,8 +857,14 @@ export default function SessionScreen() {
         <Pressable
           testID="end-session"
           accessibilityRole="button"
-          accessibilityLabel="End conversation"
-          onPress={endSession}
+          accessibilityLabel={
+            isFirstExchange
+              ? "Explore Koe without speaking"
+              : "End conversation"
+          }
+          onPress={
+            isFirstExchange ? () => void leaveFirstExchange() : endSession
+          }
           style={[
             styles.headerPill,
             {
@@ -828,38 +874,49 @@ export default function SessionScreen() {
           ]}
         >
           <X color={palette.ink} size={16} />
-          <Text style={[styles.headerAction, { color: palette.ink }]}>End</Text>
+          <Text style={[styles.headerAction, { color: palette.ink }]}>
+            {isFirstExchange ? "Not now" : "End"}
+          </Text>
         </Pressable>
 
         <View style={styles.sessionLabel} pointerEvents="none">
           <Text style={[styles.sessionKicker, { color: palette.muted }]}>
-            LIVE CONVERSATION
+            {isFirstExchange ? "FIRST EXCHANGE" : "LIVE CONVERSATION"}
           </Text>
           <Text style={[styles.sessionTitle, { color: palette.ink }]}>
-            {scenario?.title ?? "Open conversation"}
+            {isFirstExchange
+              ? "No setup needed"
+              : (scenario?.title ?? "Open conversation")}
           </Text>
         </View>
 
-        <Pressable
-          testID="phrase-help"
-          accessibilityRole="button"
-          accessibilityLabel={
-            showPhraseHelp ? "Hide phrase help" : "Show phrase help"
-          }
-          accessibilityState={{ expanded: showPhraseHelp }}
-          onPress={togglePhraseHelp}
-          style={[
-            styles.headerIcon,
-            {
-              borderColor: palette.hairline,
-              backgroundColor: showPhraseHelp
-                ? palette.seamSoft
-                : "transparent",
-            },
-          ]}
-        >
-          <MessageCircleMore color={palette.ink} size={19} />
-        </Pressable>
+        {isFirstExchange ? (
+          <View
+            style={[styles.headerIcon, { borderColor: "transparent" }]}
+            accessibilityElementsHidden
+          />
+        ) : (
+          <Pressable
+            testID="phrase-help"
+            accessibilityRole="button"
+            accessibilityLabel={
+              showPhraseHelp ? "Hide phrase help" : "Show phrase help"
+            }
+            accessibilityState={{ expanded: showPhraseHelp }}
+            onPress={togglePhraseHelp}
+            style={[
+              styles.headerIcon,
+              {
+                borderColor: palette.hairline,
+                backgroundColor: showPhraseHelp
+                  ? palette.seamSoft
+                  : "transparent",
+              },
+            ]}
+          >
+            <MessageCircleMore color={palette.ink} size={19} />
+          </Pressable>
+        )}
       </View>
 
       <ScrollView
@@ -868,13 +925,21 @@ export default function SessionScreen() {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.stage}>
-          <AcousticVoiceForm phase={session.voice.phase} energy={audioEnergy} />
-          <CurrentUtterance
-            text={liveText}
-            isKoe={!retryTarget && latestTurn?.role === "assistant"}
-            palette={palette}
+        <View style={[styles.stage, isVoiceRecovery && styles.stageCompact]}>
+          <AcousticVoiceForm
+            phase={session.voice.phase}
+            energy={audioEnergy}
+            compact={isVoiceRecovery}
           />
+          {isFirstExchange && !isVoiceRecovery ? (
+            <FirstExchangePrompt palette={palette} />
+          ) : (
+            <CurrentUtterance
+              text={liveText}
+              isKoe={!retryTarget && latestTurn?.role === "assistant"}
+              palette={palette}
+            />
+          )}
         </View>
 
         <VoiceLifecyclePanel
@@ -1152,6 +1217,36 @@ function CurrentUtterance({
       >
         {text}
       </Text>
+    </View>
+  );
+}
+
+function FirstExchangePrompt({ palette }: { palette: ConversationPalette }) {
+  return (
+    <View
+      accessible
+      accessibilityRole="summary"
+      accessibilityLabel="Your first exchange. Hold the microphone, say a line, then release. Koe will answer and show one sound to tune. You can speak Japanese or English. The first hold asks for microphone and speech recognition access."
+      style={styles.firstExchange}
+    >
+      <Text style={[styles.firstExchangeLabel, { color: palette.proof }]}>
+        YOUR FIRST LINE / 最初の声
+      </Text>
+      <Text style={[styles.firstExchangeTitle, { color: palette.ink }]}>
+        こんにちは
+      </Text>
+      <Text style={[styles.firstExchangeInstruction, { color: palette.ink }]}>
+        Hold the mic, say a line, then release.
+      </Text>
+      <Text style={[styles.firstExchangeDetail, { color: palette.muted }]}>
+        Say this, or start in English. Koe will answer and show one sound to
+        tune.
+      </Text>
+      <View style={[styles.permissionNote, { borderColor: palette.hairline }]}>
+        <Text style={[styles.permissionText, { color: palette.muted }]}>
+          The first hold asks for microphone and speech recognition access.
+        </Text>
+      </View>
     </View>
   );
 }
@@ -1509,7 +1604,47 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 24,
   },
+  stageCompact: { minHeight: 286 },
   utterancePlaceholder: { height: 76 },
+  firstExchange: {
+    minHeight: 178,
+    maxWidth: 420,
+    alignItems: "center",
+    paddingHorizontal: 18,
+  },
+  firstExchangeLabel: {
+    fontFamily: "SFMono-Medium",
+    fontSize: 9,
+    letterSpacing: 1.25,
+    lineHeight: 13,
+  },
+  firstExchangeTitle: {
+    fontFamily: "Hiragino Mincho ProN",
+    fontSize: 34,
+    lineHeight: 48,
+    marginTop: 4,
+  },
+  firstExchangeInstruction: {
+    fontSize: 15,
+    fontWeight: "700",
+    lineHeight: 21,
+    textAlign: "center",
+    marginTop: 5,
+  },
+  firstExchangeDetail: {
+    fontSize: 12,
+    lineHeight: 18,
+    textAlign: "center",
+    marginTop: 5,
+    maxWidth: 320,
+  },
+  permissionNote: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginTop: 14,
+    paddingTop: 9,
+    paddingHorizontal: 12,
+  },
+  permissionText: { fontSize: 10, lineHeight: 15, textAlign: "center" },
   utterance: {
     minHeight: 76,
     maxWidth: 620,

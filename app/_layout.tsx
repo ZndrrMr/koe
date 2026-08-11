@@ -1,5 +1,5 @@
 import "../global.css";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -19,6 +19,7 @@ export default function RootLayout() {
   const [ready, setReady] = useState(false);
   const router = useRouter();
   const segments = useSegments();
+  const firstExchangeReviewApplied = useRef(false);
   const onboardingDone = useSettings((s) => s.onboardingDone);
   const reviewStatusBarStyle =
     __DEV__ && process.env.EXPO_PUBLIC_KOE_REVIEW_SCHEME === "dark"
@@ -41,9 +42,27 @@ export default function RootLayout() {
     if (!ready) return;
     const first = segments[0];
     const firstRoute = String(first ?? "");
+    const secondRoute = String(Array.from(segments)[1] ?? "");
     const reviewRoute = __DEV__
       ? process.env.EXPO_PUBLIC_KOE_REVIEW_ROUTE
       : undefined;
+    if (
+      reviewRoute === "first-exchange" &&
+      !firstExchangeReviewApplied.current
+    ) {
+      firstExchangeReviewApplied.current = true;
+      if (first === "session") return;
+      router.replace({
+        pathname: "/session/[id]",
+        params: {
+          id:
+            process.env.EXPO_PUBLIC_KOE_REVIEW_SESSION_ID ??
+            "zan-852-first-exchange",
+          intro: "1",
+        },
+      });
+      return;
+    }
     if (reviewRoute === "visual-study" && first !== "visual-study") {
       router.replace("/visual-study");
       return;
@@ -68,7 +87,7 @@ export default function RootLayout() {
     }
     if (
       reviewRoute === "library" &&
-      (first !== "(tabs)" || String(segments[1] ?? "") !== "library")
+      (first !== "(tabs)" || secondRoute !== "library")
     ) {
       router.replace("/(tabs)/library");
       return;
@@ -76,8 +95,6 @@ export default function RootLayout() {
     const isDevelopmentStudy = __DEV__ && first === "visual-study";
     if (!onboardingDone && first !== "onboarding" && !isDevelopmentStudy) {
       router.replace("/onboarding/welcome");
-    } else if (onboardingDone && first === "onboarding") {
-      router.replace("/(tabs)/speak");
     }
   }, [ready, onboardingDone, segments]);
 
@@ -91,6 +108,10 @@ export default function RootLayout() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="onboarding" />
+            <Stack.Screen
+              name="preferences"
+              options={{ presentation: "modal" }}
+            />
             <Stack.Screen
               name="session/[id]"
               options={{ presentation: "fullScreenModal" }}
