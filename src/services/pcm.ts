@@ -86,3 +86,13 @@ export function pcmBase64ToWavBase64(
   }
   return btoa(binary);
 }
+
+export function pcmBase64ChunksToWavBase64(
+  chunks: string[],
+  sampleRate: number,
+  channels = 1,
+): string {
+  if (!chunks.length) return pcmBase64ToWavBase64("", sampleRate, channels);
+  const pcmBinary = chunks.map((chunk) => atob(chunk)).join("");
+  return pcmBase64ToWavBase64(btoa(pcmBinary), sampleRate, channels);
+}

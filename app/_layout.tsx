@@ -40,6 +40,7 @@ export default function RootLayout() {
   useEffect(() => {
     if (!ready) return;
     const first = segments[0];
+    const firstRoute = String(first ?? "");
     const reviewRoute = __DEV__
       ? process.env.EXPO_PUBLIC_KOE_REVIEW_ROUTE
       : undefined;
@@ -50,8 +51,26 @@ export default function RootLayout() {
     if (reviewRoute === "session" && first !== "session") {
       router.replace({
         pathname: "/session/[id]",
-        params: { id: "zan-849-simulator-review" },
+        params: {
+          id:
+            process.env.EXPO_PUBLIC_KOE_REVIEW_SESSION_ID ??
+            "zan-849-simulator-review",
+        },
       });
+      return;
+    }
+    if (
+      reviewRoute === "session-history-proof" &&
+      firstRoute !== "session-history-proof"
+    ) {
+      router.replace("/session-history-proof" as never);
+      return;
+    }
+    if (
+      reviewRoute === "library" &&
+      (first !== "(tabs)" || String(segments[1] ?? "") !== "library")
+    ) {
+      router.replace("/(tabs)/library");
       return;
     }
     const isDevelopmentStudy = __DEV__ && first === "visual-study";
@@ -78,6 +97,7 @@ export default function RootLayout() {
             />
             <Stack.Screen name="about" options={{ presentation: "modal" }} />
             <Stack.Screen name="visual-study" />
+            <Stack.Screen name="session-history-proof" />
           </Stack>
         </SafeAreaProvider>
       </GestureHandlerRootView>

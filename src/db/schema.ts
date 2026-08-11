@@ -36,11 +36,15 @@ export const cards = sqliteTable("cards", {
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
   scenarioId: text("scenario_id").notNull(),
+  topic: text("topic"),
   startedAt: integer("started_at").notNull(),
   endedAt: integer("ended_at"),
+  updatedAt: integer("updated_at").notNull(),
+  status: text("status").notNull().default("active"),
   registerTarget: text("register_target").notNull(),
   jlptTarget: integer("jlpt_target").notNull(),
   turnCount: integer("turn_count").notNull().default(0),
+  closeoutJson: text("closeout_json"),
 });
 
 export const turns = sqliteTable("turns", {
@@ -58,6 +62,26 @@ export const turns = sqliteTable("turns", {
   feedbackJson: text("feedback_json"),
   retryOfTurnId: text("retry_of_turn_id"),
   attemptNumber: integer("attempt_number").notNull().default(1),
+  streaming: integer("streaming", { mode: "boolean" }).notNull().default(false),
+  interrupted: integer("interrupted", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  createdAt: integer("created_at").notNull(),
+});
+
+export const learningMoments = sqliteTable("learning_moments", {
+  id: text("id").primaryKey(),
+  sessionId: text("session_id")
+    .notNull()
+    .references(() => sessions.id),
+  sourceTurnId: text("source_turn_id").notNull(),
+  kind: text("kind").notNull(),
+  textJa: text("text_ja").notNull(),
+  textEn: text("text_en"),
+  note: text("note"),
+  audioUri: text("audio_uri"),
+  score: integer("score"),
+  decision: text("decision").notNull().default("pending"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -83,3 +107,4 @@ export type Kanji = typeof kanji.$inferSelect;
 export type Card = typeof cards.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Turn = typeof turns.$inferSelect;
+export type LearningMomentRow = typeof learningMoments.$inferSelect;

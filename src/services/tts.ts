@@ -4,7 +4,11 @@ import { config, hasWorker } from "@/utils/config";
 import { authHeaders, workerUrl } from "@/services/api";
 import { sha256 } from "@/utils/hash";
 import { log } from "@/utils/log";
-import { pcm16EnergyFromBase64, pcmBase64ToWavBase64 } from "@/services/pcm";
+import {
+  pcm16EnergyFromBase64,
+  pcmBase64ChunksToWavBase64,
+  pcmBase64ToWavBase64,
+} from "@/services/pcm";
 
 export type TTSVoice = "ja-female-1" | "ja-female-2" | "ja-male-1";
 
@@ -187,6 +191,8 @@ type PCMPlaybackQueueOptions = {
   onFinished?: () => void;
   onError?: (error: Error) => void;
   onEnergy?: (energy: number) => void;
+  captureKey?: string;
+  onCaptured?: (audioUri: string) => void;
 };
 
 export class PCMPlaybackQueue {
@@ -195,6 +201,10 @@ export class PCMPlaybackQueue {
   private stopped = false;
   private inputFinished = false;
   private started = false;
+  private captured = false;
+  private captureChunks: string[] = [];
+  private captureSampleRate = 48_000;
+  private captureChannels = 1;
   private writeChain: Promise<void> = Promise.resolve();
   private resolveDone!: () => void;
   private readonly done = new Promise<void>((resolve) => {
@@ -211,6 +221,9 @@ export class PCMPlaybackQueue {
     channels = 1,
   ): Promise<void> {
     if (!audioBase64 || this.stopped) return Promise.resolve();
+    this.captureChunks.push(audioBase64);
+    this.captureSampleRate = sampleRate;
+    this.captureChannels = channels;
     this.options.onEnergy?.(pcm16EnergyFromBase64(audioBase64));
     this.writeChain = this.writeChain.then(async () => {
       if (this.stopped) return;
@@ -232,6 +245,7 @@ export class PCMPlaybackQueue {
 
   async finish(): Promise<void> {
     await this.writeChain;
+    await this.persistCapture();
     this.inputFinished = true;
     this.maybeFinish();
     return this.done;
@@ -239,6 +253,8 @@ export class PCMPlaybackQueue {
 
   async stop(): Promise<void> {
     if (this.stopped) return;
+    await this.writeChain;
+    await this.persistCapture();
     this.stopped = true;
     const player = this.player;
     this.player = null;
@@ -257,6 +273,34 @@ export class PCMPlaybackQueue {
     if (currentStream === this) currentStream = null;
     this.options.onEnergy?.(0);
     this.resolveDone();
+  }
+
+  private async persistCapture(): Promise<void> {
+    if (
+      this.captured ||
+      !this.captureChunks.length ||
+      !this.options.captureKey
+    ) {
+      return;
+    }
+    this.captured = true;
+    try {
+      const wav = pcmBase64ChunksToWavBase64(
+        this.captureChunks,
+        this.captureSampleRate,
+        this.captureChannels,
+      );
+      const uri = await saveAudioFromBase64(
+        wav,
+        `stream-${this.options.captureKey}`,
+        "wav",
+      );
+      this.options.onCaptured?.(uri);
+    } catch (error) {
+      log.warn("Could not preserve streamed reply audio", error);
+    } finally {
+      this.captureChunks = [];
+    }
   }
 
   private drain(): void {

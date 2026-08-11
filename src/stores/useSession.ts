@@ -1,7 +1,19 @@
 import { create } from "zustand";
 import type { Register, JlptLevel } from "@/data/scenarios";
-import { persistSession, persistTurn } from "@/db";
-import type { PronunciationFeedback } from "@/services/pitch";
+import {
+  completeSession,
+  loadSession,
+  persistSession,
+  persistTurn,
+  prepareSessionCloseout,
+  setLearningMomentDecision,
+} from "@/db";
+import {
+  withMomentDecision,
+  type LearningMomentDecision,
+  type SessionCloseout,
+  type SessionTurnSnapshot,
+} from "@/db/sessionHistory";
 import { log } from "@/utils/log";
 import {
   INITIAL_VOICE_LIFECYCLE,
@@ -17,102 +29,118 @@ export type ConversationContext = {
   jlptTarget?: JlptLevel;
 };
 
-export type ChatTurn = {
-  id: string;
-  role: "user" | "assistant";
-  textJa: string;
-  textEn?: string;
-  audioUri?: string;
-  referenceAudioUri?: string;
-  pronunciation?: PronunciationFeedback;
-  retryOfTurnId?: string;
-  attemptNumber?: number;
-  corrections?: {
-    particles: Array<{
-      original: string;
-      corrected: string;
-      explanation: string;
-    }>;
-    register: { consistent: boolean; note?: string };
-    other: Array<{ original: string; corrected: string; explanation: string }>;
-  };
-  createdAt: number;
-  streaming?: boolean;
-  interrupted?: boolean;
-};
+export type ChatTurn = SessionTurnSnapshot;
 
 type SessionState = {
   id: string | null;
   context: ConversationContext;
   turns: ChatTurn[];
+  hydration: "idle" | "loading" | "ready";
+  closeout: SessionCloseout | null;
   isRecording: boolean;
   isStreaming: boolean;
   voice: VoiceLifecycle;
   latency: VoiceLatency;
 
-  start: (id: string, context?: ConversationContext) => void;
+  start: (id: string, context?: ConversationContext) => Promise<void>;
   addTurn: (turn: ChatTurn) => void;
   patchTurn: (id: string, patch: Partial<ChatTurn>) => void;
   appendAssistantText: (id: string, chunk: string) => void;
-  setRecording: (v: boolean) => void;
-  setStreaming: (v: boolean) => void;
+  setRecording: (value: boolean) => void;
+  setStreaming: (value: boolean) => void;
   setVoice: (voice: VoiceLifecycle) => void;
   setVoicePhase: (phase: VoicePhase, patch?: Partial<VoiceLifecycle>) => void;
   setInterimTranscript: (text: string) => void;
   setLatency: (latency: VoiceLatency) => void;
-  end: () => void;
+  prepareCloseout: () => Promise<SessionCloseout | null>;
+  setMomentDecision: (
+    momentId: string,
+    decision: LearningMomentDecision,
+  ) => Promise<void>;
+  end: () => Promise<void>;
 };
 
 const sessionPersistence = new Map<string, Promise<void>>();
 const turnPersistence = new Map<string, Promise<void>>();
 
+function mergeTurns(persisted: ChatTurn[], inMemory: ChatTurn[]): ChatTurn[] {
+  const turns = new Map(persisted.map((turn) => [turn.id, turn]));
+  for (const turn of inMemory) turns.set(turn.id, turn);
+  return [...turns.values()].sort(
+    (left, right) => left.createdAt - right.createdAt,
+  );
+}
+
 export const useSession = create<SessionState>((set, get) => ({
   id: null,
   context: {},
   turns: [],
+  hydration: "idle",
+  closeout: null,
   isRecording: false,
   isStreaming: false,
   voice: INITIAL_VOICE_LIFECYCLE,
   latency: {},
-  start: (id, context = {}) => {
-    const ready = persistSession({
-      id,
-      scenarioId: context.scenarioId,
-      registerTarget: context.registerTarget,
-      jlptTarget: context.jlptTarget,
-    }).catch((error) => {
-      log.warn("Could not persist session", error);
-    });
-    sessionPersistence.set(id, ready);
+  start: async (id, context = {}) => {
     set({
       id,
       context,
       turns: [],
+      hydration: "loading",
+      closeout: null,
       isRecording: false,
       isStreaming: false,
       voice: INITIAL_VOICE_LIFECYCLE,
       latency: {},
     });
+    const ready = persistSession({
+      id,
+      scenarioId: context.scenarioId,
+      topic: context.topic,
+      registerTarget: context.registerTarget,
+      jlptTarget: context.jlptTarget,
+    });
+    sessionPersistence.set(id, ready);
+    try {
+      await ready;
+      const restored = await loadSession(id);
+      if (get().id !== id) return;
+      const persistedContext = (restored?.context ?? {}) as ConversationContext;
+      set((state) => ({
+        context: { ...persistedContext, ...context },
+        turns: mergeTurns(restored?.turns ?? [], state.turns),
+        closeout: restored?.closeout ?? null,
+        hydration: "ready",
+      }));
+    } catch (error) {
+      log.warn("Could not restore session", error);
+      if (get().id === id) set({ hydration: "ready" });
+    }
   },
   addTurn: (turn) => {
-    set((state) => ({ turns: [...state.turns, turn] }));
+    set((state) => ({ turns: mergeTurns(state.turns, [turn]) }));
     persistChatTurn(get().id, turn);
   },
   patchTurn: (id, patch) => {
-    set((s) => ({
-      turns: s.turns.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+    set((state) => ({
+      turns: state.turns.map((turn) =>
+        turn.id === id ? { ...turn, ...patch } : turn,
+      ),
     }));
     const turn = get().turns.find((candidate) => candidate.id === id);
     if (turn) persistChatTurn(get().id, turn);
   },
-  appendAssistantText: (id, chunk) =>
-    set((s) => ({
-      turns: s.turns.map((t) =>
-        t.id === id ? { ...t, textJa: t.textJa + chunk } : t,
+  appendAssistantText: (id, chunk) => {
+    set((state) => ({
+      turns: state.turns.map((turn) =>
+        turn.id === id ? { ...turn, textJa: turn.textJa + chunk } : turn,
       ),
-    })),
-  setRecording: (v) => set({ isRecording: v }),
-  setStreaming: (v) => set({ isStreaming: v }),
+    }));
+    const turn = get().turns.find((candidate) => candidate.id === id);
+    if (turn) persistChatTurn(get().id, turn);
+  },
+  setRecording: (value) => set({ isRecording: value }),
+  setStreaming: (value) => set({ isStreaming: value }),
   setVoice: (voice) => set({ voice }),
   setVoicePhase: (phase, patch = {}) =>
     set((state) => ({
@@ -134,23 +162,73 @@ export const useSession = create<SessionState>((set, get) => ({
       },
     })),
   setLatency: (latency) => set({ latency }),
-  end: () =>
+  prepareCloseout: async () => {
+    const sessionId = get().id;
+    if (!sessionId) return null;
+    await flushSessionPersistence(sessionId);
+    try {
+      const closeout = await prepareSessionCloseout(sessionId, get().turns);
+      if (get().id === sessionId) set({ closeout });
+      return closeout;
+    } catch (error) {
+      log.warn("Could not prepare session closeout", error);
+      return null;
+    }
+  },
+  setMomentDecision: async (momentId, decision) => {
+    const sessionId = get().id;
+    if (!sessionId) return;
+    const current = get().closeout ?? (await get().prepareCloseout());
+    if (!current || get().id !== sessionId) return;
+    set({ closeout: withMomentDecision(current, momentId, decision) });
+    try {
+      await setLearningMomentDecision(sessionId, momentId, decision);
+    } catch (error) {
+      log.warn("Could not update saved moment", error);
+      if (get().id === sessionId) set({ closeout: current });
+    }
+  },
+  end: async () => {
+    const sessionId = get().id;
+    if (!sessionId) return;
+    await flushSessionPersistence(sessionId);
+    try {
+      await completeSession(sessionId, get().turns);
+    } catch (error) {
+      log.warn("Could not complete session", error);
+      throw error;
+    }
+    if (get().id !== sessionId) return;
     set({
       id: null,
       context: {},
       turns: [],
+      hydration: "idle",
+      closeout: null,
       isRecording: false,
       isStreaming: false,
       voice: INITIAL_VOICE_LIFECYCLE,
       latency: {},
-    }),
+    });
+  },
 }));
+
+async function flushSessionPersistence(sessionId: string): Promise<void> {
+  await sessionPersistence.get(sessionId);
+  const prefix = `${sessionId}:`;
+  await Promise.all(
+    [...turnPersistence.entries()]
+      .filter(([key]) => key.startsWith(prefix))
+      .map(([, ready]) => ready),
+  );
+}
 
 function persistChatTurn(sessionId: string | null, turn: ChatTurn) {
   if (!sessionId) return;
   const pronunciation = turn.pronunciation;
+  const key = `${sessionId}:${turn.id}`;
   const sessionReady = sessionPersistence.get(sessionId) ?? Promise.resolve();
-  const ready = (turnPersistence.get(turn.id) ?? sessionReady)
+  const ready = (turnPersistence.get(key) ?? sessionReady)
     .then(() =>
       persistTurn({
         id: turn.id,
@@ -163,6 +241,8 @@ function persistChatTurn(sessionId: string | null, turn: ChatTurn) {
         retryOfTurnId: turn.retryOfTurnId,
         attemptNumber: turn.attemptNumber,
         createdAt: turn.createdAt,
+        streaming: turn.streaming,
+        interrupted: turn.interrupted,
         pitchData: pronunciation
           ? {
               reference: pronunciation.reference,
@@ -194,8 +274,9 @@ function persistChatTurn(sessionId: string | null, turn: ChatTurn) {
             : undefined,
       }),
     )
+    .then(() => undefined)
     .catch((error) => {
       log.warn("Could not persist turn", error);
     });
-  turnPersistence.set(turn.id, ready);
+  turnPersistence.set(key, ready);
 }

@@ -21,7 +21,10 @@ export type ConversationCorrections = {
 export type ConversationResult = {
   fullText: string;
   /** Resolves independently so coaching never delays response audio. */
-  feedback: Promise<ConversationCorrections>;
+  feedback: Promise<{
+    corrections: ConversationCorrections;
+    translations: { user?: string; tutor?: string };
+  }>;
 };
 
 export type ConversationChunk =
@@ -73,7 +76,13 @@ export async function* streamConversation(opts: {
     yield { type: "text", text: reply };
     return {
       fullText: reply,
-      feedback: Promise.resolve(EMPTY_CORRECTIONS),
+      feedback: Promise.resolve({
+        corrections: EMPTY_CORRECTIONS,
+        translations: {
+          user: undefined,
+          tutor: "I see. Tell me a little more.",
+        },
+      }),
     };
   }
 
@@ -167,7 +176,10 @@ export async function* streamConversation(opts: {
 
   fullText = fullText.trim();
 
-  const feedback = postJson<{ corrections?: ConversationCorrections }>(
+  const feedback = postJson<{
+    corrections?: ConversationCorrections;
+    translations?: { user?: string; tutor?: string };
+  }>(
     "/llm/flash",
     {
       task: "feedback",
@@ -180,13 +192,16 @@ export async function* streamConversation(opts: {
     { signal: opts.signal },
   )
     .then((result) => ({
-      particles: result.corrections?.particles ?? [],
-      register: result.corrections?.register ?? { consistent: true },
-      other: result.corrections?.other ?? [],
+      corrections: {
+        particles: result.corrections?.particles ?? [],
+        register: result.corrections?.register ?? { consistent: true },
+        other: result.corrections?.other ?? [],
+      },
+      translations: result.translations ?? {},
     }))
     .catch((error) => {
       log.warn("feedback fetch failed", error);
-      return EMPTY_CORRECTIONS;
+      return { corrections: EMPTY_CORRECTIONS, translations: {} };
     });
 
   return {

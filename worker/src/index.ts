@@ -469,13 +469,17 @@ DEFAULT COACHING CONTRACT:
 
 Return ONLY valid JSON:
 {
+  "translations": {
+    "user": "a concise natural English translation of the user's utterance",
+    "tutor": "a concise natural English translation of the conversation reply"
+  },
   "corrections": {
     "particles": [{"original":"は","corrected":"が","explanation":"one sentence"}],
     "register": {"consistent": true, "note": null},
     "other": [{"original":"行きます","corrected":"参ります","explanation":"one sentence"}]
   }
 }
-Unless correction is clearly useful under the contract, return empty arrays and register.consistent=true.`;
+Always translate both nonempty utterances. Unless correction is clearly useful under the contract, return empty arrays and register.consistent=true.`;
   } else {
     return c.text(`unknown task: ${task}`, 400);
   }

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Alert,
   Linking,
   Modal,
   Pressable,
@@ -12,10 +13,13 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import {
+  Bookmark,
+  Check,
   MessageCircleMore,
   RotateCcw,
   Send,
   Settings,
+  Trash2,
   Volume2,
   X,
 } from "lucide-react-native";
@@ -61,6 +65,11 @@ import {
   type VoiceLifecycle,
 } from "@/voice/lifecycle";
 import { ResponseRunController } from "@/voice/responseRun";
+import {
+  buildSessionCloseout,
+  type LearningMomentDecision,
+  type SessionCloseout,
+} from "@/db/sessionHistory";
 
 type FailedReply = { text: string; audioUri?: string; assistantTurnId: string };
 
@@ -96,6 +105,8 @@ export default function SessionScreen() {
   const responseRunsRef = useRef(new ResponseRunController());
   const failedReplyRef = useRef<FailedReply | null>(null);
   const latencyTrackerRef = useRef(new VoiceLatencyTracker());
+  const pendingEnrichmentRef = useRef(new Set<Promise<void>>());
+  const closeoutPreparationRef = useRef<Promise<unknown>>(Promise.resolve());
   const voiceSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -103,7 +114,7 @@ export default function SessionScreen() {
   useEffect(() => {
     if (!id || useSession.getState().id === id) return;
     const store = useSession.getState();
-    store.start(
+    void store.start(
       id,
       scenario
         ? {
@@ -328,6 +339,10 @@ export default function SessionScreen() {
         useSession.getState().setVoice(voiceError("playbackFailure"));
       };
       const audioQueue = new PCMPlaybackQueue({
+        captureKey: assistantTurnId,
+        onCaptured: (audioUri) => {
+          useSession.getState().patchTurn(assistantTurnId, { audioUri });
+        },
         onStarted: () => {
           if (!responseRunsRef.current.isCurrent(assistantTurnId)) return;
           const latency = latencyTrackerRef.current.firstAudioPlayed();
@@ -360,8 +375,20 @@ export default function SessionScreen() {
               streaming: false,
             });
             if (userTurnId) {
-              void result.feedback.then((corrections) => {
-                useSession.getState().patchTurn(userTurnId!, { corrections });
+              const enrichment = result.feedback.then(async (feedback) => {
+                const store = useSession.getState();
+                store.patchTurn(userTurnId!, {
+                  corrections: feedback.corrections,
+                  textEn: feedback.translations.user,
+                });
+                store.patchTurn(assistantTurnId, {
+                  textEn: feedback.translations.tutor,
+                });
+                if (store.closeout) await store.prepareCloseout();
+              });
+              pendingEnrichmentRef.current.add(enrichment);
+              void enrichment.finally(() => {
+                pendingEnrichmentRef.current.delete(enrichment);
               });
             }
             failedReplyRef.current = null;
@@ -696,16 +723,27 @@ export default function SessionScreen() {
   const endSession = () => {
     tap();
     responseRunsRef.current.interrupt();
-    void sttHandleRef.current?.cancel();
-    void stopSpeech();
     setAudioEnergy(0);
     setShowCoda(true);
+    closeoutPreparationRef.current = Promise.all([
+      sttHandleRef.current?.cancel() ?? Promise.resolve(),
+      stopSpeech(),
+    ]).then(() => useSession.getState().prepareCloseout());
   };
 
-  const finishSession = () => {
-    setShowCoda(false);
-    useSession.getState().end();
-    router.back();
+  const finishSession = async () => {
+    try {
+      await closeoutPreparationRef.current;
+      await Promise.allSettled([...pendingEnrichmentRef.current]);
+      await useSession.getState().end();
+      setShowCoda(false);
+      router.back();
+    } catch {
+      Alert.alert(
+        "Session not finished",
+        "Koe kept this conversation open so none of its learning moments are lost. Try again.",
+      );
+    }
   };
 
   const togglePhraseHelp = () => {
@@ -765,6 +803,9 @@ export default function SessionScreen() {
         : session.voice.phase === "correction"
           ? ""
           : (latestTurn?.textJa ?? "");
+  const closeout =
+    session.closeout ??
+    (session.id ? buildSessionCloseout(session.id, session.turns) : undefined);
 
   return (
     <SafeAreaView
@@ -917,10 +958,13 @@ export default function SessionScreen() {
 
       <SessionCoda
         visible={showCoda}
-        turns={session.turns}
+        closeout={closeout}
         palette={palette}
         onContinue={() => setShowCoda(false)}
-        onFinish={finishSession}
+        onDecision={(momentId, decision) =>
+          void useSession.getState().setMomentDecision(momentId, decision)
+        }
+        onFinish={() => void finishSession()}
       />
     </SafeAreaView>
   );
@@ -1162,21 +1206,20 @@ function CorrectionMoment({
 
 function SessionCoda({
   visible,
-  turns,
+  closeout,
   palette,
   onContinue,
+  onDecision,
   onFinish,
 }: {
   visible: boolean;
-  turns: ChatTurn[];
+  closeout?: SessionCloseout;
   palette: ConversationPalette;
   onContinue: () => void;
+  onDecision: (momentId: string, decision: LearningMomentDecision) => void;
   onFinish: () => void;
 }) {
-  const moments = memorableMoments(turns);
-  const visibleMoments = moments.length
-    ? moments
-    : ["The conversation is ready to continue."];
+  const moments = closeout?.moments ?? [];
   return (
     <Modal visible={visible} animationType="fade" onRequestClose={onContinue}>
       <SafeAreaView
@@ -1196,29 +1239,135 @@ function SessionCoda({
             <X color={palette.ink} size={19} />
           </Pressable>
         </View>
-        <View style={styles.codaBody}>
+        <ScrollView
+          style={styles.codaScroll}
+          contentContainerStyle={styles.codaBody}
+          showsVerticalScrollIndicator={false}
+        >
           <Text style={[styles.codaTitle, { color: palette.ink }]}>
             今日、残った声
           </Text>
           <Text style={[styles.codaSubtitle, { color: palette.muted }]}>
-            A few moments worth carrying forward—not a transcript.
+            Keep what helps. Discard the rest. Koe will not turn this into a
+            chat archive.
           </Text>
           <View style={styles.momentList}>
-            {visibleMoments.map((moment, index) => (
+            {moments.length ? (
+              moments.map((moment) => (
+                <View
+                  key={moment.id}
+                  style={[
+                    styles.momentRow,
+                    {
+                      borderColor:
+                        moment.decision === "saved"
+                          ? palette.success
+                          : palette.hairline,
+                      opacity: moment.decision === "discarded" ? 0.56 : 1,
+                    },
+                  ]}
+                >
+                  <View style={styles.momentCopy}>
+                    <Text style={[styles.momentKind, { color: palette.proof }]}>
+                      {momentKindLabel(moment.kind)}
+                    </Text>
+                    <Text style={[styles.momentText, { color: palette.ink }]}>
+                      {moment.textJa}
+                    </Text>
+                    {moment.textEn ? (
+                      <Text
+                        style={[
+                          styles.momentTranslation,
+                          { color: palette.muted },
+                        ]}
+                      >
+                        {moment.textEn}
+                      </Text>
+                    ) : null}
+                    {moment.note ? (
+                      <Text
+                        style={[styles.momentNote, { color: palette.muted }]}
+                      >
+                        {moment.note}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <View style={styles.momentActions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Keep ${moment.textJa}`}
+                      accessibilityState={{
+                        selected: moment.decision === "saved",
+                      }}
+                      onPress={() => onDecision(moment.id, "saved")}
+                      style={[
+                        styles.momentAction,
+                        {
+                          borderColor: palette.hairline,
+                          backgroundColor:
+                            moment.decision === "saved"
+                              ? palette.control
+                              : "transparent",
+                        },
+                      ]}
+                    >
+                      {moment.decision === "saved" ? (
+                        <Check color={palette.controlText} size={16} />
+                      ) : (
+                        <Bookmark color={palette.ink} size={16} />
+                      )}
+                      <Text
+                        style={[
+                          styles.momentActionText,
+                          {
+                            color:
+                              moment.decision === "saved"
+                                ? palette.controlText
+                                : palette.ink,
+                          },
+                        ]}
+                      >
+                        {moment.decision === "saved" ? "Kept" : "Keep"}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Discard ${moment.textJa}`}
+                      accessibilityState={{
+                        selected: moment.decision === "discarded",
+                      }}
+                      onPress={() => onDecision(moment.id, "discarded")}
+                      style={[
+                        styles.momentAction,
+                        { borderColor: palette.hairline },
+                      ]}
+                    >
+                      <Trash2 color={palette.muted} size={16} />
+                      <Text
+                        style={[
+                          styles.momentActionText,
+                          { color: palette.muted },
+                        ]}
+                      >
+                        {moment.decision === "discarded"
+                          ? "Discarded"
+                          : "Discard"}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))
+            ) : (
               <View
-                key={`${moment}-${index}`}
                 style={[styles.momentRow, { borderColor: palette.hairline }]}
               >
-                <Text style={[styles.momentNumber, { color: palette.proof }]}>
-                  {String(index + 1).padStart(2, "0")}
-                </Text>
                 <Text style={[styles.momentText, { color: palette.ink }]}>
-                  {moment}
+                  Keep talking to make a moment worth carrying forward.
                 </Text>
               </View>
-            ))}
+            )}
           </View>
-        </View>
+        </ScrollView>
         <View style={styles.codaActions}>
           <Pressable
             testID="resume-conversation"
@@ -1277,14 +1426,10 @@ function correctionNotesForTurn(turn: ChatTurn): string[] {
     : [];
 }
 
-function memorableMoments(turns: ChatTurn[]): string[] {
-  const correctionMoments = turns.flatMap((turn) =>
-    correctionNotesForTurn(turn).map((note) => note.split(" — ")[0]),
-  );
-  const spokenMoments = turns
-    .filter((turn) => turn.role === "user" && turn.textJa.trim())
-    .map((turn) => turn.textJa.trim());
-  return [...new Set([...correctionMoments, ...spokenMoments])].slice(-3);
+function momentKindLabel(kind: "expression" | "correction" | "retry") {
+  if (kind === "correction") return "THE CORRECTION THAT MATTERED";
+  if (kind === "retry") return "STRONGEST RETRY";
+  return "EXPRESSION WORTH KEEPING";
 }
 
 function AcousticAtmosphere({ palette }: { palette: ConversationPalette }) {
@@ -1507,7 +1652,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
-  codaBody: { flex: 1, justifyContent: "center", paddingHorizontal: 26 },
+  codaScroll: { flex: 1 },
+  codaBody: {
+    flexGrow: 1,
+    justifyContent: "center",
+    paddingHorizontal: 26,
+    paddingVertical: 24,
+  },
   codaTitle: {
     fontFamily: "Hiragino Mincho ProN",
     fontSize: 32,
@@ -1515,21 +1666,41 @@ const styles = StyleSheet.create({
     lineHeight: 44,
   },
   codaSubtitle: { fontSize: 13, lineHeight: 19, marginTop: 6, maxWidth: 380 },
-  momentList: { marginTop: 34 },
+  momentList: { marginTop: 26, gap: 10 },
   momentRow: {
-    minHeight: 76,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 18,
+    minHeight: 118,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+    padding: 14,
+    gap: 12,
   },
-  momentNumber: { fontFamily: "SFMono-Medium", fontSize: 10 },
+  momentCopy: { gap: 4 },
+  momentKind: {
+    fontFamily: "SFMono-Medium",
+    fontSize: 8,
+    letterSpacing: 1.15,
+    lineHeight: 12,
+  },
   momentText: {
-    flex: 1,
     fontFamily: "Hiragino Mincho ProN",
     fontSize: 17,
     lineHeight: 25,
   },
+  momentTranslation: { fontSize: 12, lineHeight: 17 },
+  momentNote: { fontSize: 11, lineHeight: 16 },
+  momentActions: { flexDirection: "row", gap: 8 },
+  momentAction: {
+    minHeight: CONVERSATION_TARGET.minimum,
+    flex: 1,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 4,
+    paddingHorizontal: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  momentActionText: { fontSize: 12, fontWeight: "700" },
   codaActions: { paddingHorizontal: 20, paddingBottom: 10, gap: 10 },
   codaSecondary: {
     minHeight: CONVERSATION_TARGET.codaAction,
