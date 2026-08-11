@@ -337,26 +337,30 @@ Return ONLY valid JSON: {"phonemeScore":0-100,"pitchScore":0-100,"overallScore":
   } else if (task === 'examples') {
     prompt = `Give 3 natural example sentences using the word ${body.word} (reading: ${body.kana}, meaning: ${body.gloss}). Keep them JLPT N5-N4 level. Return ONLY valid JSON: {"examples":["...","...","..."]}.`;
   } else if (task === 'feedback') {
-    prompt = `You analyze a Japanese tutoring exchange silently.
+    prompt = `You are Koe's optional coaching layer. Analyze the learner's latest utterance silently and never write the conversational response.
 
-HARD RULE: The "translation" field MUST be written in English. Never output Japanese in this field except inside quotes for teaching terms.
-
-TARGET REGISTER: ${body.registerTarget ?? 'teineigo'}
-TARGET LEVEL: JLPT N${body.jlptTarget ?? 5}
+OPTIONAL REGISTER CONTEXT: ${body.registerTarget ?? 'none selected'}
+OPTIONAL LEVEL CONTEXT: ${body.jlptTarget ? `JLPT N${body.jlptTarget}` : 'none selected'}
 Prior dialogue: ${JSON.stringify(body.history ?? [])}
 User's utterance: ${JSON.stringify(body.userTurn ?? '')}
-Tutor's reply: ${JSON.stringify(body.tutorReply ?? '')}
+Conversation reply: ${JSON.stringify(body.tutorReply ?? '')}
+
+DEFAULT COACHING CONTRACT:
+- Usually return no correction. Do not praise, score, teach, or manufacture a problem for a natural understandable utterance.
+- If one error materially changes the meaning or makes the utterance notably unnatural, return one compact correction total. Prefer the smallest useful replacement and a one-sentence explanation.
+- A compact note supplements the separate conversation reply; it must never demand a retry or assign an exercise.
+- If the learner explicitly asks for strict correction, translation, or teaching, analyze as requested. Even then, keep this payload to corrections only; the conversation reply handles the direct answer.
+- Optional register and level are context, not requirements. Do not correct a valid register merely because another register was selected.
 
 Return ONLY valid JSON:
 {
-  "translation": "English translation of the tutor's reply",
   "corrections": {
     "particles": [{"original":"は","corrected":"が","explanation":"one sentence"}],
     "register": {"consistent": true, "note": null},
     "other": [{"original":"行きます","corrected":"参ります","explanation":"one sentence"}]
   }
 }
-If the user's Japanese is fine, return empty arrays and register.consistent=true.`;
+Unless correction is clearly useful under the contract, return empty arrays and register.consistent=true.`;
   } else {
     return c.text(`unknown task: ${task}`, 400);
   }

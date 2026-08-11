@@ -39,7 +39,7 @@ export default function RootLayout() {
     if (!onboardingDone && first !== 'onboarding') {
       router.replace('/onboarding/welcome');
     } else if (onboardingDone && first === 'onboarding') {
-      router.replace('/(tabs)/learn');
+      router.replace('/(tabs)/speak');
     }
   }, [ready, onboardingDone, segments]);
 

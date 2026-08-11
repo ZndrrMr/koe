@@ -21,6 +21,10 @@ export function MicButton({ recording, disabled, onPressIn, onPressOut }: Props)
       <Animated.View style={style}>
         <Pressable
           disabled={disabled}
+          accessibilityRole="button"
+          accessibilityLabel={recording ? 'Release to send' : 'Hold to speak'}
+          accessibilityHint="Records your Japanese while held"
+          accessibilityState={{ disabled: Boolean(disabled) }}
           onPressIn={() => {
             pressHaptic();
             scale.value = withSpring(1.08, { damping: 14, stiffness: 220 });

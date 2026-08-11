@@ -9,9 +9,10 @@ export type Scenario = {
   illustrationEmoji: string;
   registerTarget: Register;
   difficulty: JlptLevel;
-  openingLine: string;
-  openingTranslation: string;
 };
+
+// These are optional topic and vocabulary cues. Selecting one does not start a
+// lesson, assign a persona, or authorize roleplay.
 
 export const SCENARIOS: Scenario[] = [
   {
@@ -22,8 +23,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '🏪',
     registerTarget: 'teineigo',
     difficulty: 5,
-    openingLine: 'いらっしゃいませ。袋はご利用ですか？',
-    openingTranslation: 'Welcome. Would you like a bag?',
   },
   {
     id: 'ramen',
@@ -33,8 +32,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '🍜',
     registerTarget: 'teineigo',
     difficulty: 5,
-    openingLine: 'いらっしゃい！ご注文はお決まりですか？',
-    openingTranslation: 'Welcome! Have you decided your order?',
   },
   {
     id: 'jikoshoukai',
@@ -44,8 +41,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '🙇',
     registerTarget: 'teineigo',
     difficulty: 5,
-    openingLine: 'はじめまして。新しく入られた方ですか？',
-    openingTranslation: 'Nice to meet you. Are you the new arrival?',
   },
   {
     id: 'directions',
@@ -55,8 +50,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '🧭',
     registerTarget: 'teineigo',
     difficulty: 5,
-    openingLine: 'はい、何かお困りですか？',
-    openingTranslation: 'Yes, is something the matter?',
   },
   {
     id: 'train-counter',
@@ -66,8 +59,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '🎫',
     registerTarget: 'keigo',
     difficulty: 4,
-    openingLine: 'お待たせしました。ご用件をお伺いします。',
-    openingTranslation: "Thanks for waiting. How may I help you?",
   },
   {
     id: 'doctor',
@@ -77,8 +68,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '🏥',
     registerTarget: 'teineigo',
     difficulty: 4,
-    openingLine: '今日はどうされましたか？',
-    openingTranslation: 'What brings you in today?',
   },
   {
     id: 'izakaya',
@@ -88,8 +77,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '🍻',
     registerTarget: 'casual',
     difficulty: 4,
-    openingLine: 'お疲れ！とりあえずビール？',
-    openingTranslation: 'Good job today! Beer to start?',
   },
   {
     id: 'hotel-checkin',
@@ -99,8 +86,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '🏨',
     registerTarget: 'keigo',
     difficulty: 4,
-    openingLine: 'いらっしゃいませ。本日はご宿泊でございますか？',
-    openingTranslation: 'Welcome. Are you staying with us today?',
   },
   {
     id: 'senpai-smalltalk',
@@ -110,8 +95,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '☕',
     registerTarget: 'teineigo',
     difficulty: 3,
-    openingLine: 'お、最近どう？忙しい？',
-    openingTranslation: 'Hey, how have you been? Busy?',
   },
   {
     id: 'phone-reservation',
@@ -121,8 +104,6 @@ export const SCENARIOS: Scenario[] = [
     illustrationEmoji: '📞',
     registerTarget: 'keigo',
     difficulty: 3,
-    openingLine: 'お電話ありがとうございます、さくら亭です。',
-    openingTranslation: 'Thank you for calling — this is Sakura-tei.',
   },
 ];
 

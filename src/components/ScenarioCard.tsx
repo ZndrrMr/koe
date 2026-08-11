@@ -18,6 +18,9 @@ export function ScenarioCard({ scenario, onPress }: Props) {
   return (
     <AnimatedPressable
       style={style}
+      accessibilityRole="button"
+      accessibilityLabel={`${scenario.title}. Optional conversation topic.`}
+      accessibilityHint="Starts a neutral conversation using this topic as context"
       onPressIn={() => (scale.value = withTiming(0.97, { duration: 120 }))}
       onPressOut={() => (scale.value = withTiming(1, { duration: 180 }))}
       onPress={() => {

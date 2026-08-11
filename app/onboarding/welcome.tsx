@@ -5,14 +5,25 @@ import { useRouter } from 'expo-router';
 import Svg, { Path } from 'react-native-svg';
 import { colors } from '@/theme/colors';
 import { tap } from '@/utils/haptics';
+import { useSettings } from '@/stores/useSettings';
 
 export default function WelcomeScreen() {
   const router = useRouter();
+  const complete = useSettings((state) => state.complete);
+
+  const startTalking = () => {
+    tap();
+    complete({});
+    router.replace('/(tabs)/speak');
+  };
+
   return (
     <SafeAreaView className="flex-1 bg-bg dark:bg-bg-dark items-center justify-between p-8">
       <View />
       <View className="items-center">
-        <Text className="font-jpBold text-[120px] text-primary" style={{ lineHeight: 130 }}>声</Text>
+        <Text className="font-jpBold text-[120px] text-primary" style={{ lineHeight: 130 }}>
+          声
+        </Text>
         <Text className="text-fg dark:text-fg-dark text-3xl font-bold mt-4">Speak Japanese.</Text>
         <Text className="text-fg dark:text-fg-dark text-3xl font-bold">Hear yourself.</Text>
         <View className="mt-10">
@@ -26,12 +37,25 @@ export default function WelcomeScreen() {
           </Svg>
         </View>
       </View>
-      <Pressable
-        onPress={() => { tap(); router.push('/onboarding/kana-check'); }}
-        className="bg-primary w-full py-4 rounded-full items-center"
-      >
-        <Text className="text-white font-semibold text-lg">Start</Text>
-      </Pressable>
+      <View className="w-full gap-2">
+        <Pressable
+          accessibilityRole="button"
+          onPress={startTalking}
+          className="bg-primary w-full min-h-14 px-5 py-4 rounded-full items-center justify-center"
+        >
+          <Text className="text-white font-semibold text-lg">Start talking</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            tap();
+            router.push('/onboarding/kana-check');
+          }}
+          className="w-full min-h-11 px-5 py-3 items-center justify-center"
+        >
+          <Text className="text-muted font-semibold">Personalize first</Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
 }

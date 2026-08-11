@@ -4,13 +4,7 @@ import { tap as hapticTap } from '@/utils/haptics';
 
 type Reply = { ja: string; en: string; hint: string };
 
-export function SuggestedReplyChips({
-  replies,
-  onPick,
-}: {
-  replies: Reply[];
-  onPick: (r: Reply) => void;
-}) {
+export function SuggestedReplyChips({ replies, onPick }: { replies: Reply[]; onPick: (r: Reply) => void }) {
   if (!replies.length) return null;
   return (
     <View className="flex-row gap-2 px-3 py-2">
@@ -21,7 +15,8 @@ export function SuggestedReplyChips({
             hapticTap();
             onPick(r);
           }}
-          className="flex-1 bg-surface dark:bg-surface-dark border border-black/5 dark:border-white/10 rounded-full px-3 py-2 items-center"
+          accessibilityRole="button"
+          className="min-h-11 flex-1 bg-surface dark:bg-surface-dark border border-black/5 dark:border-white/10 rounded-full px-3 py-2 items-center justify-center"
         >
           <Text className="text-fg dark:text-fg-dark text-sm" numberOfLines={1}>
             {r.ja}

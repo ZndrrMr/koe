@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, ScrollView, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { X, Lightbulb, Volume2 } from 'lucide-react-native';
+import { X, MessageCircleMore, Volume2 } from 'lucide-react-native';
 import { randomUUID } from 'expo-crypto';
 import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
 
@@ -23,7 +23,10 @@ import { colors } from '@/theme/colors';
 
 export default function SessionScreen() {
   const router = useRouter();
-  const { id, scenario: scenarioId } = useLocalSearchParams<{ id: string; scenario: string }>();
+  const { id, scenario: scenarioId } = useLocalSearchParams<{
+    id: string;
+    scenario?: string;
+  }>();
   const scenario = getScenario(scenarioId ?? '');
   const settings = useSettings();
   const bumpXp = useProgress((s) => s.bumpXp);
@@ -31,7 +34,7 @@ export default function SessionScreen() {
 
   const session = useSession();
   const [suggested, setSuggested] = useState<Array<{ ja: string; en: string; hint: string }>>([]);
-  const [hintLevel, setHintLevel] = useState(0);
+  const [showPhraseHelp, setShowPhraseHelp] = useState(false);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const sttHandleRef = useRef<Awaited<ReturnType<typeof startStreaming>> | null>(null);
@@ -49,21 +52,19 @@ export default function SessionScreen() {
   }, []);
 
   useEffect(() => {
-    if (!id || !scenario) return;
+    if (!id) return;
     if (session.id === id) return;
-    session.start(id, scenario.id, scenario.registerTarget, scenario.difficulty);
-
-    const opener: ChatTurn = {
-      id: randomUUID(),
-      role: 'assistant',
-      textJa: scenario.openingLine,
-      textEn: scenario.openingTranslation,
-      createdAt: Date.now(),
-    };
-    session.addTurn(opener);
-    annotateTurn(opener);
-    playAssistant(opener);
-    refreshSuggestions([{ role: 'assistant', content: scenario.openingLine }]);
+    session.start(
+      id,
+      scenario
+        ? {
+            scenarioId: scenario.id,
+            topic: scenario.description,
+            registerTarget: scenario.registerTarget,
+            jlptTarget: scenario.difficulty,
+          }
+        : {},
+    );
   }, [id, scenario?.id]);
 
   const annotateTurn = useCallback(async (turn: ChatTurn) => {
@@ -71,27 +72,29 @@ export default function SessionScreen() {
     setFuriganaCache((prev) => ({ ...prev, [turn.id]: runs }));
   }, []);
 
-  const playAssistant = useCallback(async (turn: ChatTurn) => {
-    try {
-      if (turn.audioUri) {
-        await play(turn.audioUri);
-        return;
+  const playAssistant = useCallback(
+    async (turn: ChatTurn) => {
+      try {
+        if (turn.audioUri) {
+          await play(turn.audioUri);
+          return;
+        }
+        if (!turn.textJa || !turn.textJa.trim()) return;
+        const res = await synthesize(turn.textJa, { voice: settings.voice });
+        await play(res.audioUri);
+      } catch (e) {
+        log.warn('TTS play failed', e);
       }
-      if (!turn.textJa || !turn.textJa.trim()) return;
-      const res = await synthesize(turn.textJa, { voice: settings.voice });
-      await play(res.audioUri);
-    } catch (e) {
-      log.warn('TTS play failed', e);
-    }
-  }, [settings.voice]);
+    },
+    [settings.voice],
+  );
 
   const refreshSuggestions = useCallback(
     async (history: Array<{ role: 'user' | 'assistant'; content: string }>) => {
-      if (!scenario) return;
       const out = await generateSuggestedReplies({
         history,
-        registerTarget: scenario.registerTarget,
-        jlptTarget: scenario.difficulty,
+        registerTarget: scenario?.registerTarget,
+        jlptTarget: scenario?.difficulty,
       });
       setSuggested(out);
     },
@@ -131,7 +134,7 @@ export default function SessionScreen() {
     }
     const { fullText, audioUri } = await handle.stop();
     if (!fullText.trim()) {
-      Alert.alert('Sorry — I did not catch that.', 'Try holding the mic a bit longer.');
+      Alert.alert('I did not catch that', 'Hold the mic and speak whenever you are ready.');
       return;
     }
     await sendUser(fullText, audioUri);
@@ -139,7 +142,6 @@ export default function SessionScreen() {
 
   const sendUser = useCallback(
     async (text: string, audioUri?: string) => {
-      if (!scenario) return;
       const userTurn: ChatTurn = {
         id: randomUUID(),
         role: 'user',
@@ -163,15 +165,12 @@ export default function SessionScreen() {
 
       const history = useSession
         .getState()
-        .turns
-        .filter((t) => t.id !== assistantTurn.id && t.textJa)
+        .turns.filter((t) => t.id !== assistantTurn.id && t.textJa)
         .map((t) => ({ role: t.role, content: t.textJa }));
 
       try {
         const gen = streamConversation({
-          scenarioId: scenario.id,
-          registerTarget: scenario.registerTarget,
-          jlptTarget: scenario.difficulty,
+          context: useSession.getState().context,
           history: history.slice(0, -1) as any,
           userTurn: text,
         });
@@ -183,7 +182,6 @@ export default function SessionScreen() {
             const finalText = result.fullText || reply;
             session.patchTurn(assistantTurn.id, {
               textJa: finalText,
-              textEn: result.translation,
               corrections: result.corrections,
               audioUri: result.audioUri,
               streaming: false,
@@ -198,11 +196,9 @@ export default function SessionScreen() {
                 .then((res) => play(res.audioUri))
                 .catch(() => {});
             }
-            refreshSuggestions([
-              ...history,
-              { role: 'user', content: text },
-              { role: 'assistant', content: finalText },
-            ] as any);
+            if (showPhraseHelp) {
+              refreshSuggestions([...history, { role: 'assistant', content: finalText }] as any);
+            }
             break;
           }
           reply = value;
@@ -218,7 +214,7 @@ export default function SessionScreen() {
         session.setStreaming(false);
       }
     },
-    [scenario, annotateTurn, bumpXp, tickDay, refreshSuggestions, settings.voice],
+    [annotateTurn, bumpXp, tickDay, refreshSuggestions, settings.voice, showPhraseHelp],
   );
 
   const endSession = () => {
@@ -235,29 +231,34 @@ export default function SessionScreen() {
     ]);
   };
 
-  const showHint = () => {
+  const togglePhraseHelp = () => {
     tap();
-    setHintLevel((n) => Math.min(n + 1, 3));
+    const next = !showPhraseHelp;
+    setShowPhraseHelp(next);
+    if (next && !suggested.length) {
+      const history = useSession
+        .getState()
+        .turns.filter((turn) => turn.textJa)
+        .map((turn) => ({ role: turn.role, content: turn.textJa }));
+      refreshSuggestions(history);
+    }
   };
-
-  if (!scenario) {
-    return (
-      <SafeAreaView className="flex-1 bg-bg items-center justify-center">
-        <Text className="text-fg">Scenario not found.</Text>
-      </SafeAreaView>
-    );
-  }
 
   return (
     <SafeAreaView className="flex-1 bg-bg dark:bg-bg-dark">
       <View className="flex-row items-center justify-between px-4 py-3 border-b border-black/5 dark:border-white/5">
-        <Pressable onPress={endSession} className="flex-row items-center gap-1">
+        <Pressable
+          accessibilityRole="button"
+          onPress={endSession}
+          className="min-h-11 min-w-11 flex-row items-center gap-1"
+        >
           <X color={colors.muted} size={22} />
           <Text className="text-muted">End</Text>
         </Pressable>
-        <Text className="text-fg dark:text-fg-dark font-semibold">
-          {scenario.title} · N{scenario.difficulty} · {scenario.registerTarget}
-        </Text>
+        <View className="items-center">
+          <Text className="text-fg dark:text-fg-dark font-semibold">{scenario?.title ?? 'Conversation'}</Text>
+          {scenario && <Text className="text-muted text-[10px] mt-0.5">Optional topic</Text>}
+        </View>
         <View style={{ width: 40 }} />
       </View>
 
@@ -265,8 +266,18 @@ export default function SessionScreen() {
         ref={scrollRef}
         className="flex-1 px-3"
         contentContainerClassName="py-4"
+        contentContainerStyle={{ flexGrow: 1 }}
         onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
       >
+        {!session.turns.length && (
+          <View className="flex-1 items-center justify-center px-8 py-20">
+            <Text className="font-jpBold text-fg dark:text-fg-dark text-2xl text-center">何でも話してみてください</Text>
+            <Text className="text-muted text-center mt-3 leading-5">
+              Hold the mic and speak in Japanese. Ask for help, translation, correction, or roleplay whenever you want
+              it.
+            </Text>
+          </View>
+        )}
         {session.turns.map((turn) => (
           <TurnBubble
             key={turn.id}
@@ -277,21 +288,24 @@ export default function SessionScreen() {
         ))}
       </ScrollView>
 
-      {hintLevel > 0 && (
-        <View className="mx-4 mb-2 p-3 bg-accent/10 rounded-xl">
-          {hintLevel >= 1 && <Text className="text-accent text-xs">Hint: continue the conversation politely.</Text>}
-          {hintLevel >= 2 && <Text className="text-accent text-xs mt-1">___を ___ください。</Text>}
-          {hintLevel >= 3 && suggested[0] && (
-            <Text className="text-accent mt-1">{suggested[0].ja} — {suggested[0].en}</Text>
-          )}
+      {showPhraseHelp && (
+        <View className="mx-4 mb-2 rounded-2xl bg-accent/10 px-3 py-3">
+          <Text className="text-accent text-xs font-semibold mb-2">Try one of these</Text>
+          <SuggestedReplyChips replies={suggested} onPick={(reply) => sendUser(reply.ja)} />
         </View>
       )}
 
-      <Pressable onPress={showHint} className="flex-row items-center gap-1 px-4 py-1">
-        <Lightbulb color={colors.warning} size={16} />
-        <Text className="text-warning text-xs">Hint ({hintLevel}/3)</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: showPhraseHelp }}
+        onPress={togglePhraseHelp}
+        className="min-h-11 flex-row items-center gap-2 px-4 py-2"
+      >
+        <MessageCircleMore color={colors.accent} size={17} />
+        <Text className="text-accent text-xs font-semibold">
+          {showPhraseHelp ? 'Hide phrase help' : 'Need a phrase?'}
+        </Text>
       </Pressable>
-      <SuggestedReplyChips replies={suggested} onPick={(r) => sendUser(r.ja)} />
 
       <View className="border-t border-black/5 dark:border-white/5">
         <MicButton
@@ -306,40 +320,54 @@ export default function SessionScreen() {
 }
 
 function TurnBubble({
-  turn, runs, onReplay,
-}: { turn: ChatTurn; runs: Awaited<ReturnType<typeof annotate>>; onReplay: () => void }) {
+  turn,
+  runs,
+  onReplay,
+}: {
+  turn: ChatTurn;
+  runs: Awaited<ReturnType<typeof annotate>>;
+  onReplay: () => void;
+}) {
   const isUser = turn.role === 'user';
+  const correctionNotes = turn.corrections
+    ? [
+        ...turn.corrections.particles.map((item) => `${item.original} → ${item.corrected} — ${item.explanation}`),
+        ...turn.corrections.other.map((item) => `${item.original} → ${item.corrected} — ${item.explanation}`),
+        ...(!turn.corrections.register.consistent && turn.corrections.register.note
+          ? [turn.corrections.register.note]
+          : []),
+      ]
+    : [];
+
   return (
     <View className={`my-2 max-w-[85%] ${isUser ? 'self-end items-end' : 'self-start items-start'}`}>
-      <View
-        className={`rounded-2xl px-4 py-3 ${isUser ? 'bg-primary' : 'bg-surface dark:bg-surface-dark'}`}
-      >
-        <JapaneseText
-          runs={runs}
-          color={isUser ? '#fff' : undefined}
-          fontSize={18}
-        />
+      <View className={`rounded-2xl px-4 py-3 ${isUser ? 'bg-primary' : 'bg-surface dark:bg-surface-dark'}`}>
+        <JapaneseText runs={runs} color={isUser ? '#fff' : undefined} fontSize={18} />
         {turn.textEn && (
-          <Text className={`text-xs mt-2 ${isUser ? 'text-white/70' : 'text-muted'}`}>
-            {turn.textEn}
-          </Text>
+          <Text className={`text-xs mt-2 ${isUser ? 'text-white/70' : 'text-muted'}`}>{turn.textEn}</Text>
         )}
         {!isUser && (
-          <Pressable onPress={onReplay} className="flex-row items-center mt-2 gap-1">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Replay response"
+            onPress={onReplay}
+            className="min-h-11 flex-row items-center mt-1 -mb-2 gap-1"
+          >
             <Volume2 color={colors.accent} size={14} />
             <Text className="text-accent text-xs">Replay</Text>
           </Pressable>
         )}
-        {turn.corrections?.particles.length ? (
-          <View className="mt-2 pt-2 border-t border-white/10">
-            {turn.corrections.particles.map((p, i) => (
-              <Text key={i} className="text-xs text-warning">
-                {p.original} → {p.corrected} ({p.explanation})
-              </Text>
-            ))}
-          </View>
-        ) : null}
       </View>
+      {!isUser && correctionNotes.length > 0 && (
+        <View className="mt-1 max-w-full rounded-xl bg-warning/10 px-3 py-2">
+          <Text className="text-warning text-[10px] font-bold uppercase">Quick note</Text>
+          {correctionNotes.map((note, index) => (
+            <Text key={index} className="text-fg dark:text-fg-dark text-xs mt-1">
+              {note}
+            </Text>
+          ))}
+        </View>
+      )}
     </View>
   );
 }

@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import type { Register, JlptLevel } from '@/data/scenarios';
 
+export type ConversationContext = {
+  scenarioId?: string;
+  topic?: string;
+  registerTarget?: Register;
+  jlptTarget?: JlptLevel;
+};
+
 export type ChatTurn = {
   id: string;
   role: 'user' | 'assistant';
@@ -9,7 +16,11 @@ export type ChatTurn = {
   audioUri?: string;
   pitch?: { f0: number[]; timestamps: number[] };
   corrections?: {
-    particles: Array<{ original: string; corrected: string; explanation: string }>;
+    particles: Array<{
+      original: string;
+      corrected: string;
+      explanation: string;
+    }>;
     register: { consistent: boolean; note?: string };
     other: Array<{ original: string; corrected: string; explanation: string }>;
   };
@@ -19,14 +30,12 @@ export type ChatTurn = {
 
 type SessionState = {
   id: string | null;
-  scenarioId: string | null;
-  registerTarget: Register;
-  jlptTarget: JlptLevel;
+  context: ConversationContext;
   turns: ChatTurn[];
   isRecording: boolean;
   isStreaming: boolean;
 
-  start: (id: string, scenarioId: string, registerTarget: Register, jlptTarget: JlptLevel) => void;
+  start: (id: string, context?: ConversationContext) => void;
   addTurn: (turn: ChatTurn) => void;
   patchTurn: (id: string, patch: Partial<ChatTurn>) => void;
   appendAssistantText: (id: string, chunk: string) => void;
@@ -37,14 +46,11 @@ type SessionState = {
 
 export const useSession = create<SessionState>((set) => ({
   id: null,
-  scenarioId: null,
-  registerTarget: 'teineigo',
-  jlptTarget: 5,
+  context: {},
   turns: [],
   isRecording: false,
   isStreaming: false,
-  start: (id, scenarioId, registerTarget, jlptTarget) =>
-    set({ id, scenarioId, registerTarget, jlptTarget, turns: [] }),
+  start: (id, context = {}) => set({ id, context, turns: [] }),
   addTurn: (turn) => set((s) => ({ turns: [...s.turns, turn] })),
   patchTurn: (id, patch) =>
     set((s) => ({
@@ -52,11 +58,9 @@ export const useSession = create<SessionState>((set) => ({
     })),
   appendAssistantText: (id, chunk) =>
     set((s) => ({
-      turns: s.turns.map((t) =>
-        t.id === id ? { ...t, textJa: t.textJa + chunk } : t,
-      ),
+      turns: s.turns.map((t) => (t.id === id ? { ...t, textJa: t.textJa + chunk } : t)),
     })),
   setRecording: (v) => set({ isRecording: v }),
   setStreaming: (v) => set({ isStreaming: v }),
-  end: () => set({ id: null, scenarioId: null, turns: [] }),
+  end: () => set({ id: null, context: {}, turns: [] }),
 }));
