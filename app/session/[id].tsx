@@ -3,6 +3,7 @@ import {
   Linking,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -39,8 +40,14 @@ import {
 import { MicButton } from "@/components/MicButton";
 import { SuggestedReplyChips } from "@/components/SuggestedReplyChips";
 import { AcousticVoiceForm } from "@/components/AcousticVoiceForm";
+import { PronunciationFeedbackCard } from "@/components/PronunciationFeedbackCard";
 import { tap, fail as failHaptic, success } from "@/utils/haptics";
 import { log } from "@/utils/log";
+import {
+  analyzePronunciation,
+  type PronunciationFeedback,
+} from "@/services/pitch";
+import { annotate } from "@/services/furigana";
 import {
   type ConversationPalette,
   useConversationPalette,
@@ -81,6 +88,7 @@ export default function SessionScreen() {
   const [dismissedCorrectionId, setDismissedCorrectionId] = useState<
     string | null
   >(null);
+  const [retryingTurnId, setRetryingTurnId] = useState<string | null>(null);
   const sttHandleRef = useRef<Awaited<
     ReturnType<typeof startStreaming>
   > | null>(null);
@@ -125,12 +133,6 @@ export default function SessionScreen() {
           role: "user",
           textJa: "明日は友達と京都に行きます。",
           createdAt: Date.now() - 2_000,
-        });
-        store.addTurn({
-          id: "review-assistant-1",
-          role: "assistant",
-          textJa: "いいですね。京都では何を見たいですか？",
-          createdAt: Date.now() - 1_000,
           corrections: {
             particles: [
               {
@@ -142,6 +144,12 @@ export default function SessionScreen() {
             register: { consistent: true },
             other: [],
           },
+        });
+        store.addTurn({
+          id: "review-assistant-1",
+          role: "assistant",
+          textJa: "いいですね。京都では何を見たいですか？",
+          createdAt: Date.now() - 1_000,
         });
         setShowCoda(true);
       }
@@ -187,34 +195,6 @@ export default function SessionScreen() {
     [id],
   );
 
-  const playAssistant = useCallback(
-    async (turn: ChatTurn) => {
-      try {
-        setAudioEnergy(0);
-        useSession.getState().setVoicePhase("speaking");
-        const playbackCallbacks = {
-          onFinished: () => settleReply(false),
-          onError: () => {
-            setAudioEnergy(0);
-            useSession.getState().setVoice(voiceError("playbackFailure"));
-          },
-        };
-        if (turn.audioUri) {
-          await play(turn.audioUri, playbackCallbacks);
-          return;
-        }
-        if (!turn.textJa.trim()) return;
-        const result = await synthesize(turn.textJa, { voice: settings.voice });
-        await play(result.audioUri, playbackCallbacks);
-      } catch (error) {
-        log.warn("TTS replay failed", error);
-        setAudioEnergy(0);
-        useSession.getState().setVoice(voiceError("playbackFailure"));
-      }
-    },
-    [settings.voice, settleReply],
-  );
-
   const refreshSuggestions = useCallback(
     async (history: Array<{ role: "user" | "assistant"; content: string }>) => {
       const output = await generateSuggestedReplies({
@@ -225,6 +205,47 @@ export default function SessionScreen() {
       setSuggested(output);
     },
     [scenario],
+  );
+
+  const analyzeUserPronunciation = useCallback(
+    async (
+      turnId: string,
+      targetText: string,
+      attemptAudioUri: string,
+      previous?: ChatTurn,
+    ): Promise<PronunciationFeedback | undefined> => {
+      try {
+        const targetReading = (await annotate(targetText))
+          .map((run) => run.reading ?? run.base)
+          .join("");
+        const referenceAudioUri =
+          previous?.referenceAudioUri ??
+          (
+            await synthesize(targetText, {
+              voice: settings.voice,
+              withTimestamps: true,
+            })
+          ).audioUri;
+        const pronunciation = await analyzePronunciation({
+          targetText,
+          targetReading,
+          referenceAudioUri,
+          attemptAudioUri,
+          previous: previous?.pronunciation
+            ? { attemptId: previous.id, feedback: previous.pronunciation }
+            : undefined,
+        });
+        useSession.getState().patchTurn(turnId, {
+          referenceAudioUri,
+          pronunciation,
+        });
+        return pronunciation;
+      } catch (error) {
+        log.warn("pronunciation analysis failed", error);
+        return undefined;
+      }
+    },
+    [settings.voice],
   );
 
   const sendUser = useCallback(
@@ -245,6 +266,7 @@ export default function SessionScreen() {
       await stopSpeech();
 
       const assistantTurnId = retryAssistantTurnId ?? randomUUID();
+      let userTurnId: string | undefined;
       if (retryAssistantTurnId) {
         useSession.getState().patchTurn(assistantTurnId, {
           textJa: "",
@@ -253,11 +275,13 @@ export default function SessionScreen() {
           corrections: undefined,
         });
       } else {
+        userTurnId = randomUUID();
         const userTurn: ChatTurn = {
-          id: randomUUID(),
+          id: userTurnId,
           role: "user",
           textJa: trimmed,
           audioUri,
+          attemptNumber: audioUri ? 1 : undefined,
           createdAt: Date.now(),
         };
         const assistantTurn: ChatTurn = {
@@ -269,6 +293,9 @@ export default function SessionScreen() {
         };
         useSession.getState().addTurn(userTurn);
         useSession.getState().addTurn(assistantTurn);
+        if (audioUri) {
+          void analyzeUserPronunciation(userTurnId, trimmed, audioUri);
+        }
         success();
       }
 
@@ -332,9 +359,11 @@ export default function SessionScreen() {
               textJa: finalText,
               streaming: false,
             });
-            void result.feedback.then((corrections) => {
-              useSession.getState().patchTurn(assistantTurnId, { corrections });
-            });
+            if (userTurnId) {
+              void result.feedback.then((corrections) => {
+                useSession.getState().patchTurn(userTurnId!, { corrections });
+              });
+            }
             failedReplyRef.current = null;
             bumpXp(10);
             tickDay();
@@ -454,6 +483,7 @@ export default function SessionScreen() {
     },
     [
       bumpXp,
+      analyzeUserPronunciation,
       refreshSuggestions,
       settings.voice,
       settleReply,
@@ -565,10 +595,66 @@ export default function SessionScreen() {
     }
   }, []);
 
+  const submitPronunciationRetry = useCallback(
+    async (previous: ChatTurn, transcript: string, audioUri: string) => {
+      const targetText = previous.pronunciation?.targetText ?? previous.textJa;
+      const turnId = randomUUID();
+      const retryTurn: ChatTurn = {
+        id: turnId,
+        role: "user",
+        textJa: transcript,
+        audioUri,
+        referenceAudioUri: previous.referenceAudioUri,
+        retryOfTurnId: previous.id,
+        attemptNumber: (previous.attemptNumber ?? 1) + 1,
+        createdAt: Date.now(),
+      };
+      useSession.getState().addTurn(retryTurn);
+      setRetryingTurnId(null);
+      setDraftTranscript("");
+      setDraftAudioUri(undefined);
+      useSession.getState().setVoicePhase("understanding", {
+        interimTranscript: "",
+      });
+      const result = await analyzeUserPronunciation(
+        turnId,
+        targetText,
+        audioUri,
+        previous,
+      );
+      if (result) {
+        useSession.getState().setVoicePhase("success");
+        result.retry?.targetImproved ? success() : tap();
+      } else {
+        useSession.getState().setVoice(voiceError("sttFailure"));
+      }
+      if (voiceSettleTimerRef.current)
+        clearTimeout(voiceSettleTimerRef.current);
+      voiceSettleTimerRef.current = setTimeout(() => {
+        if (useSession.getState().voice.phase === "success") {
+          useSession.getState().setVoicePhase("idle");
+        }
+      }, 1_400);
+    },
+    [analyzeUserPronunciation],
+  );
+
   const submitTranscript = useCallback(() => {
     const text = draftTranscript.trim();
     if (!text) {
       useSession.getState().setVoice(voiceError("silence"));
+      return;
+    }
+    if (retryingTurnId) {
+      const previous = useSession
+        .getState()
+        .turns.find((turn) => turn.id === retryingTurnId);
+      if (previous && draftAudioUri) {
+        void submitPronunciationRetry(previous, text, draftAudioUri);
+        return;
+      }
+      setRetryingTurnId(null);
+      useSession.getState().setVoice(voiceError("sttFailure"));
       return;
     }
     setDraftTranscript("");
@@ -576,7 +662,13 @@ export default function SessionScreen() {
       .getState()
       .setVoicePhase("understanding", { interimTranscript: "" });
     void sendUser(text, draftAudioUri);
-  }, [draftAudioUri, draftTranscript, sendUser]);
+  }, [
+    draftAudioUri,
+    draftTranscript,
+    retryingTurnId,
+    sendUser,
+    submitPronunciationRetry,
+  ]);
 
   const recoverVoice = useCallback(() => {
     const recovery = useSession.getState().voice.recovery;
@@ -597,6 +689,7 @@ export default function SessionScreen() {
     setDraftTranscript("");
     setDraftAudioUri(undefined);
     setAudioEnergy(0);
+    setRetryingTurnId(null);
     useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
   }, []);
 
@@ -632,26 +725,46 @@ export default function SessionScreen() {
     session.voice.phase,
   );
 
+  const startPronunciationRetry = useCallback((turn: ChatTurn) => {
+    tap();
+    responseRunsRef.current.interrupt();
+    void stopSpeech();
+    setRetryingTurnId(turn.id);
+    setDraftTranscript("");
+    setDraftAudioUri(undefined);
+    useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
+  }, []);
+
   const latestTurn = [...session.turns]
     .reverse()
     .find((turn) => Boolean(turn.textJa));
-  const latestAssistant = [...session.turns]
-    .reverse()
-    .find((turn) => turn.role === "assistant" && Boolean(turn.textJa));
   const latestCorrection = [...session.turns]
     .reverse()
     .find(
       (turn) =>
-        turn.role === "assistant" &&
+        turn.role === "user" &&
         turn.id !== dismissedCorrectionId &&
         correctionNotesForTurn(turn).length > 0,
     );
+  const latestPronunciation = [...session.turns]
+    .reverse()
+    .find((turn) => turn.role === "user" && Boolean(turn.pronunciation));
+  const previousPronunciation = latestPronunciation?.retryOfTurnId
+    ? session.turns.find(
+        (turn) => turn.id === latestPronunciation.retryOfTurnId,
+      )
+    : undefined;
+  const retryTarget = retryingTurnId
+    ? session.turns.find((turn) => turn.id === retryingTurnId)
+    : undefined;
   const liveText =
-    session.voice.phase === "interimTranscript"
-      ? session.voice.interimTranscript
-      : session.voice.phase === "correction"
-        ? ""
-        : (latestTurn?.textJa ?? "");
+    retryTarget && session.voice.phase === "idle"
+      ? (retryTarget.pronunciation?.targetText ?? retryTarget.textJa)
+      : session.voice.phase === "interimTranscript"
+        ? session.voice.interimTranscript
+        : session.voice.phase === "correction"
+          ? ""
+          : (latestTurn?.textJa ?? "");
 
   return (
     <SafeAreaView
@@ -708,58 +821,96 @@ export default function SessionScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.stage}>
-        <AcousticVoiceForm phase={session.voice.phase} energy={audioEnergy} />
-        <CurrentUtterance
-          text={liveText}
-          isKoe={latestTurn?.role === "assistant"}
-          palette={palette}
-        />
-      </View>
-
-      <VoiceLifecyclePanel
-        voice={session.voice}
-        latency={session.latency}
-        palette={palette}
-        draftTranscript={draftTranscript}
-        onChangeTranscript={setDraftTranscript}
-        onSubmit={submitTranscript}
-        onDiscard={discardTranscript}
-        onRecover={recoverVoice}
-      />
-
-      {showPhraseHelp ? (
-        <View
-          style={[
-            styles.phraseHelp,
-            { borderColor: palette.hairline, backgroundColor: palette.canvas },
-          ]}
-        >
-          <Text style={[styles.editorialLabel, { color: palette.seam }]}>
-            PHRASE PROMPTS / 任意
-          </Text>
-          <SuggestedReplyChips
-            replies={suggested}
-            onPick={(reply) => void sendUser(reply.ja)}
+      <ScrollView
+        style={styles.conversationScroll}
+        contentContainerStyle={styles.conversationContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.stage}>
+          <AcousticVoiceForm phase={session.voice.phase} energy={audioEnergy} />
+          <CurrentUtterance
+            text={liveText}
+            isKoe={!retryTarget && latestTurn?.role === "assistant"}
+            palette={palette}
           />
         </View>
-      ) : null}
 
-      {latestCorrection && session.voice.phase === "idle" ? (
-        <CorrectionMoment
-          turn={latestCorrection}
+        <VoiceLifecyclePanel
+          voice={session.voice}
+          latency={session.latency}
           palette={palette}
-          onDismiss={() => setDismissedCorrectionId(latestCorrection.id)}
-          onReplay={() => playAssistant(latestAssistant ?? latestCorrection)}
+          draftTranscript={draftTranscript}
+          onChangeTranscript={setDraftTranscript}
+          onSubmit={submitTranscript}
+          onDiscard={discardTranscript}
+          onRecover={recoverVoice}
         />
-      ) : null}
+
+        {showPhraseHelp ? (
+          <View
+            style={[
+              styles.phraseHelp,
+              {
+                borderColor: palette.hairline,
+                backgroundColor: palette.canvas,
+              },
+            ]}
+          >
+            <Text style={[styles.editorialLabel, { color: palette.seam }]}>
+              PHRASE PROMPTS / 任意
+            </Text>
+            <SuggestedReplyChips
+              replies={suggested}
+              onPick={(reply) => void sendUser(reply.ja)}
+            />
+          </View>
+        ) : null}
+
+        {latestPronunciation?.pronunciation &&
+        session.voice.phase === "idle" ? (
+          <PronunciationFeedbackCard
+            feedback={latestPronunciation.pronunciation}
+            palette={palette}
+            attemptAudioUri={latestPronunciation.audioUri}
+            referenceAudioUri={latestPronunciation.referenceAudioUri}
+            previous={
+              previousPronunciation?.pronunciation
+                ? {
+                    feedback: previousPronunciation.pronunciation,
+                    audioUri: previousPronunciation.audioUri,
+                  }
+                : undefined
+            }
+            onPlay={(uri) => void play(uri)}
+            onRetry={() => startPronunciationRetry(latestPronunciation)}
+          />
+        ) : latestCorrection && session.voice.phase === "idle" ? (
+          <CorrectionMoment
+            turn={latestCorrection}
+            palette={palette}
+            onDismiss={() => setDismissedCorrectionId(latestCorrection.id)}
+            onReplay={
+              latestCorrection.audioUri
+                ? () => void play(latestCorrection.audioUri!)
+                : undefined
+            }
+          />
+        ) : null}
+      </ScrollView>
 
       <View style={[styles.speakDock, { borderColor: palette.hairline }]}>
         <MicButton
           recording={session.isRecording}
           onPressIn={onPressIn}
           onPressOut={onPressOut}
-          prompt={canInterrupt ? "Hold to interrupt" : undefined}
+          prompt={
+            retryTarget
+              ? "Hold to retry the highlighted phrase"
+              : canInterrupt
+                ? "Hold to interrupt"
+                : undefined
+          }
           palette={palette}
         />
       </View>
@@ -970,7 +1121,7 @@ function CorrectionMoment({
   turn: ChatTurn;
   palette: ConversationPalette;
   onDismiss: () => void;
-  onReplay: () => void;
+  onReplay?: () => void;
 }) {
   const note = correctionNotesForTurn(turn)[0];
   if (!note) return null;
@@ -987,14 +1138,16 @@ function CorrectionMoment({
           {note}
         </Text>
       </View>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Replay Koe's line"
-        onPress={onReplay}
-        style={[styles.inlineIconButton, { borderColor: palette.hairline }]}
-      >
-        <Volume2 color={palette.ink} size={17} />
-      </Pressable>
+      {onReplay ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Replay your line"
+          onPress={onReplay}
+          style={[styles.inlineIconButton, { borderColor: palette.hairline }]}
+        >
+          <Volume2 color={palette.ink} size={17} />
+        </Pressable>
+      ) : null}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Dismiss correction"
@@ -1161,6 +1314,8 @@ function AcousticAtmosphere({ palette }: { palette: ConversationPalette }) {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
+  conversationScroll: { flex: 1 },
+  conversationContent: { flexGrow: 1 },
   header: {
     minHeight: 68,
     paddingHorizontal: 16,

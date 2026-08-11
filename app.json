@@ -40,6 +40,14 @@
           "microphonePermission": "Allow Koe to hear your Japanese while you speak.",
           "speechRecognitionPermission": "Allow Koe to show and correct your words in real time."
         }
+      ],
+      [
+        "react-native-audio-api",
+        {
+          "iosBackgroundMode": false,
+          "androidForegroundService": false,
+          "disableFFmpeg": false
+        }
       ]
     ],
     "experiments": {

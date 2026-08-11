@@ -1,60 +1,198 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
-import { X, Volume2 } from 'lucide-react-native';
-import { useAudioRecorder, RecordingPresets } from 'expo-audio';
-import { listAllWords } from '@/services/dict';
-import type { Word } from '@/db/schema';
-import { synthesize, play } from '@/services/tts';
-import { extractContour, compareContours } from '@/services/pitch';
-import { startStreaming } from '@/services/stt';
-import { PitchContour } from '@/components/PitchContour';
-import { JapaneseText } from '@/components/JapaneseText';
-import { annotate, type FuriganaRun } from '@/services/furigana';
-import { MicButton } from '@/components/MicButton';
-import { colors } from '@/theme/colors';
-import { success, fail, tap as tapHaptic } from '@/utils/haptics';
+import React, { useEffect, useRef, useState } from "react";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import { Volume2, X } from "lucide-react-native";
+import { RecordingPresets, useAudioRecorder } from "expo-audio";
+import { randomUUID } from "expo-crypto";
+import { Asset } from "expo-asset";
+
+import { PronunciationFeedbackCard } from "@/components/PronunciationFeedbackCard";
+import { JapaneseText } from "@/components/JapaneseText";
+import { MicButton } from "@/components/MicButton";
+import { getNative, persistSession, persistTurn } from "@/db";
+import type { Word } from "@/db/schema";
+import { listAllWords } from "@/services/dict";
+import { annotate, type FuriganaRun } from "@/services/furigana";
+import {
+  analyzePronunciation,
+  type PronunciationFeedback,
+} from "@/services/pitch";
+import { startStreaming } from "@/services/stt";
+import { play, synthesize } from "@/services/tts";
+import { useConversationPalette } from "@/theme/conversation";
+import { fail, success, tap as tapHaptic } from "@/utils/haptics";
+
+type Attempt = {
+  id: string;
+  audioUri: string;
+  feedback: PronunciationFeedback;
+};
 
 export default function ShadowScreen() {
   const router = useRouter();
+  const { proof } = useLocalSearchParams<{ proof?: string }>();
+  const proofMode =
+    __DEV__ &&
+    (proof === "1" || process.env.EXPO_PUBLIC_KOE_PRONUNCIATION_PROOF === "1");
+  const palette = useConversationPalette();
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const [words, setWords] = useState<Word[]>([]);
-  const [idx, setIdx] = useState(0);
+  const [index, setIndex] = useState(0);
   const [runs, setRuns] = useState<FuriganaRun[]>([]);
-  const [nativePitch, setNativePitch] = useState<{ f0: number[]; timestamps: number[] }>({ f0: [], timestamps: [] });
-  const [userPitch, setUserPitch] = useState<{ f0: number[]; timestamps: number[] } | null>(null);
-  const [score, setScore] = useState<number | null>(null);
+  const [referenceAudioUri, setReferenceAudioUri] = useState("");
+  const [attempts, setAttempts] = useState<Attempt[]>([]);
+  const [proofStatus, setProofStatus] = useState("");
   const [recording, setRecording] = useState(false);
-  const sttRef = useRef<Awaited<ReturnType<typeof startStreaming>> | null>(null);
+  const sttRef = useRef<Awaited<ReturnType<typeof startStreaming>> | null>(
+    null,
+  );
   const pressStart = useRef(0);
 
   useEffect(() => {
-    (async () => {
-      const all = await listAllWords(200);
-      setWords(all.sort(() => Math.random() - 0.5).slice(0, 15));
-    })();
-  }, []);
+    if (proofMode) {
+      setWords([
+        {
+          id: -850,
+          kanji: null,
+          kana: "おはようございます",
+          romaji: "ohayou gozaimasu",
+          pos: "phrase",
+          gloss: "Good morning",
+          jlpt: 5,
+          pitchAccents: null,
+          freqRank: null,
+        },
+      ]);
+      return;
+    }
+    void listAllWords(200).then((all) => {
+      setWords([...all].sort(() => Math.random() - 0.5).slice(0, 15));
+    });
+  }, [proofMode]);
 
-  const current = words[idx];
-
+  const current = words[index];
   useEffect(() => {
     if (!current) return;
-    (async () => {
-      const r = await annotate(current.kanji ?? current.kana);
-      setRuns(r);
-      setUserPitch(null);
-      setScore(null);
-      try {
-        const res = await synthesize(current.kana);
-        await play(res.audioUri);
-        const contour = await extractContour(res.audioUri);
-        setNativePitch({ f0: contour.f0, timestamps: contour.timestamps });
-      } catch {}
-    })();
-  }, [current?.id]);
+    let cancelled = false;
+    void (async () => {
+      if (proofMode) {
+        const [referenceAsset, goodAsset, poorAsset] = await Promise.all(
+          [
+            Asset.fromModule(
+              require("../../assets/pronunciation-proof/reference.mp3"),
+            ),
+            Asset.fromModule(
+              require("../../assets/pronunciation-proof/good.m4a"),
+            ),
+            Asset.fromModule(
+              require("../../assets/pronunciation-proof/poor.m4a"),
+            ),
+          ].map(async (asset) => {
+            await asset.downloadAsync();
+            return asset;
+          }),
+        );
+        const referenceUri = referenceAsset.localUri ?? referenceAsset.uri;
+        const goodUri = goodAsset.localUri ?? goodAsset.uri;
+        const poorUri = poorAsset.localUri ?? poorAsset.uri;
+        const goodFeedback = await analyzePronunciation({
+          targetText: current.kana,
+          referenceAudioUri: referenceUri,
+          attemptAudioUri: goodUri,
+        });
+        const poorFeedback = await analyzePronunciation({
+          targetText: current.kana,
+          referenceAudioUri: referenceUri,
+          attemptAudioUri: poorUri,
+          previous: { attemptId: "known-good", feedback: goodFeedback },
+        });
+        if (cancelled) return;
+        setRuns([{ base: current.kana }]);
+        setReferenceAudioUri(referenceUri);
+        setAttempts([
+          { id: "known-good", audioUri: goodUri, feedback: goodFeedback },
+          {
+            id: "deliberately-poor",
+            audioUri: poorUri,
+            feedback: poorFeedback,
+          },
+        ]);
+        await persistSession({ id: "zan-850-proof", scenarioId: "shadow" });
+        await persistTurn({
+          id: "zan-850-proof-attempt",
+          sessionId: "zan-850-proof",
+          role: "user",
+          textJa: current.kana,
+          audioUri: poorUri,
+          referenceAudioUri: referenceUri,
+          pitchData: {
+            reference: poorFeedback.reference,
+            attempt: poorFeedback.attempt,
+          },
+          alignmentData: {
+            path: poorFeedback.alignmentPath,
+            units: poorFeedback.units,
+          },
+          feedback: {
+            firstCorrection: poorFeedback.firstCorrection,
+            scores: poorFeedback.scores,
+            retry: poorFeedback.retry,
+          },
+          retryOfTurnId: "known-good",
+          attemptNumber: 2,
+          createdAt: Date.now(),
+        });
+        const database = await getNative();
+        const persisted = await database.getFirstAsync<{
+          pitch_data_json: string | null;
+          alignment_data_json: string | null;
+          feedback_json: string | null;
+          retry_of_turn_id: string | null;
+          attempt_number: number;
+        }>(
+          `SELECT pitch_data_json, alignment_data_json, feedback_json,
+            retry_of_turn_id, attempt_number
+           FROM turns WHERE client_id = ?`,
+          ["zan-850-proof-attempt"],
+        );
+        if (
+          !persisted?.pitch_data_json ||
+          !persisted.alignment_data_json ||
+          !persisted.feedback_json ||
+          persisted.retry_of_turn_id !== "known-good" ||
+          persisted.attempt_number !== 2
+        ) {
+          throw new Error("Pronunciation persistence proof did not round-trip");
+        }
+        const evidence = `MP3 reference ${goodFeedback.reference.f0.length} frames · M4A attempts ${goodFeedback.attempt.f0.length}/${poorFeedback.attempt.f0.length} frames · known-good ${goodFeedback.scores.overall} · deliberately poor ${poorFeedback.scores.overall} · persistence passed`;
+        setProofStatus(`${evidence} · checking replay`);
+        await playToEnd(referenceUri);
+        await playToEnd(poorUri);
+        if (!cancelled) setProofStatus(`${evidence} · replay passed`);
+        return;
+      }
+      const [annotated, reference] = await Promise.all([
+        annotate(current.kanji ?? current.kana),
+        synthesize(current.kana, { withTimestamps: true }),
+      ]);
+      if (cancelled) return;
+      setRuns(annotated);
+      setReferenceAudioUri(reference.audioUri);
+      setAttempts([]);
+      await play(reference.audioUri);
+    })().catch(() => {
+      if (!cancelled) {
+        setReferenceAudioUri("");
+        if (proofMode) setProofStatus("Native pronunciation proof failed");
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [current?.id, proofMode]);
 
-  const onPressIn = async () => {
+  const beginRecording = async () => {
     pressStart.current = Date.now();
     setRecording(true);
     try {
@@ -62,88 +200,178 @@ export default function ShadowScreen() {
         onChunk: () => {},
         recorder,
       });
-    } catch (e) {
+    } catch {
       fail();
       setRecording(false);
     }
   };
 
-  const onPressOut = async () => {
-    const dur = Date.now() - pressStart.current;
+  const finishRecording = async () => {
+    const duration = Date.now() - pressStart.current;
     setRecording(false);
     const handle = sttRef.current;
     sttRef.current = null;
     if (!handle) return;
-    if (dur < 400) { await handle.cancel(); return; }
+    if (duration < 400) {
+      await handle.cancel();
+      return;
+    }
     const { audioUri } = await handle.stop();
+    if (!audioUri || !referenceAudioUri) {
+      Alert.alert(
+        "No audio to compare",
+        "Hold the button and say the whole word.",
+      );
+      return;
+    }
     try {
-      const contour = await extractContour(audioUri);
-      if (!contour.f0.length) {
-        Alert.alert('Try again', 'We could not hear you clearly.');
-        return;
-      }
-      const user = { f0: contour.f0, timestamps: contour.timestamps };
-      setUserPitch(user);
-      const { normalizedScore } = compareContours(nativePitch, user);
-      setScore(normalizedScore);
-      normalizedScore >= 65 ? success() : fail();
-    } catch (e) {
+      const previous = attempts.at(-1);
+      const feedback = await analyzePronunciation({
+        targetText: current.kana,
+        referenceAudioUri,
+        attemptAudioUri: audioUri,
+        previous: previous
+          ? { attemptId: previous.id, feedback: previous.feedback }
+          : undefined,
+      });
+      setAttempts((existing) => [
+        ...existing,
+        { id: randomUUID(), audioUri, feedback },
+      ]);
+      feedback.scores.overall >= 70 ? success() : fail();
+    } catch {
       fail();
+      Alert.alert(
+        "Could not compare that recording",
+        "Try once more and keep the microphone close.",
+      );
     }
   };
 
   if (!current) {
     return (
-      <SafeAreaView className="flex-1 bg-bg items-center justify-center">
+      <SafeAreaView className="flex-1 items-center justify-center bg-bg">
         <Text className="text-muted">Loading…</Text>
       </SafeAreaView>
     );
   }
 
+  const latest = attempts.at(-1);
+  const previous = attempts.at(-2);
+
   return (
-    <SafeAreaView className="flex-1 bg-bg dark:bg-bg-dark">
+    <SafeAreaView
+      className="flex-1"
+      style={{ backgroundColor: palette.canvas }}
+    >
       <View className="flex-row items-center justify-between px-4 py-3">
-        <Pressable onPress={() => router.back()}><X color={colors.muted} size={24} /></Pressable>
-        <Text className="text-muted">{idx + 1} / {words.length}</Text>
-        <View style={{ width: 24 }} />
-      </View>
-
-      <View className="flex-1 items-center justify-center px-6">
-        <JapaneseText runs={runs} fontSize={40} />
-        <Text className="text-muted mt-3">{current.gloss.split('|')[0]}</Text>
         <Pressable
-          onPress={async () => { tapHaptic(); const r = await synthesize(current.kana); await play(r.audioUri); }}
-          className="mt-4 flex-row items-center gap-2 bg-accent px-4 py-2 rounded-full"
+          accessibilityRole="button"
+          accessibilityLabel="Close shadowing drill"
+          onPress={() => router.back()}
+          className="h-11 w-11 items-center justify-center rounded-full"
         >
-          <Volume2 color="white" size={16} />
-          <Text className="text-white font-semibold">Hear native</Text>
+          <X color={palette.muted} size={24} />
         </Pressable>
-
-        <View className="mt-8">
-          <PitchContour
-            native={nativePitch}
-            user={userPitch ?? undefined}
-            width={320}
-            height={120}
-            showScore={score != null}
-            score={score ?? undefined}
-          />
-        </View>
-        {score != null && (
-          <Text className="mt-4 text-xl font-bold" style={{ color: score >= 65 ? colors.success : colors.warning }}>
-            {score} / 100
+        <View className="items-center">
+          <Text className="font-mono text-[9px] tracking-widest text-muted">
+            SHADOW / まねる
           </Text>
-        )}
+          <Text style={{ color: palette.muted }}>
+            {index + 1} / {words.length}
+          </Text>
+        </View>
+        <View className="h-11 w-11" />
       </View>
 
-      <MicButton recording={recording} onPressIn={onPressIn} onPressOut={onPressOut} />
-
-      <Pressable
-        onPress={() => setIdx((i) => Math.min(i + 1, words.length - 1))}
-        className="mx-4 mb-6 bg-surface dark:bg-surface-dark py-3 rounded-full items-center"
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 18 }}
+        showsVerticalScrollIndicator={false}
       >
-        <Text className="text-fg dark:text-fg-dark font-semibold">Next</Text>
-      </Pressable>
+        <View className="items-center px-6 pb-5 pt-8">
+          <JapaneseText runs={runs} fontSize={40} />
+          <Text className="mt-3 text-muted">{current.gloss.split("|")[0]}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Play the reference pronunciation"
+            onPress={() => {
+              tapHaptic();
+              void play(referenceAudioUri);
+            }}
+            className="mt-5 min-h-11 flex-row items-center gap-2 rounded-full bg-accent px-5"
+          >
+            <Volume2 color="white" size={16} />
+            <Text className="font-semibold text-white">Hear reference</Text>
+          </Pressable>
+          {proofStatus ? (
+            <Text
+              testID="pronunciation-proof-status"
+              accessibilityLabel={proofStatus}
+              className="mt-4 text-center font-mono text-[10px] leading-4 text-muted"
+            >
+              {proofStatus}
+            </Text>
+          ) : null}
+        </View>
+
+        {latest ? (
+          <PronunciationFeedbackCard
+            feedback={latest.feedback}
+            palette={palette}
+            attemptAudioUri={latest.audioUri}
+            referenceAudioUri={referenceAudioUri}
+            previous={
+              previous
+                ? { feedback: previous.feedback, audioUri: previous.audioUri }
+                : undefined
+            }
+            onPlay={(uri) => void play(uri)}
+            initialExpanded={proofMode}
+          />
+        ) : (
+          <View className="mx-6 my-8 border-l-2 border-accent pl-4">
+            <Text className="text-sm leading-5" style={{ color: palette.ink }}>
+              Listen once, then copy the shape and spacing—not the speaker’s
+              vocal range.
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+
+      <View
+        className="border-t px-4 pt-3"
+        style={{ borderColor: palette.hairline }}
+      >
+        {!proofMode ? (
+          <MicButton
+            recording={recording}
+            onPressIn={beginRecording}
+            onPressOut={finishRecording}
+            prompt={
+              latest ? "Hold to retry this word" : "Hold and shadow the word"
+            }
+          />
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Go to the next word"
+          onPress={() =>
+            setIndex((value) => Math.min(value + 1, words.length - 1))
+          }
+          className="mb-2 min-h-11 items-center justify-center rounded-full bg-surface dark:bg-surface-dark"
+        >
+          <Text className="font-semibold text-fg dark:text-fg-dark">Next</Text>
+        </Pressable>
+      </View>
     </SafeAreaView>
   );
+}
+
+function playToEnd(audioUri: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    void play(audioUri, {
+      onFinished: resolve,
+      onError: reject,
+    });
+  });
 }

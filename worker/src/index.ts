@@ -5,7 +5,7 @@
  *   POST /tts        → Inworld TTS, streams audio (mp3) back
  *   GET  /stt/token  → returns a short-lived Soniox streaming URL + temp key
  *   POST /llm/chat   → streams Inworld Router text + PCM speech over SSE
- *   POST /llm/flash  → proxies Gemini 3.1 Flash-Lite for suggestions/grading/examples
+ *   POST /llm/flash  → proxies Gemini 3.1 Flash-Lite for language coaching/examples
  *   POST /furigana   → Gemini-powered furigana annotation with KV caching
  *
  * Secrets (wrangler secret put):
@@ -449,9 +449,6 @@ app.post("/llm/flash", async (c) => {
     prompt = `You are helping a Japanese learner. Given this short dialogue, propose 3 plausible learner replies in ${body.registerTarget ?? "teineigo"} register at JLPT N${body.jlptTarget ?? 5}.
 Return ONLY valid JSON: {"replies":[{"ja":"...","en":"...","hint":"..."}]}.
 Dialogue: ${JSON.stringify(body.history ?? [])}`;
-  } else if (task === "grade-pronunciation") {
-    prompt = `Grade this pronunciation attempt. Target: "${body.targetText}". User transcript: "${body.userTranscript}". Native F0: ${JSON.stringify((body.nativePitchContour ?? []).slice(0, 40))}. User F0: ${JSON.stringify((body.userPitchContour ?? []).slice(0, 40))}.
-Return ONLY valid JSON: {"phonemeScore":0-100,"pitchScore":0-100,"overallScore":0-100,"notes":["..."]}.`;
   } else if (task === "examples") {
     prompt = `Give 3 natural example sentences using the word ${body.word} (reading: ${body.kana}, meaning: ${body.gloss}). Keep them JLPT N5-N4 level. Return ONLY valid JSON: {"examples":["...","...","..."]}.`;
   } else if (task === "feedback") {

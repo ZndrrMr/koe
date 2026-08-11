@@ -23,6 +23,8 @@ android/
 
 # build artifacts
 build/
+.artifacts/
+.derivedData/
 *.tsbuildinfo
 
 # env + secrets
