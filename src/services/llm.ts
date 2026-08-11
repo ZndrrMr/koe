@@ -1,27 +1,44 @@
-import { postJson } from '@/services/api';
-import { tutorSystemPrompt } from '@/prompts/tutor';
-import type { Register, JlptLevel } from '@/data/scenarios';
-import type { ConversationContext } from '@/stores/useSession';
-import { hasWorker } from '@/utils/config';
-import { log } from '@/utils/log';
-import { saveAudioFromBase64 } from '@/services/tts';
-import { sha256 } from '@/utils/hash';
+import { postJson, postStream } from "@/services/api";
+import { tutorSystemPrompt } from "@/prompts/tutor";
+import type { Register, JlptLevel } from "@/data/scenarios";
+import type { ConversationContext } from "@/stores/useSession";
+import { hasWorker } from "@/utils/config";
+import { log } from "@/utils/log";
+import { extractSSEEvents } from "@/services/sse";
 
-export type ConvoTurn = { role: 'user' | 'assistant'; content: string };
+export type ConvoTurn = { role: "user" | "assistant"; content: string };
+
+export type ConversationCorrections = {
+  particles: Array<{
+    original: string;
+    corrected: string;
+    explanation: string;
+  }>;
+  register: { consistent: boolean; note?: string };
+  other: Array<{ original: string; corrected: string; explanation: string }>;
+};
 
 export type ConversationResult = {
   fullText: string;
-  audioUri?: string;
-  corrections: {
-    particles: Array<{
-      original: string;
-      corrected: string;
-      explanation: string;
-    }>;
-    register: { consistent: boolean; note?: string };
-    other: Array<{ original: string; corrected: string; explanation: string }>;
-  };
+  /** Resolves independently so coaching never delays response audio. */
+  feedback: Promise<ConversationCorrections>;
 };
+
+export type ConversationChunk =
+  | { type: "text"; text: string }
+  | {
+      type: "audio";
+      audioBase64: string;
+      sampleRate: number;
+      channels: number;
+    };
+
+export class ProviderTimeoutError extends Error {
+  constructor(message = "The conversation provider timed out") {
+    super(message);
+    this.name = "ProviderTimeoutError";
+  }
+}
 
 const EMPTY_CORRECTIONS = {
   particles: [] as Array<{
@@ -41,7 +58,9 @@ export async function* streamConversation(opts: {
   context?: ConversationContext;
   history: ConvoTurn[];
   userTurn: string;
-}): AsyncGenerator<string, ConversationResult, void> {
+  voice?: "ja-female-1" | "ja-female-2" | "ja-male-1";
+  signal?: AbortSignal;
+}): AsyncGenerator<ConversationChunk, ConversationResult, void> {
   const system = tutorSystemPrompt({
     topic: opts.context?.topic,
     registerTarget: opts.context?.registerTarget,
@@ -49,64 +68,130 @@ export async function* streamConversation(opts: {
   });
 
   if (!hasWorker()) {
-    log.warn('LLM: worker unset, yielding stub reply.');
-    const reply = 'そうなんですね。もう少し聞かせてください。';
-    yield reply;
+    log.warn("LLM: worker unset, yielding stub reply.");
+    const reply = "そうなんですね。もう少し聞かせてください。";
+    yield { type: "text", text: reply };
     return {
       fullText: reply,
-      corrections: EMPTY_CORRECTIONS,
+      feedback: Promise.resolve(EMPTY_CORRECTIONS),
     };
   }
 
   const chatBody = {
     system,
-    messages: [...opts.history, { role: 'user', content: opts.userTurn }],
+    messages: [...opts.history, { role: "user", content: opts.userTurn }],
     maxTokens: 300,
+    voice: opts.voice,
+    stream: true,
   };
 
-  const chatPromise = postJson<{
-    text: string;
-    audioBase64?: string;
-    audioFormat?: string;
-  }>('/llm/chat', chatBody);
+  const controller = new AbortController();
+  let timedOut = false;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const armTimeout = () => {
+    if (timeout) clearTimeout(timeout);
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 15_000);
+  };
+  const abortFromCaller = () => controller.abort();
+  opts.signal?.addEventListener("abort", abortFromCaller, { once: true });
 
-  const chat = await chatPromise;
-  const fullText = (chat.text ?? '').trim();
-  if (fullText) yield fullText;
+  let fullText = "";
+  try {
+    armTimeout();
+    const response = await postStream("/llm/chat", chatBody, {
+      signal: controller.signal,
+    });
+    if (!response.body)
+      throw new Error("Streaming response body is unavailable");
 
-  let audioUri: string | undefined;
-  if (chat.audioBase64) {
-    try {
-      const key = await sha256(`${fullText}|Asuka`);
-      audioUri = await saveAudioFromBase64(chat.audioBase64, key, chat.audioFormat ?? 'flac');
-    } catch (e) {
-      log.warn('Failed to persist reply audio', e);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let doneByProvider = false;
+    while (!doneByProvider) {
+      const next = await reader.read();
+      if (next.done) {
+        buffer += decoder.decode();
+      } else {
+        armTimeout();
+        buffer += decoder.decode(next.value, { stream: true });
+      }
+      const extracted = extractSSEEvents(buffer, next.done);
+      buffer = extracted.remainder;
+      for (const payload of extracted.events) {
+        if (payload === "[DONE]") {
+          doneByProvider = true;
+          break;
+        }
+        let event: {
+          choices?: Array<{
+            delta?: {
+              content?: string;
+              audio?: { data?: string; transcript?: string };
+            };
+          }>;
+        };
+        try {
+          event = JSON.parse(payload);
+        } catch {
+          log.warn("Ignoring malformed conversation SSE event");
+          continue;
+        }
+        const delta = event.choices?.[0]?.delta;
+        const text = delta?.audio?.transcript ?? delta?.content ?? "";
+        if (text) {
+          fullText += text;
+          yield { type: "text", text };
+        }
+        if (delta?.audio?.data) {
+          yield {
+            type: "audio",
+            audioBase64: delta.audio.data,
+            sampleRate: 48_000,
+            channels: 1,
+          };
+        }
+      }
+      if (next.done) break;
     }
+  } catch (error) {
+    if (timedOut) throw new ProviderTimeoutError();
+    throw error;
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    opts.signal?.removeEventListener("abort", abortFromCaller);
   }
 
-  const feedbackPromise = postJson<{ corrections?: typeof EMPTY_CORRECTIONS }>('/llm/flash', {
-    task: 'feedback',
-    registerTarget: opts.context?.registerTarget,
-    jlptTarget: opts.context?.jlptTarget,
-    history: opts.history,
-    userTurn: opts.userTurn,
-    tutorReply: fullText,
-  }).catch((e) => {
-    log.warn('feedback fetch failed', e);
-    return { corrections: EMPTY_CORRECTIONS };
-  });
+  fullText = fullText.trim();
 
-  const feedback = await feedbackPromise;
-  const corrections = feedback.corrections ?? EMPTY_CORRECTIONS;
+  const feedback = postJson<{ corrections?: ConversationCorrections }>(
+    "/llm/flash",
+    {
+      task: "feedback",
+      registerTarget: opts.context?.registerTarget,
+      jlptTarget: opts.context?.jlptTarget,
+      history: opts.history,
+      userTurn: opts.userTurn,
+      tutorReply: fullText,
+    },
+    { signal: opts.signal },
+  )
+    .then((result) => ({
+      particles: result.corrections?.particles ?? [],
+      register: result.corrections?.register ?? { consistent: true },
+      other: result.corrections?.other ?? [],
+    }))
+    .catch((error) => {
+      log.warn("feedback fetch failed", error);
+      return EMPTY_CORRECTIONS;
+    });
 
   return {
     fullText,
-    audioUri,
-    corrections: {
-      particles: corrections.particles ?? [],
-      register: corrections.register ?? { consistent: true },
-      other: corrections.other ?? [],
-    },
+    feedback,
   };
 }
 
@@ -118,19 +203,19 @@ export async function generateSuggestedReplies(opts: {
   if (!hasWorker()) {
     return [
       {
-        ja: '今日はいい天気ですね。',
-        en: 'Nice weather today.',
-        hint: 'Start with the day.',
+        ja: "今日はいい天気ですね。",
+        en: "Nice weather today.",
+        hint: "Start with the day.",
       },
       {
-        ja: '最近、どうですか？',
-        en: 'How have you been?',
-        hint: 'Ask an open question.',
+        ja: "最近、どうですか？",
+        en: "How have you been?",
+        hint: "Ask an open question.",
       },
       {
-        ja: 'もう一度お願いします。',
-        en: 'One more time, please.',
-        hint: 'Ask for repetition.',
+        ja: "もう一度お願いします。",
+        en: "One more time, please.",
+        hint: "Ask for repetition.",
       },
     ];
   }
@@ -138,15 +223,15 @@ export async function generateSuggestedReplies(opts: {
   try {
     const res = await postJson<{
       replies: Array<{ ja: string; en: string; hint: string }>;
-    }>('/llm/flash', {
-      task: 'suggest-replies',
+    }>("/llm/flash", {
+      task: "suggest-replies",
       history: opts.history,
       registerTarget: opts.registerTarget,
       jlptTarget: opts.jlptTarget,
     });
     return res.replies ?? [];
   } catch (e) {
-    log.warn('generateSuggestedReplies failed', e);
+    log.warn("generateSuggestedReplies failed", e);
     return [];
   }
 }
@@ -167,24 +252,24 @@ export async function gradePronunciation(opts: {
       phonemeScore: 80,
       pitchScore: 70,
       overallScore: 75,
-      notes: ['(stub — configure worker)'],
+      notes: ["(stub — configure worker)"],
     };
   }
   try {
-    return await postJson('/llm/flash', {
-      task: 'grade-pronunciation',
+    return await postJson("/llm/flash", {
+      task: "grade-pronunciation",
       targetText: opts.targetText,
       userTranscript: opts.userTranscript,
       nativePitchContour: opts.nativePitchContour,
       userPitchContour: opts.userPitchContour,
     });
   } catch (e) {
-    log.warn('gradePronunciation failed', e);
+    log.warn("gradePronunciation failed", e);
     return {
       phonemeScore: 0,
       pitchScore: 0,
       overallScore: 0,
-      notes: ['Grading failed'],
+      notes: ["Grading failed"],
     };
   }
 }

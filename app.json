@@ -33,6 +33,13 @@
         {
           "microphonePermission": "Allow Koe to access your microphone."
         }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow Koe to hear your Japanese while you speak.",
+          "speechRecognitionPermission": "Allow Koe to show and correct your words in real time."
+        }
       ]
     ],
     "experiments": {

@@ -1,15 +1,9 @@
-import * as FileSystem from 'expo-file-system/legacy';
 import {
-  AudioModule,
-  RecordingPresets,
-  setAudioModeAsync,
-  useAudioRecorder,
-  type AudioRecorder,
-} from 'expo-audio';
-import { authHeaders, workerUrl } from '@/services/api';
-import { config, hasWorker } from '@/utils/config';
-import { log } from '@/utils/log';
-import { randomUUID } from 'expo-crypto';
+  ExpoSpeechRecognitionModule,
+  type ExpoSpeechRecognitionErrorCode,
+} from "expo-speech-recognition";
+import { useAudioRecorder, type AudioRecorder } from "expo-audio";
+import { config } from "@/utils/config";
 
 export type STTChunk = {
   text: string;
@@ -17,104 +11,193 @@ export type STTChunk = {
   confidence: number;
 };
 
+export type STTFailureKind =
+  | "permission-denied"
+  | "network"
+  | "interrupted"
+  | "no-speech"
+  | "cancelled"
+  | "unavailable"
+  | "failed";
+
+export class STTError extends Error {
+  constructor(
+    public readonly kind: STTFailureKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = "STTError";
+  }
+}
+
 export type STTHandle = {
-  stop: () => Promise<{ fullText: string; durationMs: number; audioUri: string }>;
+  stop: () => Promise<{
+    fullText: string;
+    durationMs: number;
+    audioUri: string;
+  }>;
   cancel: () => Promise<void>;
 };
 
-const REC_DIR = `${FileSystem.cacheDirectory}recordings`;
-
-async function ensureRecDir() {
-  const info = await FileSystem.getInfoAsync(REC_DIR);
-  if (!info.exists) await FileSystem.makeDirectoryAsync(REC_DIR, { intermediates: true });
+function failureKind(code: ExpoSpeechRecognitionErrorCode): STTFailureKind {
+  switch (code) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return "permission-denied";
+    case "network":
+      return "network";
+    case "interrupted":
+    case "audio-capture":
+      return "interrupted";
+    case "no-speech":
+    case "speech-timeout":
+      return "no-speech";
+    case "aborted":
+      return "cancelled";
+    case "language-not-supported":
+    case "busy":
+      return "unavailable";
+    default:
+      return "failed";
+  }
 }
 
-export async function ensurePermission() {
-  const status = await AudioModule.requestRecordingPermissionsAsync();
+export async function ensurePermission(): Promise<boolean> {
+  const status = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
   return status.granted;
-}
-
-async function transcribeFile(uri: string, languageHint: string): Promise<string> {
-  if (!hasWorker()) {
-    log.warn('STT: worker URL unset — cannot transcribe.');
-    return '';
-  }
-  const res = await fetch(uri);
-  const bytes = await res.arrayBuffer();
-  const up = await fetch(
-    `${workerUrl('/stt/transcribe')}?lang=${encodeURIComponent(languageHint)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'audio/m4a', ...authHeaders() },
-      body: bytes,
-    },
-  );
-  if (!up.ok) {
-    const body = await up.text().catch(() => '');
-    throw new Error(`STT ${up.status}: ${body}`);
-  }
-  const { text } = (await up.json()) as { text: string };
-  return text ?? '';
 }
 
 export async function startStreaming(opts: {
   onChunk: (chunk: STTChunk) => void;
-  languageHint?: 'ja' | 'ja,en';
-  recorder: AudioRecorder;
+  languageHint?: "ja" | "ja,en";
+  /** Kept optional for pitch-drill callers created before native live recognition. */
+  recorder?: AudioRecorder;
 }): Promise<STTHandle> {
   const ok = await ensurePermission();
-  if (!ok) throw new Error('Microphone permission denied');
+  if (!ok)
+    throw new STTError(
+      "permission-denied",
+      "Microphone or speech recognition permission denied",
+    );
+  if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
+    throw new STTError(
+      "unavailable",
+      "Speech recognition is unavailable on this device",
+    );
+  }
 
-  await ensureRecDir();
-  const audioUri = `${REC_DIR}/${randomUUID()}.m4a`;
-
-  await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-  await opts.recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
-  opts.recorder.record();
   const startedAt = Date.now();
-  const languageHint = opts.languageHint ?? 'ja,en';
+  let latestText = "";
+  let audioUri = "";
+  let recognitionError: STTError | undefined;
+  let cancelled = false;
+  let settled = false;
+  let settle!: () => void;
+  const finished = new Promise<void>((resolve) => {
+    settle = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+  });
+
+  const listeners = [
+    ExpoSpeechRecognitionModule.addListener("result", (event) => {
+      const result = event.results[0];
+      if (!result?.transcript) return;
+      latestText = result.transcript;
+      opts.onChunk({
+        text: latestText,
+        isFinal: event.isFinal,
+        confidence: Math.max(0, result.confidence),
+      });
+    }),
+    ExpoSpeechRecognitionModule.addListener("audioend", (event) => {
+      audioUri = event.uri ?? audioUri;
+    }),
+    ExpoSpeechRecognitionModule.addListener("error", (event) => {
+      const kind = failureKind(event.error);
+      if (cancelled && kind === "cancelled") return;
+      recognitionError = new STTError(
+        kind,
+        event.message || `Speech recognition ${event.error}`,
+      );
+      settle();
+    }),
+    ExpoSpeechRecognitionModule.addListener("end", settle),
+  ];
+
+  const cleanup = () => listeners.forEach((listener) => listener.remove());
+
+  try {
+    ExpoSpeechRecognitionModule.start({
+      lang: opts.languageHint === "ja" ? "ja-JP" : "ja-JP",
+      interimResults: true,
+      maxAlternatives: 1,
+      continuous: true,
+      addsPunctuation: true,
+      iosTaskHint: "dictation",
+      iosVoiceProcessingEnabled: true,
+      recordingOptions: ExpoSpeechRecognitionModule.supportsRecording()
+        ? {
+            persist: true,
+            outputSampleRate: 16_000,
+            outputEncoding: "pcmFormatInt16",
+          }
+        : undefined,
+    });
+  } catch (error) {
+    cleanup();
+    throw new STTError(
+      "failed",
+      error instanceof Error
+        ? error.message
+        : "Could not start speech recognition",
+    );
+  }
+
+  const waitForFinish = async () => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      finished,
+      new Promise<void>((resolve) => {
+        timeout = setTimeout(resolve, 5_000);
+      }),
+    ]);
+    if (timeout) clearTimeout(timeout);
+  };
 
   return {
     stop: async () => {
       try {
-        await opts.recorder.stop();
-      } catch (e) {
-        log.warn('Recorder stop error', e);
-      }
-      try {
-        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
-      } catch (e) {
-        log.warn('Audio mode reset failed', e);
-      }
-      const srcUri = opts.recorder.uri;
-      if (srcUri && srcUri !== audioUri) {
-        try {
-          await FileSystem.copyAsync({ from: srcUri, to: audioUri });
-        } catch (e) {
-          log.warn('Recording copy failed; using source uri.', e);
+        ExpoSpeechRecognitionModule.stop();
+        await waitForFinish();
+        if (!settled) {
+          ExpoSpeechRecognitionModule.abort();
+          throw new STTError(
+            "failed",
+            "Speech recognition did not finish cleanly",
+          );
         }
+        if (recognitionError && recognitionError.kind !== "no-speech")
+          throw recognitionError;
+        return {
+          fullText: latestText.trim(),
+          durationMs: Date.now() - startedAt,
+          audioUri,
+        };
+      } finally {
+        cleanup();
       }
-      const finalUri = srcUri ?? audioUri;
-
-      let fullText = '';
-      try {
-        fullText = await transcribeFile(finalUri, languageHint);
-        if (fullText) {
-          opts.onChunk({ text: fullText, isFinal: true, confidence: 0.9 });
-        }
-      } catch (e) {
-        log.error('STT transcribe failed', e);
-      }
-
-      return {
-        fullText: fullText.trim(),
-        durationMs: Date.now() - startedAt,
-        audioUri: finalUri,
-      };
     },
     cancel: async () => {
-      try { await opts.recorder.stop(); } catch {}
-      try { await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }); } catch {}
+      cancelled = true;
+      try {
+        ExpoSpeechRecognitionModule.abort();
+        await waitForFinish();
+      } finally {
+        cleanup();
+      }
     },
   };
 }

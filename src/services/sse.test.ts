@@ -1,0 +1,27 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { extractSSEEvents } from "./sse";
+
+test("extractSSEEvents retains a fragmented final event", () => {
+  const first = extractSSEEvents('data: {"one":1}\n\ndata: {"two"');
+  assert.deepEqual(first.events, ['{"one":1}']);
+  assert.equal(first.remainder, 'data: {"two"');
+
+  const second = extractSSEEvents(`${first.remainder}:2}\r\n\r\n`);
+  assert.deepEqual(second.events, ['{"two":2}']);
+  assert.equal(second.remainder, "");
+});
+
+test("extractSSEEvents joins multi-line data payloads", () => {
+  assert.deepEqual(
+    extractSSEEvents("event: message\ndata: hello\ndata: world\n\n").events,
+    ["hello\nworld"],
+  );
+});
+
+test("extractSSEEvents flushes a final event without a blank line", () => {
+  assert.deepEqual(extractSSEEvents("data: [DONE]", true), {
+    events: ["[DONE]"],
+    remainder: "",
+  });
+});

@@ -1,25 +1,58 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, Pressable, ScrollView, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { X, MessageCircleMore, Volume2 } from 'lucide-react-native';
-import { randomUUID } from 'expo-crypto';
-import { useAudioRecorder, AudioModule, RecordingPresets } from 'expo-audio';
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Linking,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useLocalSearchParams, useRouter } from "expo-router";
+import {
+  MessageCircleMore,
+  RotateCcw,
+  Send,
+  Settings,
+  Volume2,
+  X,
+} from "lucide-react-native";
+import { randomUUID } from "expo-crypto";
 
-import { getScenario } from '@/data/scenarios';
-import { useSession, type ChatTurn } from '@/stores/useSession';
-import { useSettings } from '@/stores/useSettings';
-import { useProgress } from '@/stores/useProgress';
-import { startStreaming } from '@/services/stt';
-import { streamConversation, generateSuggestedReplies } from '@/services/llm';
-import { synthesize, play } from '@/services/tts';
-import { annotate } from '@/services/furigana';
-import { MicButton } from '@/components/MicButton';
-import { SuggestedReplyChips } from '@/components/SuggestedReplyChips';
-import { JapaneseText } from '@/components/JapaneseText';
-import { tap, fail as failHaptic, success } from '@/utils/haptics';
-import { log } from '@/utils/log';
-import { colors } from '@/theme/colors';
+import { getScenario } from "@/data/scenarios";
+import { useSession, type ChatTurn } from "@/stores/useSession";
+import { useSettings } from "@/stores/useSettings";
+import { useProgress } from "@/stores/useProgress";
+import { startStreaming, STTError } from "@/services/stt";
+import {
+  ProviderTimeoutError,
+  streamConversation,
+  generateSuggestedReplies,
+} from "@/services/llm";
+import {
+  PCMPlaybackQueue,
+  synthesize,
+  play,
+  stop as stopSpeech,
+} from "@/services/tts";
+import { annotate } from "@/services/furigana";
+import { MicButton } from "@/components/MicButton";
+import { SuggestedReplyChips } from "@/components/SuggestedReplyChips";
+import { JapaneseText } from "@/components/JapaneseText";
+import { tap, fail as failHaptic, success } from "@/utils/haptics";
+import { log } from "@/utils/log";
+import { colors } from "@/theme/colors";
+import {
+  VoiceLatencyTracker,
+  VOICE_PHASE_COPY,
+  voiceError,
+  type VoiceLatency,
+  type VoiceLifecycle,
+} from "@/voice/lifecycle";
+import { ResponseRunController } from "@/voice/responseRun";
+
+type FailedReply = { text: string; audioUri?: string; assistantTurnId: string };
 
 export default function SessionScreen() {
   const router = useRouter();
@@ -27,34 +60,34 @@ export default function SessionScreen() {
     id: string;
     scenario?: string;
   }>();
-  const scenario = getScenario(scenarioId ?? '');
+  const scenario = getScenario(scenarioId ?? "");
   const settings = useSettings();
-  const bumpXp = useProgress((s) => s.bumpXp);
-  const tickDay = useProgress((s) => s.tickDay);
-
+  const bumpXp = useProgress((state) => state.bumpXp);
+  const tickDay = useProgress((state) => state.tickDay);
   const session = useSession();
-  const [suggested, setSuggested] = useState<Array<{ ja: string; en: string; hint: string }>>([]);
-  const [showPhraseHelp, setShowPhraseHelp] = useState(false);
 
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const sttHandleRef = useRef<Awaited<ReturnType<typeof startStreaming>> | null>(null);
+  const [suggested, setSuggested] = useState<
+    Array<{ ja: string; en: string; hint: string }>
+  >([]);
+  const [showPhraseHelp, setShowPhraseHelp] = useState(false);
+  const [draftTranscript, setDraftTranscript] = useState("");
+  const [draftAudioUri, setDraftAudioUri] = useState<string | undefined>();
+  const [furiganaCache, setFuriganaCache] = useState<
+    Record<string, Awaited<ReturnType<typeof annotate>>>
+  >({});
+
+  const sttHandleRef = useRef<Awaited<
+    ReturnType<typeof startStreaming>
+  > | null>(null);
   const pressStartRef = useRef(0);
   const scrollRef = useRef<ScrollView>(null);
-  const [furiganaCache, setFuriganaCache] = useState<Record<string, Awaited<ReturnType<typeof annotate>>>>({});
+  const responseRunsRef = useRef(new ResponseRunController());
+  const failedReplyRef = useRef<FailedReply | null>(null);
+  const latencyTrackerRef = useRef(new VoiceLatencyTracker());
 
   useEffect(() => {
-    (async () => {
-      const { granted } = await AudioModule.requestRecordingPermissionsAsync();
-      if (!granted) {
-        Alert.alert('Microphone', 'Koe needs the microphone to hear you.');
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
-    if (!id) return;
-    if (session.id === id) return;
-    session.start(
+    if (!id || useSession.getState().id === id) return;
+    useSession.getState().start(
       id,
       scenario
         ? {
@@ -67,9 +100,31 @@ export default function SessionScreen() {
     );
   }, [id, scenario?.id]);
 
+  useEffect(
+    () => () => {
+      responseRunsRef.current.interrupt();
+      void sttHandleRef.current?.cancel();
+      void stopSpeech();
+    },
+    [],
+  );
+
+  const updateLatency = useCallback(
+    (latency: VoiceLatency, stage: keyof VoiceLatency) => {
+      useSession.getState().setLatency(latency);
+      log.info("voice_latency", {
+        sessionId: id,
+        stage,
+        valueMs: latency[stage],
+        ...latency,
+      });
+    },
+    [id],
+  );
+
   const annotateTurn = useCallback(async (turn: ChatTurn) => {
     const runs = await annotate(turn.textJa);
-    setFuriganaCache((prev) => ({ ...prev, [turn.id]: runs }));
+    setFuriganaCache((previous) => ({ ...previous, [turn.id]: runs }));
   }, []);
 
   const playAssistant = useCallback(
@@ -79,152 +134,420 @@ export default function SessionScreen() {
           await play(turn.audioUri);
           return;
         }
-        if (!turn.textJa || !turn.textJa.trim()) return;
-        const res = await synthesize(turn.textJa, { voice: settings.voice });
-        await play(res.audioUri);
-      } catch (e) {
-        log.warn('TTS play failed', e);
+        if (!turn.textJa.trim()) return;
+        const result = await synthesize(turn.textJa, { voice: settings.voice });
+        await play(result.audioUri);
+      } catch (error) {
+        log.warn("TTS replay failed", error);
+        useSession.getState().setVoice(voiceError("playbackFailure"));
       }
     },
     [settings.voice],
   );
 
   const refreshSuggestions = useCallback(
-    async (history: Array<{ role: 'user' | 'assistant'; content: string }>) => {
-      const out = await generateSuggestedReplies({
+    async (history: Array<{ role: "user" | "assistant"; content: string }>) => {
+      const output = await generateSuggestedReplies({
         history,
         registerTarget: scenario?.registerTarget,
         jlptTarget: scenario?.difficulty,
       });
-      setSuggested(out);
+      setSuggested(output);
     },
     [scenario],
   );
 
+  const sendUser = useCallback(
+    async (text: string, audioUri?: string, retryAssistantTurnId?: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        useSession.getState().setVoice(voiceError("silence"));
+        return;
+      }
+
+      const interruptedTurnId = responseRunsRef.current.interrupt();
+      if (interruptedTurnId && interruptedTurnId !== retryAssistantTurnId) {
+        useSession
+          .getState()
+          .patchTurn(interruptedTurnId, {
+            streaming: false,
+            interrupted: true,
+          });
+      }
+      await stopSpeech();
+
+      const assistantTurnId = retryAssistantTurnId ?? randomUUID();
+      if (retryAssistantTurnId) {
+        useSession.getState().patchTurn(assistantTurnId, {
+          textJa: "",
+          streaming: true,
+          interrupted: false,
+          corrections: undefined,
+        });
+      } else {
+        const userTurn: ChatTurn = {
+          id: randomUUID(),
+          role: "user",
+          textJa: trimmed,
+          audioUri,
+          createdAt: Date.now(),
+        };
+        const assistantTurn: ChatTurn = {
+          id: assistantTurnId,
+          role: "assistant",
+          textJa: "",
+          streaming: true,
+          createdAt: Date.now(),
+        };
+        useSession.getState().addTurn(userTurn);
+        useSession.getState().addTurn(assistantTurn);
+        void annotateTurn(userTurn);
+        success();
+      }
+
+      const historyWithUser = useSession
+        .getState()
+        .turns.filter((turn) => turn.id !== assistantTurnId && turn.textJa)
+        .map((turn) => ({ role: turn.role, content: turn.textJa }));
+      const responseRun = responseRunsRef.current.start(assistantTurnId);
+      failedReplyRef.current = null;
+      useSession.getState().setStreaming(true);
+      useSession
+        .getState()
+        .setVoicePhase(retryAssistantTurnId ? "retry" : "understanding", {
+          interimTranscript: "",
+        });
+      latencyTrackerRef.current.transcriptCommitted();
+
+      let receivedText = false;
+      let receivedAudio = false;
+      let playbackFailed = false;
+      let reply = "";
+      const handlePlaybackFailure = (error: Error) => {
+        if (playbackFailed) return;
+        playbackFailed = true;
+        log.warn("response playback failed", error);
+        failedReplyRef.current = { text: trimmed, audioUri, assistantTurnId };
+        responseRunsRef.current.interrupt();
+        useSession.getState().setVoice(voiceError("playbackFailure"));
+      };
+      const audioQueue = new PCMPlaybackQueue({
+        onStarted: () => {
+          if (!responseRunsRef.current.isCurrent(assistantTurnId)) return;
+          const latency = latencyTrackerRef.current.firstAudioPlayed();
+          updateLatency(latency, "firstTextToFirstAudioMs");
+          useSession.getState().setVoicePhase("speaking");
+        },
+        onFinished: () => {
+          if (!responseRunsRef.current.complete(assistantTurnId)) return;
+          useSession.getState().setVoicePhase("idle");
+        },
+        onError: handlePlaybackFailure,
+      });
+
+      try {
+        const generator = streamConversation({
+          context: useSession.getState().context,
+          history: historyWithUser.slice(0, -1),
+          userTurn: trimmed,
+          voice: settings.voice,
+          signal: responseRun.signal,
+        });
+        while (true) {
+          const next = await generator.next();
+          if (next.done) {
+            const result = next.value;
+            const finalText = result.fullText || reply;
+            useSession.getState().patchTurn(assistantTurnId, {
+              textJa: finalText,
+              streaming: false,
+            });
+            void result.feedback.then((corrections) => {
+              useSession
+                .getState()
+                .patchTurn(assistantTurnId, { corrections });
+            });
+            failedReplyRef.current = null;
+            bumpXp(10);
+            tickDay();
+            void annotateTurn({
+              id: assistantTurnId,
+              role: "assistant",
+              textJa: finalText,
+              createdAt: Date.now(),
+            });
+            if (showPhraseHelp) {
+              void refreshSuggestions([
+                ...historyWithUser,
+                { role: "assistant", content: finalText },
+              ]);
+            }
+
+            if (receivedAudio) {
+              void audioQueue.finish().catch((error) => {
+                handlePlaybackFailure(
+                  error instanceof Error
+                    ? error
+                    : new Error("Streaming playback did not finish"),
+                );
+              });
+            } else {
+              await audioQueue.stop();
+              if (finalText) {
+                const synthesized = await synthesize(finalText, {
+                  voice: settings.voice,
+                });
+                useSession
+                  .getState()
+                  .patchTurn(assistantTurnId, {
+                    audioUri: synthesized.audioUri,
+                  });
+                if (synthesized.durationMs > 0) {
+                  await play(synthesized.audioUri, {
+                    onStarted: () => {
+                      if (!responseRunsRef.current.isCurrent(assistantTurnId))
+                        return;
+                      const latency =
+                        latencyTrackerRef.current.firstAudioPlayed();
+                      updateLatency(latency, "firstTextToFirstAudioMs");
+                      useSession.getState().setVoicePhase("speaking");
+                    },
+                    onFinished: () => {
+                      if (!responseRunsRef.current.complete(assistantTurnId))
+                        return;
+                      useSession.getState().setVoicePhase("idle");
+                    },
+                    onError: handlePlaybackFailure,
+                  });
+                } else {
+                  responseRunsRef.current.complete(assistantTurnId);
+                  useSession.getState().setVoicePhase("idle");
+                }
+              } else {
+                responseRunsRef.current.complete(assistantTurnId);
+                useSession.getState().setVoicePhase("idle");
+              }
+            }
+            break;
+          }
+
+          const chunk = next.value;
+          if (chunk.type === "text") {
+            reply += chunk.text;
+            useSession
+              .getState()
+              .appendAssistantText(assistantTurnId, chunk.text);
+            if (!receivedText) {
+              receivedText = true;
+              const latency = latencyTrackerRef.current.firstTextReceived();
+              updateLatency(latency, "transcriptToFirstTextMs");
+              useSession.getState().setVoicePhase("firstReply");
+            }
+          } else {
+            receivedAudio = true;
+            try {
+              await audioQueue.enqueue(
+                chunk.audioBase64,
+                chunk.sampleRate,
+                chunk.channels,
+              );
+            } catch (error) {
+              handlePlaybackFailure(
+                error instanceof Error
+                  ? error
+                  : new Error("Could not queue streamed audio"),
+              );
+              throw error;
+            }
+          }
+        }
+      } catch (error) {
+        await audioQueue.stop();
+        if (
+          responseRun.signal.aborted &&
+          !(error instanceof ProviderTimeoutError)
+        ) {
+          useSession.getState().patchTurn(assistantTurnId, {
+            streaming: false,
+            interrupted: !playbackFailed,
+          });
+          return;
+        }
+        log.error("conversation stream failed", error);
+        responseRunsRef.current.complete(assistantTurnId);
+        failedReplyRef.current = { text: trimmed, audioUri, assistantTurnId };
+        useSession.getState().patchTurn(assistantTurnId, {
+          textJa: reply || "Koe could not finish that reply.",
+          streaming: false,
+        });
+        useSession
+          .getState()
+          .setVoice(
+            error instanceof ProviderTimeoutError
+              ? voiceError("providerTimeout")
+              : voiceError("network"),
+          );
+      } finally {
+        if (responseRunsRef.current.isLatest(responseRun.token))
+          useSession.getState().setStreaming(false);
+      }
+    },
+    [
+      annotateTurn,
+      bumpXp,
+      refreshSuggestions,
+      settings.voice,
+      showPhraseHelp,
+      tickDay,
+      updateLatency,
+    ],
+  );
+
   const onPressIn = useCallback(async () => {
-    if (session.isStreaming || session.isRecording) return;
+    if (useSession.getState().isRecording) return;
+    const wasResponding = Boolean(
+      responseRunsRef.current.hasActiveRun() ||
+        useSession.getState().isStreaming,
+    );
+    if (wasResponding) {
+      useSession.getState().setVoicePhase("interrupted");
+      const interruptedTurnId = responseRunsRef.current.interrupt();
+      if (interruptedTurnId) {
+        useSession
+          .getState()
+          .patchTurn(interruptedTurnId, {
+            streaming: false,
+            interrupted: true,
+          });
+      }
+      useSession.getState().setStreaming(false);
+      await stopSpeech();
+    }
+
     pressStartRef.current = Date.now();
-    session.setRecording(true);
+    latencyTrackerRef.current = new VoiceLatencyTracker();
+    latencyTrackerRef.current.listeningStarted();
+    useSession.getState().setLatency({});
+    setDraftTranscript("");
+    setDraftAudioUri(undefined);
+    useSession.getState().setRecording(true);
+    useSession.getState().setVoicePhase("listening", { interimTranscript: "" });
+
     try {
       sttHandleRef.current = await startStreaming({
-        onChunk: (_chunk) => {
-          // could stream into the user's bubble in real time
+        languageHint: "ja,en",
+        onChunk: (chunk) => {
+          const previous =
+            useSession.getState().latency.listeningToTranscriptMs;
+          const latency = latencyTrackerRef.current.transcriptReceived();
+          if (previous === undefined)
+            updateLatency(latency, "listeningToTranscriptMs");
+          setDraftTranscript(chunk.text);
+          useSession.getState().setInterimTranscript(chunk.text);
         },
-        languageHint: 'ja,en',
-        recorder,
       });
-    } catch (e) {
-      log.error('start STT failed', e);
+    } catch (error) {
+      log.error("start STT failed", error);
       failHaptic();
-      session.setRecording(false);
+      useSession.getState().setRecording(false);
+      if (error instanceof STTError && error.kind === "permission-denied") {
+        useSession.getState().setVoice(voiceError("permissionDenied"));
+      } else if (error instanceof STTError && error.kind === "interrupted") {
+        useSession.getState().setVoice(voiceError("audioInterruption"));
+      } else {
+        useSession.getState().setVoice(voiceError("sttFailure"));
+      }
     }
-  }, [session, recorder]);
+  }, [updateLatency]);
 
   const onPressOut = useCallback(async () => {
-    if (!session.isRecording) return;
+    if (!useSession.getState().isRecording) return;
     const duration = Date.now() - pressStartRef.current;
-    session.setRecording(false);
+    useSession.getState().setRecording(false);
     const handle = sttHandleRef.current;
     sttHandleRef.current = null;
     if (!handle) return;
 
-    if (duration < 400) {
-      await handle.cancel();
-      return;
-    }
-    const { fullText, audioUri } = await handle.stop();
-    if (!fullText.trim()) {
-      Alert.alert('I did not catch that', 'Hold the mic and speak whenever you are ready.');
-      return;
-    }
-    await sendUser(fullText, audioUri);
-  }, [session]);
-
-  const sendUser = useCallback(
-    async (text: string, audioUri?: string) => {
-      const userTurn: ChatTurn = {
-        id: randomUUID(),
-        role: 'user',
-        textJa: text,
-        audioUri,
-        createdAt: Date.now(),
-      };
-      session.addTurn(userTurn);
-      annotateTurn(userTurn);
-      success();
-
-      const assistantTurn: ChatTurn = {
-        id: randomUUID(),
-        role: 'assistant',
-        textJa: '',
-        streaming: true,
-        createdAt: Date.now(),
-      };
-      session.addTurn(assistantTurn);
-      session.setStreaming(true);
-
-      const history = useSession
-        .getState()
-        .turns.filter((t) => t.id !== assistantTurn.id && t.textJa)
-        .map((t) => ({ role: t.role, content: t.textJa }));
-
-      try {
-        const gen = streamConversation({
-          context: useSession.getState().context,
-          history: history.slice(0, -1) as any,
-          userTurn: text,
-        });
-        let reply = '';
-        while (true) {
-          const { value, done } = await gen.next();
-          if (done) {
-            const result = value;
-            const finalText = result.fullText || reply;
-            session.patchTurn(assistantTurn.id, {
-              textJa: finalText,
-              corrections: result.corrections,
-              audioUri: result.audioUri,
-              streaming: false,
-            });
-            bumpXp(10);
-            tickDay();
-            annotateTurn({ ...assistantTurn, textJa: finalText });
-            if (result.audioUri) {
-              play(result.audioUri).catch(() => {});
-            } else if (finalText) {
-              synthesize(finalText, { voice: settings.voice })
-                .then((res) => play(res.audioUri))
-                .catch(() => {});
-            }
-            if (showPhraseHelp) {
-              refreshSuggestions([...history, { role: 'assistant', content: finalText }] as any);
-            }
-            break;
-          }
-          reply = value;
-          session.patchTurn(assistantTurn.id, { textJa: reply });
-        }
-      } catch (e) {
-        log.error('stream failed', e);
-        session.patchTurn(assistantTurn.id, {
-          textJa: '(connection error — check your worker URL)',
-          streaming: false,
-        });
-      } finally {
-        session.setStreaming(false);
+    try {
+      if (duration < 400) {
+        await handle.cancel();
+        useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
+        return;
       }
-    },
-    [annotateTurn, bumpXp, tickDay, refreshSuggestions, settings.voice, showPhraseHelp],
-  );
+      const result = await handle.stop();
+      if (!result.fullText.trim()) {
+        useSession.getState().setVoice(voiceError("silence"));
+        return;
+      }
+      setDraftTranscript(result.fullText);
+      setDraftAudioUri(result.audioUri || undefined);
+      useSession
+        .getState()
+        .setVoicePhase("correction", { interimTranscript: result.fullText });
+    } catch (error) {
+      log.error("finish STT failed", error);
+      if (error instanceof STTError && error.kind === "network") {
+        useSession.getState().setVoice(voiceError("network"));
+      } else if (error instanceof STTError && error.kind === "interrupted") {
+        useSession.getState().setVoice(voiceError("audioInterruption"));
+      } else if (
+        error instanceof STTError &&
+        error.kind === "permission-denied"
+      ) {
+        useSession.getState().setVoice(voiceError("permissionDenied"));
+      } else if (error instanceof STTError && error.kind === "no-speech") {
+        useSession.getState().setVoice(voiceError("silence"));
+      } else {
+        useSession.getState().setVoice(voiceError("sttFailure"));
+      }
+    }
+  }, []);
+
+  const submitTranscript = useCallback(() => {
+    const text = draftTranscript.trim();
+    if (!text) {
+      useSession.getState().setVoice(voiceError("silence"));
+      return;
+    }
+    setDraftTranscript("");
+    useSession
+      .getState()
+      .setVoicePhase("understanding", { interimTranscript: "" });
+    void sendUser(text, draftAudioUri);
+  }, [draftAudioUri, draftTranscript, sendUser]);
+
+  const recoverVoice = useCallback(() => {
+    const recovery = useSession.getState().voice.recovery;
+    if (recovery === "openSettings") {
+      void Linking.openSettings();
+      return;
+    }
+    if (recovery === "retryResponse" && failedReplyRef.current) {
+      const failed = failedReplyRef.current;
+      useSession.getState().setVoicePhase("retry");
+      void sendUser(failed.text, failed.audioUri, failed.assistantTurnId);
+      return;
+    }
+    useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
+  }, [sendUser]);
+
+  const discardTranscript = useCallback(() => {
+    setDraftTranscript("");
+    setDraftAudioUri(undefined);
+    useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
+  }, []);
 
   const endSession = () => {
-    Alert.alert('End session', 'Finish this conversation?', [
-      { text: 'Cancel', style: 'cancel' },
+    Alert.alert("End session", "Finish this conversation?", [
+      { text: "Cancel", style: "cancel" },
       {
-        text: 'End',
-        style: 'destructive',
+        text: "End",
+        style: "destructive",
         onPress: () => {
-          session.end();
+          responseRunsRef.current.interrupt();
+          void sttHandleRef.current?.cancel();
+          void stopSpeech();
+          useSession.getState().end();
           router.back();
         },
       },
@@ -240,13 +563,17 @@ export default function SessionScreen() {
         .getState()
         .turns.filter((turn) => turn.textJa)
         .map((turn) => ({ role: turn.role, content: turn.textJa }));
-      refreshSuggestions(history);
+      void refreshSuggestions(history);
     }
   };
 
+  const canInterrupt = ["understanding", "firstReply", "speaking"].includes(
+    session.voice.phase,
+  );
+
   return (
     <SafeAreaView className="flex-1 bg-bg dark:bg-bg-dark">
-      <View className="flex-row items-center justify-between px-4 py-3 border-b border-black/5 dark:border-white/5">
+      <View className="flex-row items-center justify-between border-b border-black/5 px-4 py-3 dark:border-white/5">
         <Pressable
           accessibilityRole="button"
           onPress={endSession}
@@ -256,8 +583,14 @@ export default function SessionScreen() {
           <Text className="text-muted">End</Text>
         </Pressable>
         <View className="items-center">
-          <Text className="text-fg dark:text-fg-dark font-semibold">{scenario?.title ?? 'Conversation'}</Text>
-          {scenario && <Text className="text-muted text-[10px] mt-0.5">Optional topic</Text>}
+          <Text className="font-semibold text-fg dark:text-fg-dark">
+            {scenario?.title ?? "Conversation"}
+          </Text>
+          {scenario && (
+            <Text className="mt-0.5 text-[10px] text-muted">
+              Optional topic
+            </Text>
+          )}
         </View>
         <View style={{ width: 40 }} />
       </View>
@@ -267,14 +600,18 @@ export default function SessionScreen() {
         className="flex-1 px-3"
         contentContainerClassName="py-4"
         contentContainerStyle={{ flexGrow: 1 }}
-        onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
+        onContentSizeChange={() =>
+          scrollRef.current?.scrollToEnd({ animated: true })
+        }
       >
         {!session.turns.length && (
           <View className="flex-1 items-center justify-center px-8 py-20">
-            <Text className="font-jpBold text-fg dark:text-fg-dark text-2xl text-center">何でも話してみてください</Text>
-            <Text className="text-muted text-center mt-3 leading-5">
-              Hold the mic and speak in Japanese. Ask for help, translation, correction, or roleplay whenever you want
-              it.
+            <Text className="text-center font-jpBold text-2xl text-fg dark:text-fg-dark">
+              何でも話してみてください
+            </Text>
+            <Text className="mt-3 text-center leading-5 text-muted">
+              Hold the mic and speak in Japanese. Ask for help, translation,
+              correction, or roleplay whenever you want it.
             </Text>
           </View>
         )}
@@ -288,10 +625,25 @@ export default function SessionScreen() {
         ))}
       </ScrollView>
 
+      <VoiceLifecyclePanel
+        voice={session.voice}
+        latency={session.latency}
+        draftTranscript={draftTranscript}
+        onChangeTranscript={setDraftTranscript}
+        onSubmit={submitTranscript}
+        onDiscard={discardTranscript}
+        onRecover={recoverVoice}
+      />
+
       {showPhraseHelp && (
         <View className="mx-4 mb-2 rounded-2xl bg-accent/10 px-3 py-3">
-          <Text className="text-accent text-xs font-semibold mb-2">Try one of these</Text>
-          <SuggestedReplyChips replies={suggested} onPick={(reply) => sendUser(reply.ja)} />
+          <Text className="mb-2 text-xs font-semibold text-accent">
+            Try one of these
+          </Text>
+          <SuggestedReplyChips
+            replies={suggested}
+            onPick={(reply) => void sendUser(reply.ja)}
+          />
         </View>
       )}
 
@@ -302,21 +654,127 @@ export default function SessionScreen() {
         className="min-h-11 flex-row items-center gap-2 px-4 py-2"
       >
         <MessageCircleMore color={colors.accent} size={17} />
-        <Text className="text-accent text-xs font-semibold">
-          {showPhraseHelp ? 'Hide phrase help' : 'Need a phrase?'}
+        <Text className="text-xs font-semibold text-accent">
+          {showPhraseHelp ? "Hide phrase help" : "Need a phrase?"}
         </Text>
       </Pressable>
 
       <View className="border-t border-black/5 dark:border-white/5">
         <MicButton
           recording={session.isRecording}
-          disabled={session.isStreaming}
           onPressIn={onPressIn}
           onPressOut={onPressOut}
+          prompt={canInterrupt ? "Hold to interrupt" : undefined}
         />
       </View>
     </SafeAreaView>
   );
+}
+
+function VoiceLifecyclePanel({
+  voice,
+  latency,
+  draftTranscript,
+  onChangeTranscript,
+  onSubmit,
+  onDiscard,
+  onRecover,
+}: {
+  voice: VoiceLifecycle;
+  latency: VoiceLatency;
+  draftTranscript: string;
+  onChangeTranscript: (value: string) => void;
+  onSubmit: () => void;
+  onDiscard: () => void;
+  onRecover: () => void;
+}) {
+  const copy = VOICE_PHASE_COPY[voice.phase];
+  const recoveryLabel =
+    voice.recovery === "openSettings"
+      ? "Open settings"
+      : voice.recovery === "retryResponse"
+        ? "Retry response"
+        : voice.recovery === "resume"
+          ? "Resume"
+          : "Try again";
+
+  return (
+    <View className="mx-4 mb-2 rounded-2xl bg-surface px-4 py-3 dark:bg-surface-dark">
+      <View accessibilityLiveRegion="polite" accessibilityRole="summary">
+        <Text className="text-sm font-semibold text-fg dark:text-fg-dark">
+          {copy.title}
+        </Text>
+        <Text className="mt-0.5 text-xs text-muted">
+          {voice.message ?? copy.detail}
+        </Text>
+      </View>
+
+      {voice.phase === "interimTranscript" && voice.interimTranscript ? (
+        <Text className="mt-2 font-jp text-base text-fg dark:text-fg-dark">
+          {voice.interimTranscript}
+        </Text>
+      ) : null}
+
+      {voice.phase === "correction" ? (
+        <View className="mt-3">
+          <TextInput
+            accessibilityLabel="Correct transcript"
+            value={draftTranscript}
+            onChangeText={onChangeTranscript}
+            multiline
+            className="min-h-11 rounded-xl bg-bg px-3 py-2 font-jp text-base text-fg dark:bg-bg-dark dark:text-fg-dark"
+          />
+          <View className="mt-2 flex-row gap-2">
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Try recording again"
+              onPress={onDiscard}
+              className="min-h-11 flex-1 flex-row items-center justify-center gap-2 rounded-xl bg-black/5 px-3 dark:bg-white/10"
+            >
+              <RotateCcw color={colors.muted} size={16} />
+              <Text className="font-semibold text-muted">Try again</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send corrected transcript"
+              onPress={onSubmit}
+              className="min-h-11 flex-1 flex-row items-center justify-center gap-2 rounded-xl bg-accent px-3"
+            >
+              <Send color="white" size={16} />
+              <Text className="font-semibold text-white">Send</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+
+      {voice.phase === "recoverableError" ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onRecover}
+          className="mt-3 min-h-11 flex-row items-center justify-center gap-2 rounded-xl bg-accent px-4"
+        >
+          {voice.recovery === "openSettings" ? (
+            <Settings color="white" size={16} />
+          ) : (
+            <RotateCcw color="white" size={16} />
+          )}
+          <Text className="font-semibold text-white">{recoveryLabel}</Text>
+        </Pressable>
+      ) : null}
+
+      {Object.values(latency).some((value) => value !== undefined) ? (
+        <Text className="mt-2 text-[10px] text-muted">
+          Transcript {formatLatency(latency.listeningToTranscriptMs)} · First
+          words {formatLatency(latency.transcriptToFirstTextMs)} · Audio{" "}
+          {formatLatency(latency.firstTextToFirstAudioMs)}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+function formatLatency(value?: number): string {
+  return value === undefined ? "—" : `${Math.round(value)} ms`;
 }
 
 function TurnBubble({
@@ -328,41 +786,74 @@ function TurnBubble({
   runs: Awaited<ReturnType<typeof annotate>>;
   onReplay: () => void;
 }) {
-  const isUser = turn.role === 'user';
+  const isUser = turn.role === "user";
   const correctionNotes = turn.corrections
     ? [
-        ...turn.corrections.particles.map((item) => `${item.original} → ${item.corrected} — ${item.explanation}`),
-        ...turn.corrections.other.map((item) => `${item.original} → ${item.corrected} — ${item.explanation}`),
-        ...(!turn.corrections.register.consistent && turn.corrections.register.note
+        ...turn.corrections.particles.map(
+          (item) =>
+            `${item.original} → ${item.corrected} — ${item.explanation}`,
+        ),
+        ...turn.corrections.other.map(
+          (item) =>
+            `${item.original} → ${item.corrected} — ${item.explanation}`,
+        ),
+        ...(!turn.corrections.register.consistent &&
+        turn.corrections.register.note
           ? [turn.corrections.register.note]
           : []),
       ]
     : [];
 
   return (
-    <View className={`my-2 max-w-[85%] ${isUser ? 'self-end items-end' : 'self-start items-start'}`}>
-      <View className={`rounded-2xl px-4 py-3 ${isUser ? 'bg-primary' : 'bg-surface dark:bg-surface-dark'}`}>
-        <JapaneseText runs={runs} color={isUser ? '#fff' : undefined} fontSize={18} />
-        {turn.textEn && (
-          <Text className={`text-xs mt-2 ${isUser ? 'text-white/70' : 'text-muted'}`}>{turn.textEn}</Text>
+    <View
+      className={`my-2 max-w-[85%] ${isUser ? "self-end items-end" : "self-start items-start"}`}
+    >
+      <View
+        className={`rounded-2xl px-4 py-3 ${isUser ? "bg-primary" : "bg-surface dark:bg-surface-dark"}`}
+      >
+        {turn.textJa ? (
+          <JapaneseText
+            runs={runs}
+            color={isUser ? "#fff" : undefined}
+            fontSize={18}
+          />
+        ) : (
+          <Text className="text-sm text-muted">
+            {turn.streaming ? "Koe is thinking…" : "No reply"}
+          </Text>
         )}
-        {!isUser && (
+        {turn.textEn && (
+          <Text
+            className={`mt-2 text-xs ${isUser ? "text-white/70" : "text-muted"}`}
+          >
+            {turn.textEn}
+          </Text>
+        )}
+        {!isUser && turn.textJa ? (
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="Replay response"
             onPress={onReplay}
-            className="min-h-11 flex-row items-center mt-1 -mb-2 gap-1"
+            className="-mb-2 mt-1 min-h-11 flex-row items-center gap-1"
           >
             <Volume2 color={colors.accent} size={14} />
-            <Text className="text-accent text-xs">Replay</Text>
+            <Text className="text-xs text-accent">Replay</Text>
           </Pressable>
-        )}
+        ) : null}
       </View>
+      {turn.interrupted ? (
+        <Text className="mt-1 text-[10px] text-muted">Interrupted</Text>
+      ) : null}
       {!isUser && correctionNotes.length > 0 && (
         <View className="mt-1 max-w-full rounded-xl bg-warning/10 px-3 py-2">
-          <Text className="text-warning text-[10px] font-bold uppercase">Quick note</Text>
+          <Text className="text-[10px] font-bold uppercase text-warning">
+            Quick note
+          </Text>
           {correctionNotes.map((note, index) => (
-            <Text key={index} className="text-fg dark:text-fg-dark text-xs mt-1">
+            <Text
+              key={index}
+              className="mt-1 text-xs text-fg dark:text-fg-dark"
+            >
               {note}
             </Text>
           ))}

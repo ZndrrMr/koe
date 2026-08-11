@@ -1,20 +1,33 @@
-import React from 'react';
-import { Pressable, View, Text } from 'react-native';
-import Animated, { useSharedValue, useAnimatedStyle, withSpring } from 'react-native-reanimated';
-import { Mic } from 'lucide-react-native';
-import { press as pressHaptic } from '@/utils/haptics';
-import { colors } from '@/theme/colors';
+import React from "react";
+import { Pressable, View, Text } from "react-native";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+} from "react-native-reanimated";
+import { Mic } from "lucide-react-native";
+import { press as pressHaptic } from "@/utils/haptics";
+import { colors } from "@/theme/colors";
 
 type Props = {
   recording: boolean;
   disabled?: boolean;
+  prompt?: string;
   onPressIn: () => void;
   onPressOut: () => void;
 };
 
-export function MicButton({ recording, disabled, onPressIn, onPressOut }: Props) {
+export function MicButton({
+  recording,
+  disabled,
+  prompt,
+  onPressIn,
+  onPressOut,
+}: Props) {
   const scale = useSharedValue(1);
-  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
 
   return (
     <View className="items-center justify-center py-4">
@@ -22,7 +35,11 @@ export function MicButton({ recording, disabled, onPressIn, onPressOut }: Props)
         <Pressable
           disabled={disabled}
           accessibilityRole="button"
-          accessibilityLabel={recording ? 'Release to send' : 'Hold to speak'}
+          accessibilityLabel={
+            recording
+              ? "Release to review transcript"
+              : (prompt ?? "Hold to speak")
+          }
           accessibilityHint="Records your Japanese while held"
           accessibilityState={{ disabled: Boolean(disabled) }}
           onPressIn={() => {
@@ -39,9 +56,9 @@ export function MicButton({ recording, disabled, onPressIn, onPressOut }: Props)
             height: 96,
             borderRadius: 48,
             backgroundColor: recording ? colors.primary : colors.accent,
-            justifyContent: 'center',
-            alignItems: 'center',
-            shadowColor: '#000',
+            justifyContent: "center",
+            alignItems: "center",
+            shadowColor: "#000",
             shadowOpacity: 0.2,
             shadowRadius: 8,
             shadowOffset: { width: 0, height: 4 },
@@ -52,7 +69,7 @@ export function MicButton({ recording, disabled, onPressIn, onPressOut }: Props)
         </Pressable>
       </Animated.View>
       <Text className="text-muted text-xs mt-2">
-        {recording ? 'Release to send' : 'Hold to speak'}
+        {recording ? "Release to review" : (prompt ?? "Hold to speak")}
       </Text>
     </View>
   );
