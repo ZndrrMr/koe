@@ -16,6 +16,7 @@
     "preview": "npx expo export -p web && wrangler dev",
     "test:prompts": "tsx --test src/prompts/tutor.test.ts",
     "test:voice": "tsx --test src/voice/*.test.ts src/services/sse.test.ts src/services/pcm.test.ts src/services/pitch.test.ts src/theme/interaction.test.ts",
+    "test:song": "tsx --test src/song/*.test.ts",
     "test:sessions": "tsx --test src/db/sessionHistory.test.ts"
   },
   "dependencies": {

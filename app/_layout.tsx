@@ -86,6 +86,13 @@ export default function RootLayout() {
       return;
     }
     if (
+      reviewRoute === "song-pronunciation-proof" &&
+      firstRoute !== "song-pronunciation-proof"
+    ) {
+      router.replace("/song-pronunciation-proof" as never);
+      return;
+    }
+    if (
       reviewRoute === "library" &&
       (first !== "(tabs)" || secondRoute !== "library")
     ) {
@@ -119,6 +126,7 @@ export default function RootLayout() {
             <Stack.Screen name="about" options={{ presentation: "modal" }} />
             <Stack.Screen name="visual-study" />
             <Stack.Screen name="session-history-proof" />
+            <Stack.Screen name="song-pronunciation-proof" />
           </Stack>
         </SafeAreaProvider>
       </GestureHandlerRootView>
