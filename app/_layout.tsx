@@ -67,6 +67,17 @@ export default function RootLayout() {
       router.replace("/visual-study");
       return;
     }
+    if (
+      reviewRoute === "marketing-capture" &&
+      firstRoute !== "marketing-capture"
+    ) {
+      router.replace("/marketing-capture" as never);
+      return;
+    }
+    if (reviewRoute === "landing" && firstRoute !== "landing") {
+      router.replace("/landing" as never);
+      return;
+    }
     if (reviewRoute === "session" && first !== "session") {
       router.replace({
         pathname: "/session/[id]",
@@ -99,8 +110,14 @@ export default function RootLayout() {
       router.replace("/(tabs)/library");
       return;
     }
-    const isDevelopmentStudy = __DEV__ && first === "visual-study";
-    if (!onboardingDone && first !== "onboarding" && !isDevelopmentStudy) {
+    const isPublicOrDevelopmentSurface =
+      first === "landing" ||
+      (__DEV__ && (first === "visual-study" || first === "marketing-capture"));
+    if (
+      !onboardingDone &&
+      first !== "onboarding" &&
+      !isPublicOrDevelopmentSurface
+    ) {
       router.replace("/onboarding/welcome");
     }
   }, [ready, onboardingDone, segments]);
@@ -125,6 +142,8 @@ export default function RootLayout() {
             />
             <Stack.Screen name="about" options={{ presentation: "modal" }} />
             <Stack.Screen name="visual-study" />
+            <Stack.Screen name="marketing-capture" />
+            <Stack.Screen name="landing" />
             <Stack.Screen name="session-history-proof" />
             <Stack.Screen name="song-pronunciation-proof" />
           </Stack>

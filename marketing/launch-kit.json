@@ -1,0 +1,230 @@
+{
+  "thesis": "Speak Japanese. Hear exactly how to sound better.",
+  "appStore": {
+    "name": "Koe",
+    "subtitle": "Japanese speaking, tuned",
+    "promotionalText": "Speak naturally, hear a real Japanese reply, then fix the one pitch or timing detail that will help most.",
+    "description": [
+      "Speak Japanese. Hear exactly how to sound better.",
+      "Koe is a voice-first Japanese conversation partner. Start talking without choosing a lesson or roleplay. Koe answers the meaning first, then offers one optional pronunciation note after the turn.",
+      "See pitch and mora timing together. Retry only the useful phrase, compare what changed, and return to the conversation that was already underway.",
+      "At the end, keep the expressions and corrections worth carrying forward. Your full conversation stays private unless you explicitly choose otherwise."
+    ],
+    "keywords": "japanese,speaking,pronunciation,pitch accent,conversation,shadowing,voice,mora"
+  },
+  "launchCopy": {
+    "announcement": [
+      "I’m building Koe because I want Japanese practice to feel like talking, not taking a test.",
+      "Speak Japanese. Hear exactly how to sound better.",
+      "You say the thing you meant. Koe answers it. Then it shows one pitch or timing detail worth a retry—and gives the conversation back."
+    ],
+    "creatorSeriesOpener": "I’m building the Japanese voice interaction I want to study with. This is what changed in Koe this week, the phrase I tried, and what I still got wrong.",
+    "beforeAfterCaption": "My first try shortened えい in 映画. Koe asked for one more rep; the retry held both beats. Same conversation, one useful change.",
+    "nativeCritiqueInvite": "Native speakers: does this correction sound accurate, tactful, and worth interrupting the flow for? I’ll show what I change from the critique.",
+    "landingCta": "See the speaking loop"
+  },
+  "capture": {
+    "route": "marketing-capture",
+    "canvas": {
+      "width": 1206,
+      "height": 2622
+    },
+    "preview": {
+      "fps": 30,
+      "durationMs": 13000,
+      "firstCorrectionAtMs": 4100
+    },
+    "environment": {
+      "EXPO_PUBLIC_KOE_REVIEW_ROUTE": "marketing-capture",
+      "EXPO_PUBLIC_KOE_REVIEW_SCHEME": "light",
+      "EXPO_PUBLIC_KOE_MARKETING_CAPTURE": "1",
+      "EXPO_PUBLIC_KOE_MARKETING_SEQUENCE": "1"
+    },
+    "generated": {
+      "screenshots": [
+        "marketing/generated/app-store-01-speak.png",
+        "marketing/generated/app-store-02-hear.png",
+        "marketing/generated/app-store-03-tune.png",
+        "marketing/generated/app-store-04-retry.png",
+        "marketing/generated/app-store-05-keep.png"
+      ],
+      "preview": "marketing/generated/koe-app-preview.mp4",
+      "contactSheet": "marketing/generated/app-store-story-contact-sheet.png",
+      "landingProof": "marketing/generated/landing-ipad.png",
+      "icon": "assets/icon.png"
+    }
+  },
+  "story": [
+    {
+      "id": "speak",
+      "order": 1,
+      "eyebrow": "SPEAK / 発話",
+      "headline": "Speak Japanese. Get an actual answer.",
+      "detail": "No lesson picker. Start with the thing you want to say.",
+      "phase": "listening",
+      "durationMs": 1800,
+      "utteranceJa": "昨日、友達と映画を見ました。",
+      "utteranceEn": "Yesterday, I watched a movie with a friend."
+    },
+    {
+      "id": "reply",
+      "order": 2,
+      "eyebrow": "HEAR / 応答",
+      "headline": "Hear the reply before the lesson.",
+      "detail": "Koe answers naturally, then keeps coaching out of the way.",
+      "phase": "speaking",
+      "durationMs": 2300,
+      "utteranceJa": "いいですね。どんな映画でしたか？",
+      "utteranceEn": "Nice. What kind of movie was it?"
+    },
+    {
+      "id": "tune",
+      "order": 3,
+      "eyebrow": "TUNE / 一点",
+      "headline": "See the one sound to tune.",
+      "detail": "Pitch and timing become one useful next rep—not a report card.",
+      "phase": "feedback",
+      "durationMs": 3000,
+      "utteranceJa": "映画 → え・い・が",
+      "utteranceEn": "Let えい take two beats."
+    },
+    {
+      "id": "compare",
+      "order": 4,
+      "eyebrow": "RETRY / 比較",
+      "headline": "Retry. Compare what changed.",
+      "detail": "The long vowel held. The conversation is still waiting.",
+      "phase": "comparing",
+      "durationMs": 2700,
+      "utteranceJa": "映画",
+      "utteranceEn": "This time, both beats landed."
+    },
+    {
+      "id": "keep",
+      "order": 5,
+      "eyebrow": "KEEP / 余韻",
+      "headline": "Keep the Japanese worth remembering.",
+      "detail": "Save the expression and the correction—not a chat archive.",
+      "phase": "success",
+      "durationMs": 3200,
+      "utteranceJa": "どんな映画でしたか？",
+      "utteranceEn": "What kind of movie was it?"
+    }
+  ],
+  "variants": [
+    {
+      "id": "conversation-first",
+      "hypothesis": "A natural answer before correction makes Koe feel like conversation, not oral homework.",
+      "headline": "Speak Japanese. Hear exactly how to sound better.",
+      "frameIds": [
+        "speak",
+        "reply",
+        "tune",
+        "compare",
+        "keep"
+      ]
+    },
+    {
+      "id": "proof-first",
+      "hypothesis": "Learners already seeking pronunciation help may respond faster to visible before/after proof.",
+      "headline": "Hear the difference one useful sound makes.",
+      "frameIds": [
+        "tune",
+        "compare",
+        "reply",
+        "speak",
+        "keep"
+      ]
+    }
+  ],
+  "creatorLoop": {
+    "principle": "Publish from work and study that already happened; never manufacture a learner persona for the feed.",
+    "loop": [
+      "Build one visible part of the voice interaction",
+      "Use it in Zander's own Japanese study",
+      "Share the specific before/after or design decision",
+      "Invite a native-speaker or learner critique",
+      "Show what changed in the next build"
+    ],
+    "publishingRhythm": "One primary story when a real build-and-study loop produces something worth sharing; cut smaller clips from that same evidence instead of feeding a separate content treadmill.",
+    "recurringFormats": [
+      {
+        "id": "build-the-voice",
+        "source": "A voice interaction Zander is implementing now",
+        "artifact": "Muted state walkthrough or latency/design breakdown"
+      },
+      {
+        "id": "study-with-koe",
+        "source": "A phrase Zander genuinely wanted in his own Japanese",
+        "artifact": "One short study session and the useful correction"
+      },
+      {
+        "id": "before-after",
+        "source": "Zander's own first try and retry",
+        "artifact": "Audio before/after with the pitch-and-timing comparison"
+      },
+      {
+        "id": "native-critique",
+        "source": "An invited native speaker reviewing Koe or Zander",
+        "artifact": "The critique, what Koe got wrong, and the resulting change"
+      },
+      {
+        "id": "design-breakdown",
+        "source": "A product decision from the active Koe build",
+        "artifact": "The rejected alternatives and why the shipped behavior won"
+      }
+    ],
+    "consent": {
+      "defaultSource": "Zander's own recordings or the deterministic Koe demo",
+      "publicUserConversationRequires": "explicit, recorded, revocable consent",
+      "withoutConsent": "Do not publish audio, transcript, screen capture, identifying detail, or a reconstruction of the conversation."
+    }
+  },
+  "artifacts": [
+    {
+      "path": "assets/icon.png",
+      "bytes": 23976,
+      "sha256": "2448b90d6652c8679d600af3f111fe624e0015ea5829bd5d26f6cbd14f301541"
+    },
+    {
+      "path": "marketing/generated/app-store-01-speak.png",
+      "bytes": 408401,
+      "sha256": "e39087e54bac387f26c6e91fcea73895d76b8e71090e93ab2f92db0af1a6f51e"
+    },
+    {
+      "path": "marketing/generated/app-store-02-hear.png",
+      "bytes": 435975,
+      "sha256": "646dc6249ed2bf77eb77e9f16b4045e2722d213faf252a63b0b754ca2ce781d5"
+    },
+    {
+      "path": "marketing/generated/app-store-03-tune.png",
+      "bytes": 383108,
+      "sha256": "270f9a5475af8d941c744e03fc7251c8b662d1213d938a9d8c6f6165b1297ca0"
+    },
+    {
+      "path": "marketing/generated/app-store-04-retry.png",
+      "bytes": 338556,
+      "sha256": "172c8d36a99eeb46a323c175bfdef54dfb22b87d8d3efe48639227851de97e6e"
+    },
+    {
+      "path": "marketing/generated/app-store-05-keep.png",
+      "bytes": 423325,
+      "sha256": "bd70a2404053d29e956e6a8ec3594f46fcce8fd7a6c2aad68f4e225843e360f3"
+    },
+    {
+      "path": "marketing/generated/koe-app-preview.mp4",
+      "bytes": 894218,
+      "sha256": "1fba7043638335fedaaed7d79404f3874bc8c4b44d81a1d8be22a43d2f7f0dea"
+    },
+    {
+      "path": "marketing/generated/app-store-story-contact-sheet.png",
+      "bytes": 216470,
+      "sha256": "3977757efe692c8d0960ae081aabe8a6f9838ea87fbdabbe231a6861bc042f1d"
+    },
+    {
+      "path": "marketing/generated/landing-ipad.png",
+      "bytes": 591190,
+      "sha256": "03f769373ea30d61124bdd8924402c49ec3fc152d447124cadd9dd552bb078ef"
+    }
+  ]
+}

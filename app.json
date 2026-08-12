@@ -3,6 +3,7 @@
     "name": "Koe",
     "slug": "koe",
     "version": "0.1.0",
+    "icon": "./assets/icon.png",
     "orientation": "portrait",
     "scheme": "koe",
     "userInterfaceStyle": "automatic",
@@ -18,6 +19,10 @@
     },
     "android": {
       "package": "com.zndrr.koe",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#172220"
+      },
       "permissions": ["RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"]
     },
     "web": {
