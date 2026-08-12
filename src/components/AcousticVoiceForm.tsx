@@ -220,7 +220,10 @@ function VoiceSeam({
     amplitude: amplitude * 0.92,
     offsetX: 12,
   });
-  const isInput = phase === "listening" || phase === "interimTranscript";
+  const isInput =
+    phase === "listening" ||
+    phase === "interimTranscript" ||
+    phase === "retryListening";
   const isOutput = phase === "speaking";
 
   if (presentation.shape === "split" || presentation.shape === "comparing") {
@@ -369,7 +372,11 @@ function MoraField({
             cx={width / 2 + direction * sample * width * 0.18}
             cy={y}
             r={3 + sample * 12}
-            fill={phase === "correction" ? palette.proof : palette.seam}
+            fill={
+              phase === "transcriptCheck" || phase === "feedback"
+                ? palette.proof
+                : palette.seam
+            }
             fillOpacity={0.24 + sample * 0.5}
           />
         );
@@ -402,7 +409,11 @@ function ResonanceGate({
           rx={25 + ring * 19 + energy * 28}
           ry={38 + ring * 28 + energy * 42}
           fill="none"
-          stroke={phase === "correction" ? palette.proof : palette.seam}
+          stroke={
+            phase === "transcriptCheck" || phase === "feedback"
+              ? palette.proof
+              : palette.seam
+          }
           strokeWidth={ring === 0 ? 2 : 1}
           opacity={0.82 - ring * 0.16}
         />

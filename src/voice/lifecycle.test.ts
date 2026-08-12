@@ -4,18 +4,28 @@ import { VoiceLatencyTracker, voiceError, VOICE_PHASE_COPY } from "./lifecycle";
 
 test("every lifecycle phase has deterministic UI copy", () => {
   assert.deepEqual(Object.keys(VOICE_PHASE_COPY).sort(), [
-    "correction",
+    "comparing",
+    "feedback",
     "firstReply",
     "idle",
     "interimTranscript",
     "interrupted",
     "listening",
     "recoverableError",
-    "retry",
+    "responseRetry",
+    "retryListening",
     "speaking",
     "success",
+    "transcriptCheck",
     "understanding",
   ]);
+});
+
+test("transcript recovery and product feedback are separate states", () => {
+  assert.match(VOICE_PHASE_COPY.transcriptCheck.detail, /misheard/i);
+  assert.match(VOICE_PHASE_COPY.feedback.detail, /continue/i);
+  assert.match(VOICE_PHASE_COPY.retryListening.detail, /highlighted phrase/i);
+  assert.match(VOICE_PHASE_COPY.responseRetry.detail, /provider/i);
 });
 
 test("recoverable errors select a concrete action", () => {

@@ -11,6 +11,8 @@ export const CONVERSATION_TARGET = {
   action: 52,
   codaAction: 56,
   microphone: 68,
+  studyMode: 58,
+  studyAdvance: 66,
 } as const;
 
 export function meetsMinimumTouchTarget(size: number): boolean {

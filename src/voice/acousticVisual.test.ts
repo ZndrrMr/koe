@@ -15,7 +15,11 @@ test("muted lifecycle states retain distinct visible meanings", () => {
     ACOUSTIC_PRESENTATION.listening.eyebrow,
     ACOUSTIC_PRESENTATION.speaking.eyebrow,
   );
-  assert.equal(ACOUSTIC_PRESENTATION.correction.shape, "split");
+  assert.equal(ACOUSTIC_PRESENTATION.transcriptCheck.shape, "split");
+  assert.equal(ACOUSTIC_PRESENTATION.feedback.shape, "split");
+  assert.equal(ACOUSTIC_PRESENTATION.retryListening.shape, "open");
+  assert.equal(ACOUSTIC_PRESENTATION.comparing.shape, "comparing");
+  assert.equal(ACOUSTIC_PRESENTATION.responseRetry.shape, "answering");
   assert.equal(ACOUSTIC_PRESENTATION.interrupted.shape, "broken");
   assert.equal(ACOUSTIC_PRESENTATION.success.shape, "resolved");
 });

@@ -113,6 +113,7 @@ export default function SessionScreen() {
   const failedReplyRef = useRef<FailedReply | null>(null);
   const latencyTrackerRef = useRef(new VoiceLatencyTracker());
   const pendingEnrichmentRef = useRef(new Set<Promise<void>>());
+  const presentedPronunciationRef = useRef<string | null>(null);
   const closeoutPreparationRef = useRef<Promise<unknown>>(Promise.resolve());
   const voiceSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -142,7 +143,7 @@ export default function SessionScreen() {
         | undefined;
       if (reviewPhase && reviewPhase in VOICE_PHASE_COPY) {
         store.setVoicePhase(reviewPhase);
-        if (reviewPhase === "correction") {
+        if (reviewPhase === "transcriptCheck") {
           setDraftTranscript("明日は友達と京都へ行きます。");
         }
         if (reviewPhase === "listening" || reviewPhase === "speaking") {
@@ -330,9 +331,12 @@ export default function SessionScreen() {
       useSession.getState().setStreaming(true);
       useSession
         .getState()
-        .setVoicePhase(retryAssistantTurnId ? "retry" : "understanding", {
-          interimTranscript: "",
-        });
+        .setVoicePhase(
+          retryAssistantTurnId ? "responseRetry" : "understanding",
+          {
+            interimTranscript: "",
+          },
+        );
       latencyTrackerRef.current.transcriptCommitted();
 
       let receivedText = false;
@@ -560,7 +564,11 @@ export default function SessionScreen() {
     setDraftAudioUri(undefined);
     setAudioEnergy(0);
     useSession.getState().setRecording(true);
-    useSession.getState().setVoicePhase("listening", { interimTranscript: "" });
+    useSession
+      .getState()
+      .setVoicePhase(retryingTurnId ? "retryListening" : "listening", {
+        interimTranscript: "",
+      });
 
     try {
       sttHandleRef.current = await startStreaming({
@@ -589,7 +597,7 @@ export default function SessionScreen() {
         useSession.getState().setVoice(voiceError("sttFailure"));
       }
     }
-  }, [updateLatency]);
+  }, [retryingTurnId, updateLatency]);
 
   const onPressOut = useCallback(async () => {
     if (!useSession.getState().isRecording) return;
@@ -628,9 +636,9 @@ export default function SessionScreen() {
         void sendUser(result.fullText, result.audioUri || undefined);
         return;
       }
-      useSession
-        .getState()
-        .setVoicePhase("correction", { interimTranscript: result.fullText });
+      useSession.getState().setVoicePhase("transcriptCheck", {
+        interimTranscript: result.fullText,
+      });
     } catch (error) {
       log.error("finish STT failed", error);
       if (error instanceof STTError && error.kind === "network") {
@@ -668,7 +676,7 @@ export default function SessionScreen() {
       setRetryingTurnId(null);
       setDraftTranscript("");
       setDraftAudioUri(undefined);
-      useSession.getState().setVoicePhase("understanding", {
+      useSession.getState().setVoicePhase("comparing", {
         interimTranscript: "",
       });
       const result = await analyzeUserPronunciation(
@@ -733,7 +741,7 @@ export default function SessionScreen() {
     }
     if (recovery === "retryResponse" && failedReplyRef.current) {
       const failed = failedReplyRef.current;
-      useSession.getState().setVoicePhase("retry");
+      useSession.getState().setVoicePhase("responseRetry");
       void sendUser(failed.text, failed.audioUri, failed.assistantTurnId);
       return;
     }
@@ -798,7 +806,9 @@ export default function SessionScreen() {
     setRetryingTurnId(turn.id);
     setDraftTranscript("");
     setDraftAudioUri(undefined);
-    useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
+    useSession
+      .getState()
+      .setVoicePhase("retryListening", { interimTranscript: "" });
   }, []);
 
   const leaveFirstExchange = useCallback(async () => {
@@ -838,7 +848,7 @@ export default function SessionScreen() {
       ? (retryTarget.pronunciation?.targetText ?? retryTarget.textJa)
       : session.voice.phase === "interimTranscript"
         ? session.voice.interimTranscript
-        : session.voice.phase === "correction"
+        : session.voice.phase === "transcriptCheck"
           ? ""
           : (latestTurn?.textJa ?? "");
   const closeout =
@@ -846,6 +856,22 @@ export default function SessionScreen() {
     (session.id ? buildSessionCloseout(session.id, session.turns) : undefined);
   const isFirstExchange = intro === "1" && session.turns.length === 0;
   const isVoiceRecovery = session.voice.phase === "recoverableError";
+
+  useEffect(() => {
+    if (
+      session.voice.phase !== "idle" ||
+      !latestPronunciation?.pronunciation ||
+      presentedPronunciationRef.current === latestPronunciation.id
+    ) {
+      return;
+    }
+    presentedPronunciationRef.current = latestPronunciation.id;
+    useSession.getState().setVoicePhase("feedback");
+  }, [
+    latestPronunciation?.id,
+    latestPronunciation?.pronunciation,
+    session.voice.phase,
+  ]);
 
   return (
     <SafeAreaView
@@ -974,7 +1000,7 @@ export default function SessionScreen() {
         ) : null}
 
         {latestPronunciation?.pronunciation &&
-        session.voice.phase === "idle" ? (
+        ["idle", "feedback"].includes(session.voice.phase) ? (
           <PronunciationFeedbackCard
             feedback={latestPronunciation.pronunciation}
             palette={palette}
@@ -1064,7 +1090,7 @@ function VoiceLifecyclePanel({
           ? "Resume"
           : "Try again";
   const isVisible =
-    voice.phase === "correction" || voice.phase === "recoverableError";
+    voice.phase === "transcriptCheck" || voice.phase === "recoverableError";
 
   return (
     <View>
@@ -1084,7 +1110,7 @@ function VoiceLifecyclePanel({
             { borderColor: palette.hairline, backgroundColor: palette.canvas },
           ]}
         >
-          {voice.phase === "correction" ? (
+          {voice.phase === "transcriptCheck" ? (
             <View>
               <Text style={[styles.editorialLabel, { color: palette.proof }]}>
                 TRANSCRIPT / 聞き取り

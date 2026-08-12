@@ -90,31 +90,61 @@ export const ACOUSTIC_PRESENTATION: Record<VoicePhase, AcousticPresentation> = {
     liveEnergy: false,
     processing: false,
   },
-  correction: {
+  transcriptCheck: {
     eyebrow: "HEARD / 確認",
     titleJa: "こう聞こえました",
-    titleEn: "Check one line",
+    titleEn: "Check the words",
     accessibilityLabel:
-      "Check what Koe heard. The original and corrected seams are separated.",
+      "Check what Koe heard before sending. The captured words are shown below.",
     shape: "split",
     liveEnergy: false,
     processing: false,
   },
-  retry: {
-    eyebrow: "RETRY / 再接続",
-    titleJa: "もう一度",
-    titleEn: "Trying again",
+  feedback: {
+    eyebrow: "ONE NOTE / 一点",
+    titleJa: "ひとつ整える",
+    titleEn: "One thing to tune",
     accessibilityLabel:
-      "Retrying. The previous and current seams are compared.",
+      "One pronunciation note is ready. Feedback is available without blocking the conversation.",
+    shape: "split",
+    liveEnergy: false,
+    processing: false,
+  },
+  retryListening: {
+    eyebrow: "RETRY / 再発話",
+    titleJa: "もう一度",
+    titleEn: "Listening for the retry",
+    accessibilityLabel:
+      "Listening for one pronunciation retry. The seam responds to your volume.",
+    shape: "open",
+    liveEnergy: true,
+    processing: false,
+  },
+  comparing: {
+    eyebrow: "COMPARE / 比較",
+    titleJa: "二つの声を比べます",
+    titleEn: "Comparing both attempts",
+    accessibilityLabel:
+      "Comparing the original and retry pronunciation attempts.",
     shape: "comparing",
+    liveEnergy: false,
+    processing: true,
+  },
+  responseRetry: {
+    eyebrow: "RECONNECT / 再応答",
+    titleJa: "返事をつなぎ直します",
+    titleEn: "Trying the reply again",
+    accessibilityLabel: "Retrying an interrupted response from Koe.",
+    shape: "answering",
     liveEnergy: false,
     processing: true,
   },
   success: {
     eyebrow: "RESTORED / 続行",
-    titleJa: "届きました",
-    titleEn: "Back with you",
-    accessibilityLabel: "Retry succeeded. The two seams have joined.",
+    titleJa: "続けましょう",
+    titleEn: "Keep going",
+    accessibilityLabel:
+      "The retry succeeded. Keep speaking whenever you are ready.",
     shape: "resolved",
     liveEnergy: false,
     processing: false,

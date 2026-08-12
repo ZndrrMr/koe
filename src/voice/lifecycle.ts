@@ -6,8 +6,11 @@ export type VoicePhase =
   | "firstReply"
   | "speaking"
   | "interrupted"
-  | "correction"
-  | "retry"
+  | "transcriptCheck"
+  | "feedback"
+  | "retryListening"
+  | "comparing"
+  | "responseRetry"
   | "success"
   | "recoverableError";
 
@@ -57,14 +60,29 @@ export const VOICE_PHASE_COPY: Record<
   firstReply: { title: "Replying…", detail: "The first words are ready." },
   speaking: { title: "Koe is speaking", detail: "Hold the mic to interrupt." },
   interrupted: { title: "Interrupted", detail: "Koe stopped. Your turn." },
-  correction: {
-    title: "Check what Koe heard",
-    detail: "Edit the transcript or try again.",
+  transcriptCheck: {
+    title: "Check the words",
+    detail: "Fix only what Koe misheard, or record the line again.",
   },
-  retry: { title: "Retrying…", detail: "Reconnecting to the voice provider." },
+  feedback: {
+    title: "One thing to tune",
+    detail: "The conversation can continue whenever you are ready.",
+  },
+  retryListening: {
+    title: "Listening for the retry…",
+    detail: "Say the highlighted phrase once, then release.",
+  },
+  comparing: {
+    title: "Comparing both attempts…",
+    detail: "Koe is checking the one sound you changed.",
+  },
+  responseRetry: {
+    title: "Retrying the reply…",
+    detail: "Reconnecting to the voice provider.",
+  },
   success: {
-    title: "Back with you",
-    detail: "The retry landed. Keep speaking when you are ready.",
+    title: "Keep going",
+    detail: "The retry landed. The conversation is still yours.",
   },
   recoverableError: {
     title: "Voice paused",
