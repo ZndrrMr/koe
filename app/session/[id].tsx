@@ -15,7 +15,6 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import {
   Bookmark,
   Check,
-  MessageCircleMore,
   RotateCcw,
   Send,
   Settings,
@@ -25,16 +24,10 @@ import {
 } from "lucide-react-native";
 import { randomUUID } from "expo-crypto";
 
-import { getScenario } from "@/data/scenarios";
 import { useSession, type ChatTurn } from "@/stores/useSession";
 import { useSettings } from "@/stores/useSettings";
-import { useProgress } from "@/stores/useProgress";
 import { startStreaming, STTError } from "@/services/stt";
-import {
-  ProviderTimeoutError,
-  streamConversation,
-  generateSuggestedReplies,
-} from "@/services/llm";
+import { ProviderTimeoutError, streamConversation } from "@/services/llm";
 import {
   PCMPlaybackQueue,
   synthesize,
@@ -42,7 +35,6 @@ import {
   stop as stopSpeech,
 } from "@/services/tts";
 import { MicButton } from "@/components/MicButton";
-import { SuggestedReplyChips } from "@/components/SuggestedReplyChips";
 import { AcousticVoiceForm } from "@/components/AcousticVoiceForm";
 import { PronunciationFeedbackCard } from "@/components/PronunciationFeedbackCard";
 import { tap, fail as failHaptic, success } from "@/utils/haptics";
@@ -66,7 +58,10 @@ import {
 } from "@/voice/lifecycle";
 import { ResponseRunController } from "@/voice/responseRun";
 import { shouldAutoSendFirstTranscript } from "@/voice/firstExchange";
-import { conversationTopicForGoal } from "@/voice/conversationPreferences";
+import {
+  conversationTopicForGoal,
+  responseGuidanceForLevel,
+} from "@/voice/conversationPreferences";
 import {
   buildSessionCloseout,
   type LearningMomentDecision,
@@ -78,25 +73,13 @@ type FailedReply = { text: string; audioUri?: string; assistantTurnId: string };
 export default function SessionScreen() {
   const router = useRouter();
   const palette = useConversationPalette();
-  const {
-    id,
-    scenario: scenarioId,
-    intro,
-  } = useLocalSearchParams<{
+  const { id, intro } = useLocalSearchParams<{
     id: string;
-    scenario?: string;
     intro?: string;
   }>();
-  const scenario = getScenario(scenarioId ?? "");
   const settings = useSettings();
-  const bumpXp = useProgress((state) => state.bumpXp);
-  const tickDay = useProgress((state) => state.tickDay);
   const session = useSession();
 
-  const [suggested, setSuggested] = useState<
-    Array<{ ja: string; en: string; hint: string }>
-  >([]);
-  const [showPhraseHelp, setShowPhraseHelp] = useState(false);
   const [draftTranscript, setDraftTranscript] = useState("");
   const [draftAudioUri, setDraftAudioUri] = useState<string | undefined>();
   const [audioEnergy, setAudioEnergy] = useState(0);
@@ -122,21 +105,10 @@ export default function SessionScreen() {
   useEffect(() => {
     if (!id || useSession.getState().id === id) return;
     const store = useSession.getState();
-    void store.start(
-      id,
-      scenario
-        ? {
-            scenarioId: scenario.id,
-            topic: scenario.description,
-            registerTarget: scenario.registerTarget,
-            jlptTarget: scenario.difficulty,
-          }
-        : {
-            topic: conversationTopicForGoal(settings.goal),
-            registerTarget: settings.registerTarget,
-            jlptTarget: settings.jlptTarget,
-          },
-    );
+    void store.start(id, {
+      topic: conversationTopicForGoal(settings.goal),
+      responseLevel: responseGuidanceForLevel(settings.responseLevel),
+    });
     if (__DEV__) {
       const reviewPhase = process.env.EXPO_PUBLIC_KOE_REVIEW_PHASE as
         | VoiceLifecycle["phase"]
@@ -177,7 +149,7 @@ export default function SessionScreen() {
         setShowCoda(true);
       }
     }
-  }, [id, scenario?.id]);
+  }, [id]);
 
   useEffect(
     () => () => {
@@ -216,18 +188,6 @@ export default function SessionScreen() {
       });
     },
     [id],
-  );
-
-  const refreshSuggestions = useCallback(
-    async (history: Array<{ role: "user" | "assistant"; content: string }>) => {
-      const output = await generateSuggestedReplies({
-        history,
-        registerTarget: scenario?.registerTarget,
-        jlptTarget: scenario?.difficulty,
-      });
-      setSuggested(output);
-    },
-    [scenario],
   );
 
   const analyzeUserPronunciation = useCallback(
@@ -408,15 +368,6 @@ export default function SessionScreen() {
               });
             }
             failedReplyRef.current = null;
-            bumpXp(10);
-            tickDay();
-            if (showPhraseHelp) {
-              void refreshSuggestions([
-                ...historyWithUser,
-                { role: "assistant", content: finalText },
-              ]);
-            }
-
             if (receivedAudio) {
               void audioQueue.finish().catch((error) => {
                 handlePlaybackFailure(
@@ -525,14 +476,10 @@ export default function SessionScreen() {
       }
     },
     [
-      bumpXp,
       analyzeUserPronunciation,
-      refreshSuggestions,
       settings.voice,
       settings.correctionStyle,
       settleReply,
-      showPhraseHelp,
-      tickDay,
       updateLatency,
     ],
   );
@@ -782,19 +729,6 @@ export default function SessionScreen() {
     }
   };
 
-  const togglePhraseHelp = () => {
-    tap();
-    const next = !showPhraseHelp;
-    setShowPhraseHelp(next);
-    if (next && !suggested.length) {
-      const history = useSession
-        .getState()
-        .turns.filter((turn) => turn.textJa)
-        .map((turn) => ({ role: turn.role, content: turn.textJa }));
-      void refreshSuggestions(history);
-    }
-  };
-
   const canInterrupt = ["understanding", "firstReply", "speaking"].includes(
     session.voice.phase,
   );
@@ -818,7 +752,7 @@ export default function SessionScreen() {
       stopSpeech(),
     ]);
     await useSession.getState().end();
-    router.replace("/(tabs)/speak");
+    router.replace("/");
   }, [router]);
 
   const latestTurn = [...session.turns]
@@ -910,9 +844,7 @@ export default function SessionScreen() {
             {isFirstExchange ? "FIRST EXCHANGE" : "LIVE CONVERSATION"}
           </Text>
           <Text style={[styles.sessionTitle, { color: palette.ink }]}>
-            {isFirstExchange
-              ? "No setup needed"
-              : (scenario?.title ?? "Open conversation")}
+            {isFirstExchange ? "No setup needed" : "Open conversation"}
           </Text>
         </View>
 
@@ -923,24 +855,19 @@ export default function SessionScreen() {
           />
         ) : (
           <Pressable
-            testID="phrase-help"
+            testID="conversation-settings"
             accessibilityRole="button"
-            accessibilityLabel={
-              showPhraseHelp ? "Hide phrase help" : "Show phrase help"
-            }
-            accessibilityState={{ expanded: showPhraseHelp }}
-            onPress={togglePhraseHelp}
+            accessibilityLabel="Conversation settings"
+            onPress={() => router.push("/preferences")}
             style={[
               styles.headerIcon,
               {
                 borderColor: palette.hairline,
-                backgroundColor: showPhraseHelp
-                  ? palette.seamSoft
-                  : "transparent",
+                backgroundColor: "transparent",
               },
             ]}
           >
-            <MessageCircleMore color={palette.ink} size={19} />
+            <Settings color={palette.ink} size={19} />
           </Pressable>
         )}
       </View>
@@ -978,26 +905,6 @@ export default function SessionScreen() {
           onDiscard={discardTranscript}
           onRecover={recoverVoice}
         />
-
-        {showPhraseHelp ? (
-          <View
-            style={[
-              styles.phraseHelp,
-              {
-                borderColor: palette.hairline,
-                backgroundColor: palette.canvas,
-              },
-            ]}
-          >
-            <Text style={[styles.editorialLabel, { color: palette.seam }]}>
-              PHRASE PROMPTS / 任意
-            </Text>
-            <SuggestedReplyChips
-              replies={suggested}
-              onPick={(reply) => void sendUser(reply.ja)}
-            />
-          </View>
-        ) : null}
 
         {latestPronunciation?.pronunciation &&
         ["idle", "feedback"].includes(session.voice.phase) ? (
@@ -1752,12 +1659,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textAlign: "center",
     paddingVertical: 4,
-  },
-  phraseHelp: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 8,
   },
   correctionMoment: {
     minHeight: 74,

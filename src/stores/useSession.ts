@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import type { Register, JlptLevel } from "@/data/scenarios";
 import {
   completeSession,
   loadSession,
@@ -23,10 +22,8 @@ import {
 } from "@/voice/lifecycle";
 
 export type ConversationContext = {
-  scenarioId?: string;
   topic?: string;
-  registerTarget?: Register;
-  jlptTarget?: JlptLevel;
+  responseLevel?: string;
 };
 
 export type ChatTurn = SessionTurnSnapshot;
@@ -95,10 +92,8 @@ export const useSession = create<SessionState>((set, get) => ({
     });
     const ready = persistSession({
       id,
-      scenarioId: context.scenarioId,
       topic: context.topic,
-      registerTarget: context.registerTarget,
-      jlptTarget: context.jlptTarget,
+      responseLevel: context.responseLevel,
     });
     sessionPersistence.set(id, ready);
     try {

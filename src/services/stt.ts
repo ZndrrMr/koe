@@ -71,7 +71,7 @@ export async function startStreaming(opts: {
   onChunk: (chunk: STTChunk) => void;
   onAudioEnergy?: (energy: number) => void;
   languageHint?: "ja" | "ja,en";
-  /** Kept optional for pitch-drill callers created before native live recognition. */
+  /** Optional recorder injection for isolated audio-pipeline proof surfaces. */
   recorder?: AudioRecorder;
 }): Promise<STTHandle> {
   const ok = await ensurePermission();

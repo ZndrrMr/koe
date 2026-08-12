@@ -1,14 +1,11 @@
-import type { Register, JlptLevel } from '@/data/scenarios';
-
 export type TutorPromptOptions = {
   topic?: string;
-  registerTarget?: Register;
-  jlptTarget?: JlptLevel;
+  responseLevel?: string;
 };
 
 export const CONVERSATION_BEHAVIOR_CASES = [
   {
-    id: 'natural-conversation',
+    id: "natural-conversation",
     transcript: `Learner: 今日はちょっと疲れました。
 Assistant: そうなんですね。今日は忙しかったですか？
 Learner: はい、会議が多くて。
@@ -17,17 +14,17 @@ Learner: 新しいプロジェクトについて話しました。
 Assistant: 面白そうですね。どんなプロジェクトですか？`,
   },
   {
-    id: 'confusion',
+    id: "confusion",
     transcript: `Learner: よくわかりません。
 Assistant: 大丈夫です。もっと簡単に言いますね。今日は何をしましたか？`,
   },
   {
-    id: 'correction-request',
+    id: "correction-request",
     transcript: `Learner: 「昨日、映画を見ます」を厳しく直してください。
 Assistant: 「昨日、映画を見ました」が正しいです。「昨日」があるので過去形にします。どんな映画を見ましたか？`,
   },
   {
-    id: 'roleplay-request',
+    id: "roleplay-request",
     transcript: `Learner: コンビニの店員として話してください。
 Assistant: いらっしゃいませ。袋はご利用ですか？`,
   },
@@ -36,19 +33,21 @@ Assistant: いらっしゃいませ。袋はご利用ですか？`,
 function optionalContext(opts: TutorPromptOptions): string {
   const lines: string[] = [];
   if (opts.topic) lines.push(`Conversation topic: ${opts.topic}`);
-  if (opts.registerTarget) lines.push(`Preferred Japanese register: ${opts.registerTarget}`);
-  if (opts.jlptTarget) lines.push(`Approximate learner level: JLPT N${opts.jlptTarget}`);
+  if (opts.responseLevel)
+    lines.push(`Preferred reply style: ${opts.responseLevel}`);
 
   if (!lines.length) {
-    return 'No optional context was selected. Begin from whatever the learner says.';
+    return "No optional context was selected. Begin from whatever the learner says.";
   }
 
-  return `${lines.join('\n')}
+  return `${lines.join("\n")}
 Use this only to choose relevant vocabulary, formality, or subject matter. It does not authorize a character, roleplay, lesson, exercise, correction routine, or learning goal.`;
 }
 
 export function tutorSystemPrompt(opts: TutorPromptOptions = {}): string {
-  const examples = CONVERSATION_BEHAVIOR_CASES.map((example) => `[${example.id}]\n${example.transcript}`).join('\n\n');
+  const examples = CONVERSATION_BEHAVIOR_CASES.map(
+    (example) => `[${example.id}]\n${example.transcript}`,
+  ).join("\n\n");
 
   return `You are the neutral Japanese conversation voice in Koe, an audio-first app. Do not give yourself a name or character. Your default mode is free conversation: the learner says something, and you respond naturally as an attentive conversation partner.
 

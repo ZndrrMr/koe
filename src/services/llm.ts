@@ -1,6 +1,5 @@
 import { postJson, postStream } from "@/services/api";
 import { tutorSystemPrompt } from "@/prompts/tutor";
-import type { Register, JlptLevel } from "@/data/scenarios";
 import type { ConversationContext } from "@/stores/useSession";
 import { hasWorker } from "@/utils/config";
 import { log } from "@/utils/log";
@@ -68,8 +67,7 @@ export async function* streamConversation(opts: {
 }): AsyncGenerator<ConversationChunk, ConversationResult, void> {
   const system = tutorSystemPrompt({
     topic: opts.context?.topic,
-    registerTarget: opts.context?.registerTarget,
-    jlptTarget: opts.context?.jlptTarget,
+    responseLevel: opts.context?.responseLevel,
   });
 
   if (!hasWorker()) {
@@ -185,8 +183,7 @@ export async function* streamConversation(opts: {
     "/llm/flash",
     {
       task: "feedback",
-      registerTarget: opts.context?.registerTarget,
-      jlptTarget: opts.context?.jlptTarget,
+      responseLevel: opts.context?.responseLevel,
       correctionStyle: opts.correctionStyle ?? "essential",
       history: opts.history,
       userTurn: opts.userTurn,
@@ -211,45 +208,4 @@ export async function* streamConversation(opts: {
     fullText,
     feedback,
   };
-}
-
-export async function generateSuggestedReplies(opts: {
-  history: ConvoTurn[];
-  registerTarget?: Register;
-  jlptTarget?: JlptLevel;
-}): Promise<Array<{ ja: string; en: string; hint: string }>> {
-  if (!hasWorker()) {
-    return [
-      {
-        ja: "今日はいい天気ですね。",
-        en: "Nice weather today.",
-        hint: "Start with the day.",
-      },
-      {
-        ja: "最近、どうですか？",
-        en: "How have you been?",
-        hint: "Ask an open question.",
-      },
-      {
-        ja: "もう一度お願いします。",
-        en: "One more time, please.",
-        hint: "Ask for repetition.",
-      },
-    ];
-  }
-
-  try {
-    const res = await postJson<{
-      replies: Array<{ ja: string; en: string; hint: string }>;
-    }>("/llm/flash", {
-      task: "suggest-replies",
-      history: opts.history,
-      registerTarget: opts.registerTarget,
-      jlptTarget: opts.jlptTarget,
-    });
-    return res.replies ?? [];
-  } catch (e) {
-    log.warn("generateSuggestedReplies failed", e);
-    return [];
-  }
 }

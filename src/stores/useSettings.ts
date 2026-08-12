@@ -1,45 +1,39 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import { mmkvStorage } from "@/utils/mmkv";
-import type { Register, JlptLevel } from "@/data/scenarios";
 
-export type Goal = "travel" | "anime" | "work" | "jlpt" | "just-because";
-export type Level = "beginner" | "n5" | "n4" | "n3" | "n2plus";
-type FuriganaMode = "always" | "never" | "known-hidden";
+export type Goal = "travel" | "media" | "work" | "just-because";
+export type ResponseLevel =
+  | "starting"
+  | "basic"
+  | "everyday"
+  | "broad"
+  | "full-speed";
 export type CorrectionStyle = "essential" | "balanced" | "detailed";
 
-type SettingsState = {
+type SettingsValues = {
   onboardingDone: boolean;
-  kanaKnown: boolean;
   goal: Goal;
-  selfLevel: Level;
-  jlptTarget: JlptLevel;
-  registerTarget: Register;
-  furiganaMode: FuriganaMode;
-  showPitch: boolean;
-  showPitchNumbers: boolean;
+  responseLevel: ResponseLevel;
   voice: "ja-female-1" | "ja-female-2" | "ja-male-1";
   correctionStyle: CorrectionStyle;
-  darkMode: "system" | "light" | "dark";
+};
 
-  complete: (patch: Partial<SettingsState>) => void;
-  set: <K extends keyof SettingsState>(key: K, value: SettingsState[K]) => void;
+type SettingsState = SettingsValues & {
+  complete: (patch: Partial<SettingsValues>) => void;
+  set: <K extends keyof SettingsValues>(
+    key: K,
+    value: SettingsValues[K],
+  ) => void;
   reset: () => void;
 };
 
-const DEFAULTS = {
+const DEFAULTS: SettingsValues = {
   onboardingDone: false,
-  kanaKnown: false,
-  goal: "just-because" as Goal,
-  selfLevel: "beginner" as Level,
-  jlptTarget: 5 as JlptLevel,
-  registerTarget: "teineigo" as Register,
-  furiganaMode: "always" as FuriganaMode,
-  showPitch: true,
-  showPitchNumbers: true,
-  voice: "ja-female-1" as const,
-  correctionStyle: "essential" as CorrectionStyle,
-  darkMode: "system" as const,
+  goal: "just-because",
+  responseLevel: "starting",
+  voice: "ja-female-1",
+  correctionStyle: "essential",
 };
 
 export const useSettings = create<SettingsState>()(
@@ -52,7 +46,7 @@ export const useSettings = create<SettingsState>()(
       reset: () => set(DEFAULTS),
     }),
     {
-      name: "koe-settings",
+      name: "koe-voice-settings",
       storage: createJSONStorage(() => mmkvStorage),
       version: 1,
     },

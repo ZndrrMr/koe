@@ -445,17 +445,10 @@ app.post("/llm/flash", async (c) => {
   const task = body.task as string;
   let prompt: string;
 
-  if (task === "suggest-replies") {
-    prompt = `You are helping a Japanese learner. Given this short dialogue, propose 3 plausible learner replies in ${body.registerTarget ?? "teineigo"} register at JLPT N${body.jlptTarget ?? 5}.
-Return ONLY valid JSON: {"replies":[{"ja":"...","en":"...","hint":"..."}]}.
-Dialogue: ${JSON.stringify(body.history ?? [])}`;
-  } else if (task === "examples") {
-    prompt = `Give 3 natural example sentences using the word ${body.word} (reading: ${body.kana}, meaning: ${body.gloss}). Keep them JLPT N5-N4 level. Return ONLY valid JSON: {"examples":["...","...","..."]}.`;
-  } else if (task === "feedback") {
+  if (task === "feedback") {
     prompt = `You are Koe's optional coaching layer. Analyze the learner's latest utterance silently and never write the conversational response.
 
-OPTIONAL REGISTER CONTEXT: ${body.registerTarget ?? "none selected"}
-OPTIONAL LEVEL CONTEXT: ${body.jlptTarget ? `JLPT N${body.jlptTarget}` : "none selected"}
+OPTIONAL RESPONSE STYLE: ${body.responseLevel ?? "none selected"}
 COACHING DETAIL: ${body.correctionStyle ?? "essential"}
 Prior dialogue: ${JSON.stringify(body.history ?? [])}
 User's utterance: ${JSON.stringify(body.userTurn ?? "")}
@@ -469,7 +462,7 @@ DEFAULT COACHING CONTRACT:
 - Prefer the smallest useful replacement and a one-sentence explanation.
 - A compact note supplements the separate conversation reply; it must never demand a retry or assign an exercise.
 - If the learner explicitly asks for strict correction, translation, or teaching, analyze as requested. Even then, keep this payload to corrections only; the conversation reply handles the direct answer.
-- Optional register and level are context, not requirements. Do not correct a valid register merely because another register was selected.
+- Optional response style is context, not a requirement. Do not manufacture a correction to enforce it.
 
 Return ONLY valid JSON:
 {

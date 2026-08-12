@@ -1,23 +1,28 @@
-import type { Goal, Level } from "@/stores/useSettings";
-import type { JlptLevel } from "@/data/scenarios";
+import type { Goal, ResponseLevel } from "@/stores/useSettings";
 
-export function levelToJlpt(level: Level): JlptLevel {
-  if (level === "n2plus") return 2;
-  if (level === "n3") return 3;
-  if (level === "n4") return 4;
-  return 5;
+export function responseGuidanceForLevel(level: ResponseLevel): string {
+  switch (level) {
+    case "starting":
+      return "very short replies with common words";
+    case "basic":
+      return "short replies with foundational everyday Japanese";
+    case "everyday":
+      return "natural everyday conversation at a measured pace";
+    case "broad":
+      return "natural conversation with a broad vocabulary";
+    case "full-speed":
+      return "unrestricted natural Japanese";
+  }
 }
 
 export function conversationTopicForGoal(goal: Goal): string | undefined {
   switch (goal) {
     case "travel":
       return "Japanese for travel and everyday situations";
-    case "anime":
+    case "media":
       return "Japanese media, stories, and everyday interests";
     case "work":
       return "Japanese for work and professional life";
-    case "jlpt":
-      return "Japanese the learner may meet while preparing for the JLPT";
     default:
       return undefined;
   }

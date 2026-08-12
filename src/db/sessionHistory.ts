@@ -124,8 +124,8 @@ function retryMoment(
 }
 
 /**
- * Turns become a tiny set of editorial learning moments. This deliberately
- * avoids serializing the conversation as a chat transcript in the Library.
+ * Turns become a tiny set of editorial learning moments for the session coda
+ * and the optional handwriting handoff, never a dense chat transcript.
  */
 export function buildSessionCloseout(
   sessionId: string,

@@ -3,13 +3,13 @@ import test from "node:test";
 
 import {
   conversationTopicForGoal,
-  levelToJlpt,
+  responseGuidanceForLevel,
 } from "./conversationPreferences";
 
-test("optional levels map to the conversation context", () => {
-  assert.equal(levelToJlpt("beginner"), 5);
-  assert.equal(levelToJlpt("n4"), 4);
-  assert.equal(levelToJlpt("n2plus"), 2);
+test("optional response levels describe style without course metadata", () => {
+  assert.match(responseGuidanceForLevel("starting"), /short replies/);
+  assert.match(responseGuidanceForLevel("everyday"), /everyday conversation/);
+  assert.match(responseGuidanceForLevel("full-speed"), /unrestricted/);
 });
 
 test("the default goal stays neutral while chosen goals add light context", () => {

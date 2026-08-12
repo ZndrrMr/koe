@@ -8,9 +8,8 @@ import {
   useSettings,
   type CorrectionStyle,
   type Goal,
-  type Level,
+  type ResponseLevel,
 } from "@/stores/useSettings";
-import { levelToJlpt } from "@/voice/conversationPreferences";
 import {
   type ConversationPalette,
   useConversationPalette,
@@ -20,16 +19,28 @@ import { tap } from "@/utils/haptics";
 
 type Choice<T extends string> = { value: T; label: string; detail: string };
 
-const LEVELS: Array<Choice<Level>> = [
+const LEVELS: Array<Choice<ResponseLevel>> = [
   {
-    value: "beginner",
+    value: "starting",
     label: "New to Japanese",
     detail: "Short, simple replies",
   },
-  { value: "n5", label: "Around N5", detail: "Foundational Japanese" },
-  { value: "n4", label: "Around N4", detail: "Everyday conversation" },
-  { value: "n3", label: "Around N3", detail: "More natural range" },
-  { value: "n2plus", label: "N2 or beyond", detail: "Full-speed vocabulary" },
+  { value: "basic", label: "Building basics", detail: "Foundational Japanese" },
+  {
+    value: "everyday",
+    label: "Everyday range",
+    detail: "Measured natural conversation",
+  },
+  {
+    value: "broad",
+    label: "Broader range",
+    detail: "More varied natural Japanese",
+  },
+  {
+    value: "full-speed",
+    label: "Full speed",
+    detail: "Unrestricted vocabulary",
+  },
 ];
 
 const CORRECTIONS: Array<Choice<CorrectionStyle>> = [
@@ -64,7 +75,7 @@ const GOALS: Array<Choice<Goal>> = [
   },
   { value: "travel", label: "Travel", detail: "Everyday situations in Japan" },
   {
-    value: "anime",
+    value: "media",
     label: "Media & stories",
     detail: "Talk about what you watch and read",
   },
@@ -73,7 +84,6 @@ const GOALS: Array<Choice<Goal>> = [
     label: "Work",
     detail: "Professional life and communication",
   },
-  { value: "jlpt", label: "JLPT", detail: "Keep exam vocabulary within reach" },
 ];
 
 export default function PreferencesScreen() {
@@ -82,10 +92,9 @@ export default function PreferencesScreen() {
   const settings = useSettings();
   const [showMore, setShowMore] = useState(false);
 
-  const chooseLevel = (level: Level) => {
+  const chooseLevel = (level: ResponseLevel) => {
     tap();
-    settings.set("selfLevel", level);
-    settings.set("jlptTarget", levelToJlpt(level));
+    settings.set("responseLevel", level);
   };
 
   return (
@@ -131,7 +140,7 @@ export default function PreferencesScreen() {
           eyebrow="RESPONSE LEVEL"
           title="How much Japanese feels comfortable?"
           choices={LEVELS}
-          selected={settings.selfLevel}
+          selected={settings.responseLevel}
           onSelect={chooseLevel}
           palette={palette}
         />
@@ -183,7 +192,7 @@ export default function PreferencesScreen() {
               More personalization
             </Text>
             <Text style={[styles.moreDetail, { color: palette.muted }]}>
-              Goal and conversation context
+              Conversation focus
             </Text>
           </View>
           {showMore ? (
@@ -220,7 +229,7 @@ export default function PreferencesScreen() {
           <Info color={palette.seam} size={19} />
           <View style={styles.conversationNoteCopy}>
             <Text style={[styles.noteTitle, { color: palette.ink }]}>
-              Personas and scenarios stay conversational
+              Roleplay starts when you ask
             </Text>
             <Text style={[styles.noteDetail, { color: palette.muted }]}>
               Ask Koe to role-play a shop clerk, practice hotel check-in, or

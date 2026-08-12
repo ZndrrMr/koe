@@ -4,16 +4,9 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { openDb } from "@/db";
 import { useSettings } from "@/stores/useSettings";
 import { log } from "@/utils/log";
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: { staleTime: 60_000, retry: 1 },
-  },
-});
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
@@ -42,7 +35,6 @@ export default function RootLayout() {
     if (!ready) return;
     const first = segments[0];
     const firstRoute = String(first ?? "");
-    const secondRoute = String(Array.from(segments)[1] ?? "");
     const reviewRoute = __DEV__
       ? process.env.EXPO_PUBLIC_KOE_REVIEW_ROUTE
       : undefined;
@@ -90,13 +82,6 @@ export default function RootLayout() {
       return;
     }
     if (
-      reviewRoute === "session-history-proof" &&
-      firstRoute !== "session-history-proof"
-    ) {
-      router.replace("/session-history-proof" as never);
-      return;
-    }
-    if (
       reviewRoute === "song-pronunciation-proof" &&
       firstRoute !== "song-pronunciation-proof"
     ) {
@@ -108,13 +93,6 @@ export default function RootLayout() {
       firstRoute !== "handwriting-practice"
     ) {
       router.replace("/handwriting-practice" as never);
-      return;
-    }
-    if (
-      reviewRoute === "library" &&
-      (first !== "(tabs)" || secondRoute !== "library")
-    ) {
-      router.replace("/(tabs)/library");
       return;
     }
     const isPublicOrDevelopmentSurface =
@@ -132,31 +110,28 @@ export default function RootLayout() {
   if (!ready) return null;
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <SafeAreaProvider>
-          <StatusBar style={reviewStatusBarStyle} />
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="onboarding" />
-            <Stack.Screen
-              name="preferences"
-              options={{ presentation: "modal" }}
-            />
-            <Stack.Screen
-              name="session/[id]"
-              options={{ presentation: "fullScreenModal" }}
-            />
-            <Stack.Screen name="about" options={{ presentation: "modal" }} />
-            <Stack.Screen name="visual-study" />
-            <Stack.Screen name="marketing-capture" />
-            <Stack.Screen name="landing" />
-            <Stack.Screen name="session-history-proof" />
-            <Stack.Screen name="song-pronunciation-proof" />
-            <Stack.Screen name="handwriting-practice" />
-          </Stack>
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    </QueryClientProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <StatusBar style={reviewStatusBarStyle} />
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="onboarding" />
+          <Stack.Screen
+            name="preferences"
+            options={{ presentation: "modal" }}
+          />
+          <Stack.Screen
+            name="session/[id]"
+            options={{ presentation: "fullScreenModal" }}
+          />
+          <Stack.Screen name="about" options={{ presentation: "modal" }} />
+          <Stack.Screen name="visual-study" />
+          <Stack.Screen name="marketing-capture" />
+          <Stack.Screen name="landing" />
+          <Stack.Screen name="song-pronunciation-proof" />
+          <Stack.Screen name="handwriting-practice" />
+        </Stack>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

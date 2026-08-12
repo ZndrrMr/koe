@@ -1,10 +1,6 @@
 import * as SQLite from "expo-sqlite";
-import { drizzle } from "drizzle-orm/expo-sqlite";
 import * as FileSystem from "expo-file-system/legacy";
-import { Asset } from "expo-asset";
 import { log } from "@/utils/log";
-import * as schema from "./schema";
-import { SEED_WORDS } from "@/data/seed";
 import {
   buildSessionCloseout,
   type ConversationCorrections,
@@ -16,22 +12,18 @@ import {
 } from "./sessionHistory";
 import type { PronunciationFeedback } from "@/services/pitch";
 
-const DB_NAME = "koe.db";
+const DB_NAME = "koe-voice.db";
 const AUDIO_DIRECTORY = `${FileSystem.documentDirectory}session-audio`;
 const AUDIO_RETENTION_SETTING = "audio_retention_days";
 export const DEFAULT_AUDIO_RETENTION_DAYS = 30;
 export const AUDIO_RETENTION_OPTIONS = [7, 30, 0] as const;
 export type AudioRetentionDays = (typeof AUDIO_RETENTION_OPTIONS)[number];
 
-let _db: ReturnType<typeof drizzle> | null = null;
 let _native: SQLite.SQLiteDatabase | null = null;
-let _opening: Promise<{
-  db: ReturnType<typeof drizzle>;
-  native: SQLite.SQLiteDatabase;
-}> | null = null;
+let _opening: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export async function openDb() {
-  if (_db && _native) return { db: _db, native: _native };
+  if (_native) return _native;
   if (!_opening) {
     _opening = openDbOnce().finally(() => {
       _opening = null;
@@ -41,8 +33,6 @@ export async function openDb() {
 }
 
 async function openDbOnce() {
-  await ensureBundledDbCopied();
-
   const native = await SQLite.openDatabaseAsync(DB_NAME, {
     enableChangeListener: false,
   });
@@ -50,104 +40,25 @@ async function openDbOnce() {
   await native.execAsync("PRAGMA foreign_keys = ON;");
   await createSchema(native);
   await enforceAudioRetention(native);
-  await seedIfEmpty(native);
-
-  const db = drizzle(native, { schema });
-  _db = db;
   _native = native;
-  return { db, native };
-}
-
-export async function getDb() {
-  const { db } = await openDb();
-  return db;
-}
-
-export async function getNative() {
-  const { native } = await openDb();
   return native;
 }
 
-async function ensureBundledDbCopied() {
-  const dir = `${FileSystem.documentDirectory}SQLite`;
-  const info = await FileSystem.getInfoAsync(dir);
-  if (!info.exists)
-    await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
-  const target = `${dir}/${DB_NAME}`;
-  const existing = await FileSystem.getInfoAsync(target);
-  if (existing.exists) return;
-  try {
-    // Try to copy the bundled dict.db if present. Skipped gracefully if absent (v1 seed only).
-    const asset = Asset.fromModule(require("../../assets/dict.db"));
-    await asset.downloadAsync();
-    if (asset.localUri) {
-      const srcInfo = await FileSystem.getInfoAsync(asset.localUri);
-      // Skip the placeholder (0-byte) dict.db shipped when build-dict hasn't been run.
-      if (srcInfo.exists && "size" in srcInfo && (srcInfo.size ?? 0) > 1024) {
-        await FileSystem.copyAsync({ from: asset.localUri, to: target });
-        log.info("Bundled dict.db copied to docs dir");
-      } else {
-        log.info(
-          "Placeholder dict.db detected — using seed words. Run `npm run build:dict` for full content.",
-        );
-      }
-    }
-  } catch (_e) {
-    log.warn("No bundled dict.db; starting with empty DB + seed words.");
-  }
+export async function getNative() {
+  return openDb();
 }
 
 async function createSchema(db: SQLite.SQLiteDatabase) {
   await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS words (
-      id INTEGER PRIMARY KEY,
-      kanji TEXT,
-      kana TEXT NOT NULL,
-      romaji TEXT NOT NULL,
-      pos TEXT NOT NULL,
-      gloss TEXT NOT NULL,
-      jlpt INTEGER,
-      pitch_accents TEXT,
-      freq_rank INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS idx_words_kana ON words(kana);
-    CREATE INDEX IF NOT EXISTS idx_words_kanji ON words(kanji);
-    CREATE INDEX IF NOT EXISTS idx_words_jlpt ON words(jlpt);
-
-    CREATE TABLE IF NOT EXISTS kanji (
-      literal TEXT PRIMARY KEY,
-      onyomi TEXT,
-      kunyomi TEXT,
-      meanings TEXT,
-      jlpt INTEGER,
-      grade INTEGER,
-      stroke_count INTEGER,
-      svg_id TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS cards (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      word_id INTEGER REFERENCES words(id),
-      kind TEXT NOT NULL,
-      fsrs_state TEXT NOT NULL,
-      due INTEGER NOT NULL,
-      created_at INTEGER NOT NULL,
-      last_reviewed_at INTEGER
-    );
-    CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(due);
-
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
-      scenario_id TEXT NOT NULL,
       topic TEXT,
+      response_level TEXT,
       started_at INTEGER NOT NULL,
       ended_at INTEGER,
       updated_at INTEGER NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
-      register_target TEXT NOT NULL,
-      jlpt_target INTEGER NOT NULL,
-      turn_count INTEGER NOT NULL DEFAULT 0,
-      closeout_json TEXT
+      turn_count INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS turns (
@@ -200,82 +111,23 @@ async function createSchema(db: SQLite.SQLiteDatabase) {
       created_at INTEGER NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS examples_cache (
-      word_id INTEGER PRIMARY KEY,
-      examples_json TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
   `);
-  await migrateSessionHistory(db);
-}
-
-async function addMissingColumns(
-  db: SQLite.SQLiteDatabase,
-  table: string,
-  additions: Array<[string, string]>,
-) {
-  const columns = await db.getAllAsync<{ name: string }>(
-    `PRAGMA table_info(${table})`,
-  );
-  const existing = new Set(columns.map((column) => column.name));
-  for (const [name, declaration] of additions) {
-    if (!existing.has(name)) {
-      await db.execAsync(
-        `ALTER TABLE ${table} ADD COLUMN ${name} ${declaration};`,
-      );
-    }
-  }
-}
-
-async function migrateSessionHistory(db: SQLite.SQLiteDatabase) {
-  await addMissingColumns(db, "sessions", [
-    ["topic", "TEXT"],
-    ["updated_at", "INTEGER NOT NULL DEFAULT 0"],
-    ["status", "TEXT NOT NULL DEFAULT 'active'"],
-    ["closeout_json", "TEXT"],
-  ]);
-  await db.execAsync(
-    "UPDATE sessions SET updated_at = started_at WHERE updated_at = 0;",
-  );
-  await addMissingColumns(db, "turns", [
-    ["client_id", "TEXT"],
-    ["reference_audio_uri", "TEXT"],
-    ["alignment_data_json", "TEXT"],
-    ["retry_of_turn_id", "TEXT"],
-    ["attempt_number", "INTEGER NOT NULL DEFAULT 1"],
-    ["streaming", "INTEGER NOT NULL DEFAULT 0"],
-    ["interrupted", "INTEGER NOT NULL DEFAULT 0"],
-  ]);
-  await db.execAsync(
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_client_id ON turns(client_id);",
-  );
 }
 
 export async function persistSession(input: {
   id: string;
-  scenarioId?: string;
   topic?: string;
-  registerTarget?: string;
-  jlptTarget?: number;
+  responseLevel?: string;
   startedAt?: number;
 }) {
   const db = await getNative();
   const now = input.startedAt ?? Date.now();
   await db.runAsync(
     `INSERT INTO sessions
-      (id, scenario_id, topic, started_at, updated_at, status,
-       register_target, jlpt_target, turn_count)
-     VALUES (?, ?, ?, ?, ?, 'active', ?, ?, 0)
+      (id, topic, response_level, started_at, updated_at, status, turn_count)
+     VALUES (?, ?, ?, ?, ?, 'active', 0)
      ON CONFLICT(id) DO NOTHING`,
-    [
-      input.id,
-      input.scenarioId ?? "open",
-      input.topic ?? null,
-      now,
-      now,
-      input.registerTarget ?? "neutral",
-      input.jlptTarget ?? 3,
-    ],
+    [input.id, input.topic ?? null, input.responseLevel ?? null, now, now],
   );
 }
 
@@ -360,16 +212,13 @@ export async function persistTurn(
 
 type SessionRow = {
   id: string;
-  scenario_id: string;
   topic: string | null;
+  response_level: string | null;
   started_at: number;
   ended_at: number | null;
   updated_at: number;
   status: "active" | "completed";
-  register_target: string;
-  jlpt_target: number;
   turn_count: number;
-  closeout_json: string | null;
 };
 
 type TurnRow = {
@@ -393,10 +242,8 @@ type TurnRow = {
 export type PersistedSession = {
   id: string;
   context: {
-    scenarioId?: string;
     topic?: string;
-    registerTarget?: string;
-    jlptTarget?: number;
+    responseLevel?: string;
   };
   startedAt: number;
   endedAt?: number;
@@ -407,17 +254,14 @@ export type PersistedSession = {
 
 export type SessionSummary = {
   id: string;
-  scenarioId: string;
   startedAt: number;
   endedAt?: number;
   status: "active" | "completed";
   turnCount: number;
-  savedMomentCount: number;
 };
 
 export type SavedLearningMoment = LearningMoment & {
   sessionStartedAt: number;
-  scenarioId: string;
 };
 
 function parseJson<T>(value: string | null): T | undefined {
@@ -514,15 +358,23 @@ export async function loadSession(
         : row,
     ),
   );
-  const closeout = parseJson<SessionCloseout>(session.closeout_json);
+  const momentRows = await db.getAllAsync<LearningMomentRow>(
+    "SELECT * FROM learning_moments WHERE session_id = ? ORDER BY created_at ASC",
+    [id],
+  );
+  const moments = momentRows.map(rowToMoment);
+  const closeout = moments.length
+    ? {
+        sessionId: id,
+        generatedAt: Math.max(...moments.map((moment) => moment.createdAt)),
+        moments,
+      }
+    : undefined;
   return {
     id: session.id,
     context: {
-      scenarioId:
-        session.scenario_id === "open" ? undefined : session.scenario_id,
       topic: session.topic ?? undefined,
-      registerTarget: session.register_target,
-      jlptTarget: session.jlpt_target,
+      responseLevel: session.response_level ?? undefined,
     },
     startedAt: session.started_at,
     endedAt: session.ended_at ?? undefined,
@@ -536,13 +388,12 @@ export async function getLatestActiveSession(): Promise<SessionSummary | null> {
   const db = await getNative();
   const row = await db.getFirstAsync<{
     id: string;
-    scenario_id: string;
     started_at: number;
     ended_at: number | null;
     status: "active" | "completed";
     turn_count: number;
   }>(
-    `SELECT id, scenario_id, started_at, ended_at, status, turn_count
+    `SELECT id, started_at, ended_at, status, turn_count
      FROM sessions
      WHERE status = 'active' AND turn_count > 0
      ORDER BY updated_at DESC LIMIT 1`,
@@ -550,53 +401,15 @@ export async function getLatestActiveSession(): Promise<SessionSummary | null> {
   return row
     ? {
         id: row.id,
-        scenarioId: row.scenario_id,
         startedAt: row.started_at,
         endedAt: row.ended_at ?? undefined,
         status: row.status,
         turnCount: row.turn_count,
-        savedMomentCount: 0,
       }
     : null;
 }
 
-export async function listRecentSessions(
-  limit = 12,
-): Promise<SessionSummary[]> {
-  const db = await getNative();
-  const rows = await db.getAllAsync<{
-    id: string;
-    scenario_id: string;
-    started_at: number;
-    ended_at: number | null;
-    status: "active" | "completed";
-    turn_count: number;
-    saved_count: number;
-  }>(
-    `SELECT s.id, s.scenario_id, s.started_at, s.ended_at, s.status,
-       s.turn_count,
-       COALESCE(SUM(CASE WHEN m.decision = 'saved' THEN 1 ELSE 0 END), 0)
-         AS saved_count
-     FROM sessions s
-     LEFT JOIN learning_moments m ON m.session_id = s.id
-     WHERE s.turn_count > 0
-     GROUP BY s.id
-     ORDER BY COALESCE(s.ended_at, s.updated_at) DESC
-     LIMIT ?`,
-    [limit],
-  );
-  return rows.map((row) => ({
-    id: row.id,
-    scenarioId: row.scenario_id,
-    startedAt: row.started_at,
-    endedAt: row.ended_at ?? undefined,
-    status: row.status,
-    turnCount: row.turn_count,
-    savedMomentCount: row.saved_count,
-  }));
-}
-
-function rowToMoment(row: {
+type LearningMomentRow = {
   id: string;
   session_id: string;
   source_turn_id: string;
@@ -608,7 +421,9 @@ function rowToMoment(row: {
   score: number | null;
   decision: LearningMomentDecision;
   created_at: number;
-}): LearningMoment {
+};
+
+function rowToMoment(row: LearningMomentRow): LearningMoment {
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -641,9 +456,8 @@ export async function listSavedMoments(
     decision: LearningMomentDecision;
     created_at: number;
     session_started_at: number;
-    scenario_id: string;
   }>(
-    `SELECT m.*, s.started_at AS session_started_at, s.scenario_id
+    `SELECT m.*, s.started_at AS session_started_at
      FROM learning_moments m
      JOIN sessions s ON s.id = m.session_id
      WHERE m.decision = 'saved'
@@ -653,7 +467,6 @@ export async function listSavedMoments(
   return rows.map((row) => ({
     ...rowToMoment(row),
     sessionStartedAt: row.session_started_at,
-    scenarioId: row.scenario_id,
   }));
 }
 
@@ -736,10 +549,10 @@ export async function prepareSessionCloseout(
   };
   await writeCloseoutMoments(db, closeout);
   const resolved = await closeoutWithStoredDecisions(db, closeout);
-  await db.runAsync(
-    "UPDATE sessions SET closeout_json = ?, updated_at = ? WHERE id = ?",
-    [JSON.stringify(resolved), Date.now(), sessionId],
-  );
+  await db.runAsync("UPDATE sessions SET updated_at = ? WHERE id = ?", [
+    Date.now(),
+    sessionId,
+  ]);
   return resolved;
 }
 
@@ -751,9 +564,9 @@ export async function completeSession(
   const db = await getNative();
   const endedAt = Date.now();
   await db.runAsync(
-    `UPDATE sessions SET ended_at = ?, updated_at = ?, status = 'completed',
-       closeout_json = ? WHERE id = ?`,
-    [endedAt, endedAt, JSON.stringify(closeout), sessionId],
+    `UPDATE sessions SET ended_at = ?, updated_at = ?, status = 'completed'
+     WHERE id = ?`,
+    [endedAt, endedAt, sessionId],
   );
   return closeout;
 }
@@ -768,42 +581,6 @@ export async function setLearningMomentDecision(
     "UPDATE learning_moments SET decision = ? WHERE id = ? AND session_id = ?",
     [decision, momentId, sessionId],
   );
-  const row = await db.getFirstAsync<{ closeout_json: string | null }>(
-    "SELECT closeout_json FROM sessions WHERE id = ?",
-    [sessionId],
-  );
-  const closeout = parseJson<SessionCloseout>(row?.closeout_json ?? null);
-  if (closeout) {
-    const updated = {
-      ...closeout,
-      moments: closeout.moments.map((moment) =>
-        moment.id === momentId ? { ...moment, decision } : moment,
-      ),
-    };
-    await db.runAsync(
-      "UPDATE sessions SET closeout_json = ?, updated_at = ? WHERE id = ?",
-      [JSON.stringify(updated), Date.now(), sessionId],
-    );
-  }
-}
-
-export async function deleteSession(sessionId: string): Promise<void> {
-  const db = await getNative();
-  await db.withExclusiveTransactionAsync(async (transaction) => {
-    await transaction.runAsync(
-      "DELETE FROM learning_moments WHERE session_id = ?",
-      [sessionId],
-    );
-    await transaction.runAsync("DELETE FROM turns WHERE session_id = ?", [
-      sessionId,
-    ]);
-    await transaction.runAsync("DELETE FROM sessions WHERE id = ?", [
-      sessionId,
-    ]);
-  });
-  await FileSystem.deleteAsync(sessionAudioDirectory(sessionId), {
-    idempotent: true,
-  }).catch((error) => log.warn("Could not remove session audio", error));
 }
 
 export async function getAudioRetentionDays(): Promise<AudioRetentionDays> {
@@ -905,30 +682,5 @@ async function persistManagedAudio(
   } catch (error) {
     log.warn("Could not archive session audio", error);
     return source;
-  }
-}
-
-async function seedIfEmpty(db: SQLite.SQLiteDatabase) {
-  const row = await db.getFirstAsync<{ c: number }>(
-    "SELECT COUNT(*) as c FROM words",
-  );
-  if ((row?.c ?? 0) > 0) return;
-  log.info("Seeding dev vocab words...");
-  for (const w of SEED_WORDS) {
-    await db.runAsync(
-      `INSERT OR IGNORE INTO words (id, kanji, kana, romaji, pos, gloss, jlpt, pitch_accents, freq_rank)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        w.id,
-        w.kanji,
-        w.kana,
-        w.romaji,
-        w.pos,
-        w.gloss,
-        w.jlpt,
-        JSON.stringify(w.pitchAccents),
-        w.freqRank,
-      ],
-    );
   }
 }
