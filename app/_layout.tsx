@@ -104,6 +104,13 @@ export default function RootLayout() {
       return;
     }
     if (
+      reviewRoute === "handwriting-practice" &&
+      firstRoute !== "handwriting-practice"
+    ) {
+      router.replace("/handwriting-practice" as never);
+      return;
+    }
+    if (
       reviewRoute === "library" &&
       (first !== "(tabs)" || secondRoute !== "library")
     ) {
@@ -146,6 +153,7 @@ export default function RootLayout() {
             <Stack.Screen name="landing" />
             <Stack.Screen name="session-history-proof" />
             <Stack.Screen name="song-pronunciation-proof" />
+            <Stack.Screen name="handwriting-practice" />
           </Stack>
         </SafeAreaProvider>
       </GestureHandlerRootView>

@@ -10,9 +10,9 @@ web-build/
 expo-env.d.ts
 .expo-shared/
 
-# native
-ios/
-android/
+# generated native projects (committed local Expo modules may own nested ios/)
+/ios/
+/android/
 *.xcworkspace
 *.jks
 *.p8

@@ -53,7 +53,8 @@
           "androidForegroundService": false,
           "disableFFmpeg": false
         }
-      ]
+      ],
+      "./modules/koe-pencil-kit/app.plugin.js"
     ],
     "experiments": {
       "typedRoutes": true

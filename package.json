@@ -18,6 +18,7 @@
     "test:voice": "tsx --test src/voice/*.test.ts src/services/sse.test.ts src/services/pcm.test.ts src/services/pitch.test.ts src/theme/interaction.test.ts",
     "test:song": "tsx --test src/song/*.test.ts",
     "test:sessions": "tsx --test src/db/sessionHistory.test.ts",
+    "test:handwriting": "tsx --test src/handwriting/*.test.ts",
     "test:marketing": "tsx --test src/marketing/*.test.ts",
     "marketing:icon": "bash scripts/render-marketing-icon.sh",
     "marketing:stills": "bash scripts/extract-marketing-stills.sh && npm run marketing:manifest",

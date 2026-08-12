@@ -16,6 +16,7 @@ import {
   Bookmark,
   Check,
   Clock3,
+  PenLine,
   Play,
   Search,
   ShieldCheck,
@@ -48,6 +49,7 @@ import {
   type ConversationPalette,
   useConversationPalette,
 } from "@/theme/conversation";
+import { practiceTargetsForText } from "@/handwriting/practice";
 
 export default function LibraryScreen() {
   const router = useRouter();
@@ -196,6 +198,15 @@ export default function LibraryScreen() {
                 key={moment.id}
                 moment={moment}
                 palette={palette}
+                onWrite={
+                  practiceTargetsForText(moment.textJa).length
+                    ? () =>
+                        router.push({
+                          pathname: "/handwriting-practice",
+                          params: { momentId: moment.id },
+                        })
+                    : undefined
+                }
                 onPlay={
                   moment.audioUri
                     ? () => void play(moment.audioUri!)
@@ -399,11 +410,13 @@ function SavedMomentCard({
   moment,
   palette,
   onPlay,
+  onWrite,
   onRemove,
 }: {
   moment: SavedLearningMoment;
   palette: ConversationPalette;
   onPlay?: () => void;
+  onWrite?: () => void;
   onRemove: () => void;
 }) {
   const bars = voiceprint(moment.textJa);
@@ -450,6 +463,17 @@ function SavedMomentCard({
         ) : null}
       </View>
       <View style={styles.savedMomentActions}>
+        {onWrite ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Write ${moment.textJa}`}
+            accessibilityHint="Starts character recall from this saved expression"
+            onPress={onWrite}
+            style={[styles.roundAction, { borderColor: palette.hairline }]}
+          >
+            <PenLine color={palette.proof} size={17} />
+          </Pressable>
+        ) : null}
         {onPlay ? (
           <Pressable
             accessibilityRole="button"
