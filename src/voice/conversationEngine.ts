@@ -95,6 +95,24 @@ export type ConversationDependencies = {
       trace: VoiceTraceContext;
     }) => Promise<SpeechInputHandle>;
   };
+  /** Present only in development/test adapters. The implementation must call
+   * the real recorded-file STT boundary and return the original audio URI. */
+  recordedSpeechInput?: {
+    transcribe: (
+      input: { uri: string; filename?: string; mimeType?: string },
+      trace: VoiceTraceContext,
+    ) => Promise<{
+      text: string;
+      audioUri: string;
+      metadata: {
+        format: "mp3" | "m4a" | "wav";
+        byteCount: number;
+        sampleRate: number;
+        channels: number;
+        durationMs: number;
+      };
+    }>;
+  };
   replyStream: (options: {
     history: Array<{ role: "user" | "assistant"; content: string }>;
     userTurn: string;
@@ -175,6 +193,13 @@ export type ConversationDependencies = {
     transcript: string;
   }) => boolean;
 };
+
+export class RecordedAudioInjectionUnavailableError extends Error {
+  constructor(message = "Recorded-audio injection is unavailable") {
+    super(message);
+    this.name = "RecordedAudioInjectionUnavailableError";
+  }
+}
 
 type FailedReply = {
   text: string;
@@ -433,22 +458,105 @@ export class ConversationEngine {
     }
   }
 
-  /** Uses the exact final-transcript path used by microphone capture. */
-  async submitInjectedTranscript(input: {
-    text: string;
-    audioUri?: string;
-    traceTurnId?: string;
+  /** Development/test entry point. The optional dependency is deliberately
+   * omitted by Release adapters, and no caller can supply transcript text. */
+  async injectRecordedAudio(input: {
+    uri: string;
+    filename?: string;
+    mimeType?: string;
   }): Promise<void> {
     await this.start();
-    if (this.state.phase === "idle" || this.state.phase === "recovery") {
-      this.transition("finalizing");
+    const recordedSpeechInput = this.dependencies.recordedSpeechInput;
+    if (!recordedSpeechInput) {
+      throw new RecordedAudioInjectionUnavailableError();
     }
-    await this.finalizeTranscript(
-      input.text,
-      input.audioUri,
-      input.traceTurnId ?? this.dependencies.ids.next(),
-      true,
-    );
+    if (
+      this.disposed ||
+      this.state.phase === "ending" ||
+      this.state.phase === "ended"
+    )
+      return;
+    const wasResponding =
+      this.responseRuns.hasActiveRun() ||
+      this.dependencies.session.snapshot().isStreaming;
+    if (wasResponding) {
+      this.dependencies.telemetry(
+        "response_cancelled",
+        this.dependencies.session.snapshot().traceContext,
+        { reason: "recorded-file-barge-in" },
+        "warn",
+      );
+      this.dependencies.session.setVoicePhase("interrupted");
+      await this.cancelResponse("recorded-file-barge-in");
+      if (
+        this.state.phase === "understanding" ||
+        this.state.phase === "speaking"
+      ) {
+        this.transition("resuming");
+      }
+    }
+    if (this.state.phase === "recovery") {
+      this.dependencies.session.setVoicePhase("idle", {
+        interimTranscript: "",
+      });
+      this.transition("idle");
+    }
+    if (this.state.phase !== "idle" && this.state.phase !== "resuming") {
+      throw new RecordedAudioInjectionUnavailableError(
+        `Recorded-audio injection requires an idle engine, not ${this.state.phase}`,
+      );
+    }
+
+    const epoch = ++this.eventGeneration;
+    const traceTurnId = this.dependencies.ids.next();
+    const trace = { sessionId: this.sessionId, turnId: traceTurnId };
+    this.dependencies.session.setTraceContext({ turnId: traceTurnId });
+    this.latency = new VoiceLatencyTracker(this.dependencies.clock.now);
+    this.latency.listeningStarted();
+    this.dependencies.session.setLatency({});
+    this.dependencies.session.setVoicePhase("listening", {
+      interimTranscript: "",
+    });
+    this.transition("listening");
+    this.publish({
+      draftTranscript: "",
+      draftAudioUri: undefined,
+      audioEnergy: 0,
+      ownership: EMPTY_OWNERSHIP,
+    });
+    this.dependencies.telemetry("recorded_audio_injection_started", trace, {
+      path: "async-rest-recorded-file",
+      target: "iPhone Simulator",
+    });
+
+    try {
+      const result = await recordedSpeechInput.transcribe(input, trace);
+      if (!this.isEpochCurrent(epoch) || !this.isPhase("listening")) return;
+      const latency = this.latency.transcriptReceived();
+      this.updateLatency(latency, "listeningToTranscriptMs");
+      this.transition("endpoint");
+      this.dependencies.session.setInterimTranscript(result.text);
+      this.transition("finalizing");
+      this.dependencies.telemetry("recorded_audio_injection_completed", trace, {
+        path: "async-rest-recorded-file",
+        declaredEncoding: result.metadata.format,
+        observedEncoding: result.metadata.format,
+        byteCount: result.metadata.byteCount,
+        sampleRate: result.metadata.sampleRate,
+        channels: result.metadata.channels,
+        durationMs: Math.round(result.metadata.durationMs),
+        transcriptChars: result.text.trim().length,
+      });
+      await this.finalizeTranscript(
+        result.text,
+        result.audioUri,
+        traceTurnId,
+        true,
+      );
+    } catch (error) {
+      if (!this.isEpochCurrent(epoch)) return;
+      this.reportSpeechFailure(error, "final", trace);
+    }
   }
 
   editTranscript(text: string): void {
@@ -609,40 +717,6 @@ export class ConversationEngine {
 
   async playAudio(audioUri: string): Promise<void> {
     await this.dependencies.audio.play(audioUri, {});
-  }
-
-  async runSimulatorDiagnostic(): Promise<void> {
-    await this.start();
-    const traceTurnId = this.dependencies.ids.next();
-    const trace = { sessionId: this.sessionId, turnId: traceTurnId };
-    this.dependencies.telemetry("simulator_diagnostic_started", trace, {
-      target: "iPhone Simulator",
-    });
-    try {
-      await this.startListening();
-      await new Promise<void>((resolve) => {
-        this.dependencies.clock.setTimer(resolve, 700);
-      });
-      await this.stopListening();
-    } catch (error) {
-      this.dependencies.telemetry(
-        "stt_ui_failure",
-        trace,
-        {
-          stage: "simulator-diagnostic",
-          failureKind: this.dependencies.classifyError(error),
-          errorName: this.dependencies.errorName(error),
-        },
-        "error",
-      );
-    }
-    this.dependencies.telemetry("simulator_diagnostic_fallback", trace, {
-      path: "fixed-private-free-transcript",
-    });
-    await this.submitInjectedTranscript({
-      text: "こんにちは。",
-      traceTurnId,
-    });
   }
 
   requestEnd(): void {

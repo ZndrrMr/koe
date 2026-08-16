@@ -45,14 +45,23 @@ and framing tests and labels its provenance explicitly. It is not claimed to be
 a provider capture; refreshing real Inworld evidence requires an authenticated
 provider or deployed Worker configuration.
 
-For a development-only end-to-end simulator trace, point
-`EXPO_PUBLIC_WORKER_URL` at the Worker, set
-`EXPO_PUBLIC_KOE_REVIEW_ROUTE=session` and
-`EXPO_PUBLIC_KOE_AUTORUN_VOICE_TRACE=1`, then launch an iPhone Simulator build.
-The diagnostic attempts the real speech-recognition/audio-session path first;
-if the simulator cannot return speech, it records that specific failure and
-continues with a fixed, non-private transcript so streaming decode, playback,
-persistence, and UI transitions remain observable under the same turn ID.
+For a development-only recorded-input trace, point `EXPO_PUBLIC_WORKER_URL` at
+the Worker, set `EXPO_PUBLIC_KOE_REVIEW_ROUTE=session`, and set
+`EXPO_PUBLIC_KOE_INJECT_AUDIO_URI` to a local or HTTP(S) MP3, M4A, or WAV.
+Optionally set `EXPO_PUBLIC_KOE_INJECT_AUDIO_FILENAME` and
+`EXPO_PUBLIC_KOE_INJECT_AUDIO_MIME_TYPE` when the URI does not carry truthful
+values. An iPhone Simulator Debug build decodes the file with the native audio
+stack, preserves its filename/MIME/rate/channels/duration, sends its bytes
+through the Worker's real Soniox file-transcription endpoint, and enters the
+same conversation-engine finalization used by a microphone turn. Reply audio,
+feedback, pronunciation analysis, and SQLite persistence are not mocked or
+bypassed. Invalid metadata, empty/truncated input, files over 20 MiB, recordings
+over five minutes, and unsupported containers fail as recoverable STT errors.
+
+The recorded-input adapter is omitted when `__DEV__` is false, the session
+autorun caller is development-gated, and the engine independently rejects an
+injection call when that adapter is absent. Release builds therefore cannot
+activate the file source even if an injection environment variable is present.
 
 ## Shipping product structure
 

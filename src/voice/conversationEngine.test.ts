@@ -7,6 +7,7 @@ import type { ChatTurn } from "../stores/useSession";
 import { INITIAL_VOICE_LIFECYCLE, type VoiceLifecycle } from "./lifecycle";
 import {
   ConversationEngine,
+  RecordedAudioInjectionUnavailableError,
   type ConversationDependencies,
   type ConversationPhase,
   type ConversationSessionSnapshot,
@@ -116,7 +117,9 @@ class FakeClock {
 
 type Harness = ReturnType<typeof createHarness>;
 
-function createHarness(options: { intro?: string } = {}) {
+function createHarness(
+  options: { intro?: string; recordedInput?: boolean } = {},
+) {
   const clock = new FakeClock();
   let idCounter = 0;
   let replyFactory: ConversationDependencies["replyStream"] = () =>
@@ -134,6 +137,12 @@ function createHarness(options: { intro?: string } = {}) {
     audioUri: "file:///captured.m4a",
   };
   let speechCancelled = 0;
+  let recordedText = "injected turn";
+  const recordedRequests: Array<{
+    uri: string;
+    filename?: string;
+    mimeType?: string;
+  }> = [];
   let audioStopped = 0;
   let ended = 0;
   let closeoutPrepared = 0;
@@ -176,6 +185,30 @@ function createHarness(options: { intro?: string } = {}) {
         };
       },
     },
+    recordedSpeechInput:
+      options.recordedInput === false
+        ? undefined
+        : {
+            transcribe: async (input) => {
+              recordedRequests.push(input);
+              const format = input.filename?.endsWith(".mp3")
+                ? "mp3"
+                : input.filename?.endsWith(".wav")
+                  ? "wav"
+                  : "m4a";
+              return {
+                text: recordedText,
+                audioUri: input.uri,
+                metadata: {
+                  format,
+                  byteCount: 4_096,
+                  sampleRate: 16_000,
+                  channels: 1,
+                  durationMs: 600,
+                },
+              };
+            },
+          },
     replyStream: (request) => {
       replyRequests.push(request);
       return replyFactory(request);
@@ -304,6 +337,7 @@ function createHarness(options: { intro?: string } = {}) {
     writes,
     telemetry,
     transcriptInputs,
+    recordedRequests,
     replyRequests,
     get speechCancelled() {
       return speechCancelled;
@@ -322,6 +356,13 @@ function createHarness(options: { intro?: string } = {}) {
     },
     setSpeechResult(next: typeof speechResult) {
       speechResult = next;
+    },
+    injectRecorded(text: string, extension: "mp3" | "m4a" | "wav" = "m4a") {
+      recordedText = text;
+      return engine.injectRecordedAudio({
+        uri: `file:///fixture.${extension}`,
+        filename: `fixture.${extension}`,
+      });
     },
   };
 }
@@ -349,10 +390,7 @@ test("microphone endpoint/final events and injected files share the deterministi
   });
   harness.clock.advance(600);
   await harness.engine.stopListening();
-  await harness.engine.submitInjectedTranscript({
-    text: "二つ目",
-    audioUri: "file:///fixture.m4a",
-  });
+  await harness.injectRecorded("二つ目");
   await flush();
 
   assert.deepEqual(
@@ -381,6 +419,41 @@ test("microphone endpoint/final events and injected files share the deterministi
   assert.ok(harness.writes.some((write) => write.kind === "patch"));
 });
 
+test("MP3, M4A, and WAV recorded files produce equivalent canonical turns", async () => {
+  for (const format of ["mp3", "m4a", "wav"] as const) {
+    const harness = createHarness();
+    harness.setReplyFactory(() =>
+      reply("同じ返事です。", { streamedAudio: true }),
+    );
+
+    await harness.injectRecorded("明日は京都へ行きます。", format);
+    await flush();
+
+    const user = turnByRole(harness, "user");
+    assert.equal(user.textJa, "明日は京都へ行きます。");
+    assert.equal(user.audioUri, `file:///fixture.${format}`);
+    assert.equal(turnByRole(harness, "assistant").textJa, "同じ返事です。");
+    assert.equal(harness.recordedRequests.length, 1);
+    assert.ok(harness.telemetry.includes("recorded_audio_injection_started"));
+    assert.ok(harness.telemetry.includes("recorded_audio_injection_completed"));
+  }
+});
+
+test("recorded-file seam rejects calls when the Release adapter omits it", async () => {
+  const harness = createHarness({ recordedInput: false });
+  await assert.rejects(
+    () =>
+      harness.engine.injectRecordedAudio({
+        uri: "file:///release-bypass.wav",
+        filename: "release-bypass.wav",
+      }),
+    RecordedAudioInjectionUnavailableError,
+  );
+  assert.equal(harness.engine.getState().phase, "idle");
+  assert.equal(harness.replyRequests.length, 0);
+  assert.equal(harness.state.turns.length, 0);
+});
+
 test("a newer turn cancels the old run and rejects its stale stream events", async () => {
   const harness = createHarness();
   const gate = deferred<void>();
@@ -395,12 +468,12 @@ test("a newer turn cancels the old run and rejects its stale stream events", asy
     })();
   });
 
-  const first = harness.engine.submitInjectedTranscript({ text: "first" });
+  const first = harness.injectRecorded("first");
   await waitFor(() =>
     harness.state.turns.some((turn) => turn.role === "assistant"),
   );
   const firstAssistant = turnByRole(harness, "assistant");
-  await harness.engine.submitInjectedTranscript({ text: "second" });
+  await harness.injectRecorded("second");
   gate.resolve();
   await first;
 
@@ -447,7 +520,7 @@ test("ending during an in-flight provider request aborts and persists interrupti
     })(),
   );
 
-  const pending = harness.engine.submitInjectedTranscript({ text: "end now" });
+  const pending = harness.injectRecorded("end now");
   await waitFor(() => harness.replyRequests.length === 1);
   const assistant = turnByRole(harness, "assistant");
   harness.engine.requestEnd();
@@ -482,7 +555,7 @@ test("retry reuses the failed assistant turn with a new response run", async () 
     })();
   });
 
-  await harness.engine.submitInjectedTranscript({ text: "retry me" });
+  await harness.injectRecorded("retry me");
   const failedAssistant = turnByRole(harness, "assistant");
   const failedRunId = failedAssistant.responseRunId;
   assert.equal(harness.engine.getState().phase, "recovery");
@@ -513,9 +586,9 @@ test("feedback that resolves after a newer turn is rejected as stale", async () 
       : reply("second reply");
   });
 
-  await harness.engine.submitInjectedTranscript({ text: "first" });
+  await harness.injectRecorded("first");
   const firstUser = turnByRole(harness, "user");
-  await harness.engine.submitInjectedTranscript({ text: "second" });
+  await harness.injectRecorded("second");
   feedback.resolve({
     ...EMPTY_FEEDBACK,
     translations: { user: "stale translation", tutor: "stale tutor" },

@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { extname, join } from "node:path";
 
 const fixture = JSON.parse(
   readFileSync(
@@ -13,6 +14,13 @@ const chunks = [];
 for (let offset = 0; offset < pcm.length; offset += 1_920) {
   chunks.push(pcm.subarray(offset, offset + 1_920).toString("base64"));
 }
+
+const recordedFixtureDirectory = process.env.KOE_RECORDED_FIXTURE_DIR;
+const recordedContentTypes = {
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".wav": "audio/wav",
+};
 
 function json(response, status, value, headers = {}) {
   response.writeHead(status, {
@@ -31,12 +39,34 @@ const server = createServer((request, response) => {
       path: requestUrl.pathname,
     }),
   );
-  if (request.method !== "POST") {
-    json(response, 404, { error: "not-found" });
+
+  if (
+    request.method === "GET" &&
+    requestUrl.pathname.startsWith("/recorded/") &&
+    recordedFixtureDirectory
+  ) {
+    const filename = requestUrl.pathname.split("/").pop() ?? "";
+    const extension = extname(filename).toLowerCase();
+    const contentType = recordedContentTypes[extension];
+    const path = join(recordedFixtureDirectory, filename);
+    if (!contentType || !existsSync(path)) {
+      json(response, 404, { error: "fixture-not-found" });
+      return;
+    }
+    const bytes = readFileSync(path);
+    response.writeHead(200, {
+      "Content-Type": contentType,
+      "Content-Length": String(bytes.byteLength),
+      "Cache-Control": "no-store",
+    });
+    response.end(bytes);
     return;
   }
 
-  if (requestUrl.pathname === "/v1/chat/completions") {
+  if (
+    request.method === "POST" &&
+    requestUrl.pathname === "/v1/chat/completions"
+  ) {
     response.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-store",
@@ -58,7 +88,7 @@ const server = createServer((request, response) => {
     return;
   }
 
-  if (requestUrl.pathname === "/tts/v1/voice") {
+  if (request.method === "POST" && requestUrl.pathname === "/tts/v1/voice") {
     json(
       response,
       200,
@@ -71,7 +101,10 @@ const server = createServer((request, response) => {
     return;
   }
 
-  if (requestUrl.pathname.startsWith("/v1beta/models/")) {
+  if (
+    request.method === "POST" &&
+    requestUrl.pathname.startsWith("/v1beta/models/")
+  ) {
     json(response, 200, {
       candidates: [
         {
@@ -95,6 +128,55 @@ const server = createServer((request, response) => {
         },
       ],
     });
+    return;
+  }
+
+  if (request.method === "POST" && requestUrl.pathname === "/v1/files") {
+    request.resume();
+    json(response, 201, {
+      id: "fixture-file-id",
+      filename: "preserved-by-worker",
+      size: Number(request.headers["content-length"] ?? 0),
+      created_at: new Date().toISOString(),
+    });
+    return;
+  }
+
+  if (
+    request.method === "POST" &&
+    requestUrl.pathname === "/v1/transcriptions"
+  ) {
+    request.resume();
+    json(response, 200, { id: "fixture-transcription-id" });
+    return;
+  }
+
+  if (
+    request.method === "GET" &&
+    requestUrl.pathname ===
+      "/v1/transcriptions/fixture-transcription-id/transcript"
+  ) {
+    json(response, 200, {
+      tokens: [{ text: "明日は" }, { text: "京都へ行きます。" }],
+    });
+    return;
+  }
+
+  if (
+    request.method === "GET" &&
+    requestUrl.pathname === "/v1/transcriptions/fixture-transcription-id"
+  ) {
+    json(response, 200, { status: "completed" });
+    return;
+  }
+
+  if (
+    request.method === "DELETE" &&
+    (requestUrl.pathname === "/v1/files/fixture-file-id" ||
+      requestUrl.pathname === "/v1/transcriptions/fixture-transcription-id")
+  ) {
+    response.writeHead(204);
+    response.end();
     return;
   }
 

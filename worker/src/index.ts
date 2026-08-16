@@ -19,6 +19,13 @@ import {
   KOE_V1_VOICE_ID,
 } from "../../shared/inworld";
 import {
+  RECORDED_AUDIO_MAX_BYTES,
+  RecordedAudioContractError,
+  validateRecordedAudioEnvelope,
+  type RecordedAudioFailureKind,
+  type RecordedAudioMetadata,
+} from "../../shared/recordedAudio";
+import {
   inspectRouterStream,
   routerResponseHeaders,
   standaloneResponseHeaders,
@@ -51,6 +58,10 @@ app.use(
       "X-Koe-Session-Id",
       "X-Koe-Turn-Id",
       "X-Koe-Response-Run-Id",
+      "X-Koe-Audio-Filename",
+      "X-Koe-Audio-Sample-Rate",
+      "X-Koe-Audio-Channels",
+      "X-Koe-Audio-Duration-Ms",
     ],
     exposeHeaders: [
       "X-Koe-Audio-Encoding",
@@ -219,20 +230,116 @@ app.post("/tts", async (c) => {
 
 app.post("/stt/transcribe", async (c) => {
   const trace = workerTrace(c.req.raw.headers);
+  const declaredByteCount = Number(c.req.header("Content-Length") ?? 0);
+  if (
+    Number.isFinite(declaredByteCount) &&
+    declaredByteCount > RECORDED_AUDIO_MAX_BYTES
+  ) {
+    return recordedAudioError(
+      "audio-too-large",
+      `Recorded audio exceeds the ${RECORDED_AUDIO_MAX_BYTES}-byte limit`,
+      413,
+    );
+  }
+
+  let filename: string;
+  let sampleRate: number;
+  let channels: number;
+  let durationMs: number;
+  try {
+    filename = decodeRequiredFilename(c.req.header("X-Koe-Audio-Filename"));
+    sampleRate = requiredPositiveNumber(
+      c.req.header("X-Koe-Audio-Sample-Rate"),
+      "sample rate",
+    );
+    channels = requiredPositiveNumber(
+      c.req.header("X-Koe-Audio-Channels"),
+      "channel count",
+    );
+    durationMs = requiredPositiveNumber(
+      c.req.header("X-Koe-Audio-Duration-Ms"),
+      "duration",
+    );
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Recorded audio metadata is invalid";
+    return recordedAudioError("invalid-audio", message, 400);
+  }
+
+  let audioBuffer: ArrayBuffer;
+  try {
+    audioBuffer = await readBoundedBody(c.req.raw, RECORDED_AUDIO_MAX_BYTES);
+  } catch (error) {
+    const contractError =
+      error instanceof RecordedAudioContractError
+        ? error
+        : new RecordedAudioContractError(
+            "invalid-audio",
+            "Recorded audio body could not be read",
+          );
+    return recordedAudioError(
+      contractError.kind,
+      contractError.message,
+      recordedAudioStatus(contractError.kind),
+    );
+  }
+  let metadata: RecordedAudioMetadata;
+  try {
+    metadata = validateRecordedAudioEnvelope({
+      filename,
+      mimeType: c.req.header("Content-Type") ?? "",
+      bytes: new Uint8Array(audioBuffer),
+      sampleRate,
+      channels,
+      durationMs,
+    });
+  } catch (error) {
+    const contractError =
+      error instanceof RecordedAudioContractError
+        ? error
+        : new RecordedAudioContractError(
+            "invalid-audio",
+            "Recorded audio validation failed",
+          );
+    workerEvent(
+      "stt_failed",
+      trace,
+      {
+        path: "async-rest-recorded-file",
+        failureKind: contractError.kind,
+        stage: "worker-file-validation",
+        byteCount: audioBuffer.byteLength,
+      },
+      "error",
+    );
+    return recordedAudioError(
+      contractError.kind,
+      contractError.message,
+      recordedAudioStatus(contractError.kind),
+    );
+  }
+
   const dev = deviceId(c);
   const ok = await bumpCounter(
     c.env.KOE_KV,
     `rl:stt:${dev}:${today()}`,
-    30,
+    Math.max(1, Math.ceil(metadata.durationMs / 1_000)),
     Number(c.env.RATE_LIMIT_STT_SECONDS),
   );
-  if (!ok) return c.text("rate limit", 429);
+  if (!ok)
+    return recordedAudioError("invalid-audio", "Rate limit exceeded", 429);
 
-  const audioBytes = await c.req.arrayBuffer();
-  if (!audioBytes.byteLength) return c.text("empty audio", 400);
   workerEvent("stt_started", trace, {
-    path: "async-rest",
-    byteCount: audioBytes.byteLength,
+    path: "async-rest-recorded-file",
+    declaredEncoding: metadata.format,
+    observedEncoding: metadata.format,
+    contentType: metadata.mimeType,
+    sampleRate: metadata.sampleRate,
+    channels: metadata.channels,
+    durationMs: Math.round(metadata.durationMs),
+    byteCount: metadata.byteCount,
   });
 
   const langParam = c.req.query("lang") ?? "ja,en";
@@ -243,9 +350,14 @@ app.post("/stt/transcribe", async (c) => {
 
   const auth = `Bearer ${c.env.SONIOX_API_KEY}`;
 
+  const sonioxBaseUrl = c.env.SONIOX_API_BASE_URL.replace(/\/+$/, "");
   const uploadForm = new FormData();
-  uploadForm.append("file", new Blob([audioBytes]), "audio.m4a");
-  const uploadRes = await fetch("https://api.soniox.com/v1/files", {
+  uploadForm.append(
+    "file",
+    new Blob([audioBuffer], { type: metadata.mimeType }),
+    metadata.filename,
+  );
+  const uploadRes = await fetch(`${sonioxBaseUrl}/v1/files`, {
     method: "POST",
     headers: { Authorization: auth },
     body: uploadForm,
@@ -260,16 +372,22 @@ app.post("/stt/transcribe", async (c) => {
     },
     uploadRes.ok ? "info" : "error",
   );
-  if (!uploadRes.ok) return c.text("soniox upload failed", 502);
+  if (!uploadRes.ok)
+    return recordedAudioError(
+      "invalid-audio",
+      "Soniox rejected the audio file",
+      422,
+    );
   const { id: fileId } = (await uploadRes.json()) as { id: string };
 
-  const createRes = await fetch("https://api.soniox.com/v1/transcriptions", {
+  const createRes = await fetch(`${sonioxBaseUrl}/v1/transcriptions`, {
     method: "POST",
     headers: { Authorization: auth, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "stt-async-v4",
+      model: "stt-async-v5",
       file_id: fileId,
       language_hints: languageHints,
+      client_reference_id: trace.turnId,
     }),
   });
   workerEvent(
@@ -282,17 +400,30 @@ app.post("/stt/transcribe", async (c) => {
     },
     createRes.ok ? "info" : "error",
   );
-  if (!createRes.ok) return c.text("soniox transcription creation failed", 502);
+  if (!createRes.ok) {
+    scheduleCleanup(c, deleteSonioxResources(sonioxBaseUrl, auth, fileId));
+    return recordedAudioError(
+      "provider",
+      "Soniox transcription creation failed",
+      502,
+    );
+  }
   const { id: txId } = (await createRes.json()) as { id: string };
 
   const deadline = Date.now() + 25_000;
   let status: string = "processing";
   let errorMessage: string | undefined;
   while (Date.now() < deadline) {
-    const s = await fetch(`https://api.soniox.com/v1/transcriptions/${txId}`, {
+    const s = await fetch(`${sonioxBaseUrl}/v1/transcriptions/${txId}`, {
       headers: { Authorization: auth },
     });
-    if (!s.ok) return c.text("soniox status failed", 502);
+    if (!s.ok) {
+      scheduleCleanup(
+        c,
+        deleteSonioxResources(sonioxBaseUrl, auth, fileId, txId),
+      );
+      return recordedAudioError("provider", "Soniox status check failed", 502);
+    }
     const body = (await s.json()) as { status: string; error_message?: string };
     status = body.status;
     errorMessage = body.error_message;
@@ -309,16 +440,30 @@ app.post("/stt/transcribe", async (c) => {
       },
       "error",
     );
-    return c.text(`soniox ${status}: ${errorMessage ?? "timeout"}`, 502);
+    scheduleCleanup(
+      c,
+      deleteSonioxResources(sonioxBaseUrl, auth, fileId, txId),
+    );
+    return recordedAudioError(
+      "provider",
+      `Soniox ${status}: ${errorMessage ?? "timeout"}`,
+      502,
+    );
   }
 
   const trRes = await fetch(
-    `https://api.soniox.com/v1/transcriptions/${txId}/transcript`,
+    `${sonioxBaseUrl}/v1/transcriptions/${txId}/transcript`,
     {
       headers: { Authorization: auth },
     },
   );
-  if (!trRes.ok) return c.text("soniox transcript failed", 502);
+  if (!trRes.ok) {
+    scheduleCleanup(
+      c,
+      deleteSonioxResources(sonioxBaseUrl, auth, fileId, txId),
+    );
+    return recordedAudioError("provider", "Soniox transcript failed", 502);
+  }
   const { tokens } = (await trRes.json()) as {
     tokens: Array<{ text: string }>;
   };
@@ -331,23 +476,110 @@ app.post("/stt/transcribe", async (c) => {
     providerStatus: status,
   });
 
-  c.executionCtx.waitUntil(
-    Promise.all([
-      fetch(`https://api.soniox.com/v1/transcriptions/${txId}`, {
-        method: "DELETE",
-        headers: { Authorization: auth },
-      }),
-      fetch(`https://api.soniox.com/v1/files/${fileId}`, {
-        method: "DELETE",
-        headers: { Authorization: auth },
-      }),
-    ])
-      .then(() => undefined)
-      .catch(() => undefined),
-  );
+  scheduleCleanup(c, deleteSonioxResources(sonioxBaseUrl, auth, fileId, txId));
 
-  return c.json({ text });
+  return c.json({ text, audio: metadata });
 });
+
+function decodeRequiredFilename(encoded: string | undefined): string {
+  if (!encoded) throw new Error("Recorded audio filename is required");
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    throw new Error("Recorded audio filename is malformed");
+  }
+}
+
+async function readBoundedBody(
+  request: Request,
+  maximumBytes: number,
+): Promise<ArrayBuffer> {
+  if (!request.body) return new ArrayBuffer(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteCount = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    byteCount += value.byteLength;
+    if (byteCount > maximumBytes) {
+      await reader.cancel("recorded audio exceeds bounded body limit");
+      throw new RecordedAudioContractError(
+        "audio-too-large",
+        `Recorded audio exceeds the ${maximumBytes}-byte limit`,
+      );
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(byteCount);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
+}
+
+function requiredPositiveNumber(
+  value: string | undefined,
+  label: string,
+): number {
+  const parsed = Number(value);
+  if (!value || !Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Recorded audio ${label} is required`);
+  }
+  return parsed;
+}
+
+function recordedAudioStatus(
+  kind: RecordedAudioFailureKind,
+): 400 | 413 | 415 | 422 {
+  if (kind === "audio-too-large") return 413;
+  if (kind === "unsupported-audio") return 415;
+  if (kind === "audio-metadata-mismatch") return 422;
+  return 400;
+}
+
+function recordedAudioError(
+  code: RecordedAudioFailureKind | "provider",
+  message: string,
+  status: 400 | 413 | 415 | 422 | 429 | 502,
+): Response {
+  return Response.json(
+    { error: { code, message, recoverable: true } },
+    { status },
+  );
+}
+
+async function deleteSonioxResources(
+  baseUrl: string,
+  auth: string,
+  fileId: string,
+  transcriptionId?: string,
+): Promise<void> {
+  await Promise.allSettled([
+    transcriptionId
+      ? fetch(`${baseUrl}/v1/transcriptions/${transcriptionId}`, {
+          method: "DELETE",
+          headers: { Authorization: auth },
+        })
+      : Promise.resolve(),
+    fetch(`${baseUrl}/v1/files/${fileId}`, {
+      method: "DELETE",
+      headers: { Authorization: auth },
+    }),
+  ]);
+}
+
+function scheduleCleanup(c: AppContext, cleanup: Promise<void>): void {
+  try {
+    c.executionCtx.waitUntil(cleanup);
+  } catch {
+    // Hono's in-process app.request test helper has no ExecutionContext. The
+    // cleanup promise is already running and internally settles every fetch.
+    void cleanup;
+  }
+}
 
 // ---- STT token (deprecated: kept for dev-client fallback) --------------
 

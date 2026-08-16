@@ -6,6 +6,10 @@ import { AudioContractError } from "../services/audioContract";
 import { streamConversation, ProviderTimeoutError } from "../services/llm";
 import { analyzePronunciation } from "../services/pitch";
 import { annotate } from "../services/furigana";
+import {
+  RecordedAudioInputError,
+  transcribeRecordedAudio,
+} from "../services/recordedAudioInput";
 import { startStreaming, STTError } from "../services/stt";
 import { PCMPlaybackQueue, play, stop, synthesize } from "../services/tts";
 import { useSession } from "../stores/useSession";
@@ -37,6 +41,11 @@ function classifyError(error: unknown): ConversationFailure {
   }
   if (error instanceof ProviderTimeoutError) return "providerTimeout";
   if (error instanceof AudioContractError) return "audioContract";
+  if (error instanceof RecordedAudioInputError) {
+    return error.kind === "network" || error.kind === "provider"
+      ? "network"
+      : "sttFailure";
+  }
   if (error instanceof Error && error.name === "AbortError") return "cancelled";
   return "network";
 }
@@ -71,6 +80,11 @@ function createDependencies(): ConversationDependencies {
             }),
         }),
     },
+    recordedSpeechInput: __DEV__
+      ? {
+          transcribe: (input, trace) => transcribeRecordedAudio(input, trace),
+        }
+      : undefined,
     replyStream: streamConversation,
     audio: {
       createQueue: (options) => new PCMPlaybackQueue(options),

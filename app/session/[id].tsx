@@ -109,15 +109,16 @@ export default function SessionScreen() {
   }, [engine]);
 
   useEffect(() => {
-    if (
-      !__DEV__ ||
-      process.env.EXPO_PUBLIC_KOE_AUTORUN_VOICE_TRACE !== "1" ||
-      diagnosticRunStartedRef.current
-    ) {
+    const injectionUri = process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_URI;
+    if (!__DEV__ || !injectionUri || diagnosticRunStartedRef.current) {
       return;
     }
     diagnosticRunStartedRef.current = true;
-    void engine.runSimulatorDiagnostic();
+    void engine.injectRecordedAudio({
+      uri: injectionUri,
+      filename: process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_FILENAME,
+      mimeType: process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_MIME_TYPE,
+    });
   }, [engine]);
 
   const onPressIn = () => {

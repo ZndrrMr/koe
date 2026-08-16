@@ -25,11 +25,267 @@ function testEnv() {
     RATE_LIMIT_STT_SECONDS: "360000",
     INWORLD_MODEL: "inworld-tts-1.5-max",
     INWORLD_API_BASE_URL: "https://provider.test",
+    SONIOX_API_BASE_URL: "https://soniox.test",
     GEMINI_API_BASE_URL: "https://gemini.test",
     GEMINI_TUTOR_MODEL: "gemini-test",
     GEMINI_FLASH_MODEL: "gemini-test",
   } as never;
 }
+
+function wavFixture(
+  sampleRate = 16_000,
+  channels = 1,
+  durationMs = 200,
+): Uint8Array {
+  const sampleCount = Math.round((sampleRate * durationMs) / 1_000);
+  const dataBytes = sampleCount * channels * 2;
+  const bytes = new Uint8Array(44 + dataBytes);
+  const view = new DataView(bytes.buffer);
+  writeAscii(bytes, 0, "RIFF");
+  view.setUint32(4, 36 + dataBytes, true);
+  writeAscii(bytes, 8, "WAVEfmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(bytes, 36, "data");
+  view.setUint32(40, dataBytes, true);
+  return bytes;
+}
+
+function m4aFixture(): Uint8Array {
+  const bytes = new Uint8Array(48);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 24, false);
+  writeAscii(bytes, 4, "ftypM4A ");
+  writeAscii(bytes, 16, "M4A isom");
+  view.setUint32(24, 24, false);
+  writeAscii(bytes, 28, "mdat");
+  return bytes;
+}
+
+function writeAscii(bytes: Uint8Array, offset: number, value: string): void {
+  for (let index = 0; index < value.length; index += 1) {
+    bytes[offset + index] = value.charCodeAt(index);
+  }
+}
+
+function recordedAudioRequest(input: {
+  bytes: Uint8Array;
+  filename: string;
+  mimeType: string;
+  sampleRate: number;
+  channels: number;
+  durationMs: number;
+  contentLength?: number;
+}): { method: string; headers: Record<string, string>; body: ArrayBuffer } {
+  return {
+    method: "POST",
+    headers: {
+      "Content-Type": input.mimeType,
+      "Content-Length": String(input.contentLength ?? input.bytes.byteLength),
+      "X-Koe-Audio-Filename": encodeURIComponent(input.filename),
+      "X-Koe-Audio-Sample-Rate": String(input.sampleRate),
+      "X-Koe-Audio-Channels": String(input.channels),
+      "X-Koe-Audio-Duration-Ms": String(input.durationMs),
+      "X-Koe-Session-Id": "session-recorded",
+      "X-Koe-Turn-Id": `turn-${input.filename}`,
+    },
+    body: input.bytes.buffer.slice(
+      input.bytes.byteOffset,
+      input.bytes.byteOffset + input.bytes.byteLength,
+    ) as ArrayBuffer,
+  };
+}
+
+test("recorded MP3, M4A, and WAV use one truthful Soniox file-transcription path", async () => {
+  const originalFetch = globalThis.fetch;
+  const uploads: Array<{ filename: string; type: string; bytes: Uint8Array }> =
+    [];
+  const transcriptionBodies: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url === "https://soniox.test/v1/files" && init?.method === "POST") {
+      const file = (init.body as FormData).get("file") as File;
+      uploads.push({
+        filename: file.name,
+        type: file.type,
+        bytes: new Uint8Array(await file.arrayBuffer()),
+      });
+      return Response.json({ id: `file-${uploads.length}` }, { status: 201 });
+    }
+    if (
+      url === "https://soniox.test/v1/transcriptions" &&
+      init?.method === "POST"
+    ) {
+      transcriptionBodies.push(JSON.parse(String(init.body)));
+      return Response.json({ id: `tx-${transcriptionBodies.length}` });
+    }
+    if (url.endsWith("/transcript")) {
+      return Response.json({
+        tokens: [{ text: "明日は" }, { text: "京都へ行きます。" }],
+      });
+    }
+    if (init?.method === "DELETE") return new Response(null, { status: 204 });
+    if (url.includes("/v1/transcriptions/")) {
+      return Response.json({ status: "completed" });
+    }
+    throw new Error(`Unexpected provider request: ${url}`);
+  };
+
+  const cases = [
+    {
+      format: "mp3",
+      filename: "canonical.mp3",
+      mimeType: "audio/mpeg",
+      bytes: new Uint8Array(
+        Buffer.from(audioFixture.standalone.audioBase64, "base64"),
+      ),
+      sampleRate: 24_000,
+      channels: 1,
+      durationMs: 300,
+    },
+    {
+      format: "m4a",
+      filename: "canonical.m4a",
+      mimeType: "audio/mp4",
+      bytes: m4aFixture(),
+      sampleRate: 44_100,
+      channels: 2,
+      durationMs: 200,
+    },
+    {
+      format: "wav",
+      filename: "canonical.wav",
+      mimeType: "audio/wav",
+      bytes: wavFixture(),
+      sampleRate: 16_000,
+      channels: 1,
+      durationMs: 200,
+    },
+  ] as const;
+
+  try {
+    for (const input of cases) {
+      const response = await app.request(
+        "/stt/transcribe?lang=ja,en",
+        recordedAudioRequest(input),
+        testEnv(),
+      );
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as {
+        text: string;
+        audio: Record<string, unknown>;
+      };
+      assert.equal(payload.text, "明日は京都へ行きます。");
+      assert.deepEqual(payload.audio, {
+        filename: input.filename,
+        mimeType: input.mimeType,
+        format: input.format,
+        byteCount: input.bytes.byteLength,
+        sampleRate: input.sampleRate,
+        channels: input.channels,
+        durationMs: input.durationMs,
+      });
+    }
+
+    assert.deepEqual(
+      uploads.map(({ filename, type }) => ({ filename, type })),
+      cases.map(({ filename, mimeType }) => ({
+        filename,
+        type: mimeType,
+      })),
+    );
+    cases.forEach((input, index) =>
+      assert.deepEqual(uploads[index]!.bytes, input.bytes),
+    );
+    assert.ok(
+      transcriptionBodies.every((body) => body.model === "stt-async-v5"),
+    );
+    assert.deepEqual(
+      transcriptionBodies.map((body) => body.language_hints),
+      cases.map(() => ["ja", "en"]),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("recorded STT rejects invalid inputs explicitly without contacting Soniox", async () => {
+  const originalFetch = globalThis.fetch;
+  let providerRequests = 0;
+  globalThis.fetch = async () => {
+    providerRequests += 1;
+    throw new Error("Soniox must not receive invalid audio");
+  };
+  const base = {
+    bytes: wavFixture(),
+    filename: "input.wav",
+    mimeType: "audio/wav",
+    sampleRate: 16_000,
+    channels: 1,
+    durationMs: 200,
+  };
+  const cases = [
+    {
+      expectedStatus: 400,
+      expectedCode: "empty-audio",
+      input: { ...base, bytes: new Uint8Array() },
+    },
+    {
+      expectedStatus: 400,
+      expectedCode: "invalid-audio",
+      input: { ...base, bytes: new TextEncoder().encode("not audio") },
+    },
+    {
+      expectedStatus: 400,
+      expectedCode: "truncated-audio",
+      input: { ...base, bytes: new TextEncoder().encode("RIFF") },
+    },
+    {
+      expectedStatus: 413,
+      expectedCode: "audio-too-large",
+      input: { ...base, contentLength: 20 * 1024 * 1024 + 1 },
+    },
+    {
+      expectedStatus: 400,
+      expectedCode: "audio-too-long",
+      input: { ...base, durationMs: 5 * 60 * 1_000 + 1 },
+    },
+    {
+      expectedStatus: 415,
+      expectedCode: "unsupported-audio",
+      input: { ...base, filename: "input.flac", mimeType: "audio/flac" },
+    },
+    {
+      expectedStatus: 422,
+      expectedCode: "audio-metadata-mismatch",
+      input: { ...base, sampleRate: 48_000 },
+    },
+  ];
+
+  try {
+    for (const input of cases) {
+      const response = await app.request(
+        "/stt/transcribe",
+        recordedAudioRequest(input.input),
+        testEnv(),
+      );
+      assert.equal(response.status, input.expectedStatus);
+      const payload = (await response.json()) as {
+        error: { code: string; recoverable: boolean };
+      };
+      assert.equal(payload.error.code, input.expectedCode);
+      assert.equal(payload.error.recoverable, true);
+    }
+    assert.equal(providerRequests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("llm chat passes SSE through and pins the one V1 voice", async () => {
   const originalFetch = globalThis.fetch;
