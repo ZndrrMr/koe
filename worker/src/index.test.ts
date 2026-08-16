@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { app } from "./index";
 
-test("llm chat passes streamed text and audio SSE through without buffering", async () => {
+test("llm chat passes SSE through and pins the one V1 voice", async () => {
   const originalFetch = globalThis.fetch;
   let upstreamBody: Record<string, unknown> | undefined;
   const upstreamSSE =
@@ -28,7 +28,8 @@ test("llm chat passes streamed text and audio SSE through without buffering", as
         body: JSON.stringify({
           system: "Be concise.",
           messages: [{ role: "user", content: "こんにちは" }],
-          voice: "ja-female-1",
+          // Obsolete saved request fields must not alter the provider voice.
+          voice: "old-saved-voice",
           stream: true,
         }),
       },
@@ -67,7 +68,7 @@ test("llm chat passes streamed text and audio SSE through without buffering", as
   }
 });
 
-test("feedback prompt applies the optional coaching detail", async () => {
+test("feedback ignores obsolete preferences and applies one essential contract", async () => {
   const originalFetch = globalThis.fetch;
   let upstreamBody:
     | { contents?: Array<{ parts?: Array<{ text?: string }> }> }
@@ -108,6 +109,7 @@ test("feedback prompt applies the optional coaching detail", async () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           task: "feedback",
+          responseLevel: "old-saved-level",
           correctionStyle: "detailed",
           userTurn: "こんにちは",
           tutorReply: "こんにちは。今日はどうですか？",
@@ -134,8 +136,9 @@ test("feedback prompt applies the optional coaching detail", async () => {
 
     assert.equal(response.status, 200);
     const prompt = upstreamBody?.contents?.[0]?.parts?.[0]?.text ?? "";
-    assert.match(prompt, /COACHING DETAIL: detailed/);
-    assert.match(prompt, /up to three compact corrections/);
+    assert.match(prompt, /ESSENTIAL FEEDBACK CONTRACT/);
+    assert.match(prompt, /at most one compact correction/);
+    assert.doesNotMatch(prompt, /old-saved-level|detailed/);
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -55,9 +55,48 @@ test("V1 has one default conversation and no setup choices", () => {
     "end",
   ]);
   assert.deepEqual(KOE_V1_PRODUCT_CONTRACT.conversation, {
-    voice: "ja-female-1",
-    correctionStyle: "essential",
+    provider: "inworld",
+    voice: "Asuka",
+    feedback: "essential-only",
   });
+});
+
+test("production seams expose no hidden conversation preferences", async () => {
+  const sources = await Promise.all(
+    [
+      "app/_layout.tsx",
+      "app/index.tsx",
+      "app/session/[id].tsx",
+      "src/services/llm.ts",
+      "src/services/tts.ts",
+      "worker/src/index.ts",
+    ].map(async (relativePath) => ({
+      relativePath,
+      source: await readFile(path.resolve(process.cwd(), relativePath), "utf8"),
+    })),
+  );
+
+  for (const { relativePath, source } of sources) {
+    assert.doesNotMatch(source, /useSettings|\/preferences/iu, relativePath);
+  }
+
+  const llm = sources.find(({ relativePath }) =>
+    relativePath.endsWith("services/llm.ts"),
+  )?.source;
+  const tts = sources.find(({ relativePath }) =>
+    relativePath.endsWith("services/tts.ts"),
+  )?.source;
+  const worker = sources.find(({ relativePath }) =>
+    relativePath.endsWith("worker/src/index.ts"),
+  )?.source;
+
+  assert.ok(llm && tts && worker);
+  assert.doesNotMatch(llm, /correctionStyle|responseLevel|KoeVoice/);
+  assert.doesNotMatch(tts, /TTSVoice|ja-female-2|ja-male-1/);
+  assert.doesNotMatch(
+    worker,
+    /correctionStyle|responseLevel|ja-female-2|ja-male-1|Ashley|Satoshi/,
+  );
 });
 
 test("home has no alternate product entry points or setup prompts", async () => {

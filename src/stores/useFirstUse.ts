@@ -2,6 +2,11 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { mmkvStorage } from "@/utils/mmkv";
+import {
+  createFirstUseStorage,
+  FIRST_USE_STORAGE_KEY,
+  migrateFirstUseState,
+} from "@/stores/firstUsePersistence";
 
 type FirstUseState = {
   onboardingDone: boolean;
@@ -17,16 +22,11 @@ export const useFirstUse = create<FirstUseState>()(
       reset: () => set({ onboardingDone: false }),
     }),
     {
-      // Preserve the existing key so shipped users keep their first-use state.
-      name: "koe-voice-settings",
-      storage: createJSONStorage(() => mmkvStorage),
-      version: 2,
-      migrate: (persisted) => ({
-        onboardingDone: Boolean(
-          (persisted as { onboardingDone?: unknown } | undefined)
-            ?.onboardingDone,
-        ),
-      }),
+      name: FIRST_USE_STORAGE_KEY,
+      storage: createJSONStorage(() => createFirstUseStorage(mmkvStorage)),
+      // Versions 1 and 2 belonged to the removed multi-setting store.
+      version: 3,
+      migrate: migrateFirstUseState,
       partialize: (state) => ({ onboardingDone: state.onboardingDone }),
     },
   ),

@@ -3,7 +3,6 @@ import { tutorSystemPrompt } from "@/prompts/tutor";
 import { hasWorker } from "@/utils/config";
 import { log } from "@/utils/log";
 import { extractSSEEvents } from "@/services/sse";
-import type { CorrectionStyle, KoeVoice } from "@/product/v1";
 
 export type ConvoTurn = { role: "user" | "assistant"; content: string };
 
@@ -59,8 +58,6 @@ const EMPTY_CORRECTIONS = {
 export async function* streamConversation(opts: {
   history: ConvoTurn[];
   userTurn: string;
-  voice?: KoeVoice;
-  correctionStyle?: CorrectionStyle;
   signal?: AbortSignal;
 }): AsyncGenerator<ConversationChunk, ConversationResult, void> {
   const system = tutorSystemPrompt();
@@ -85,7 +82,6 @@ export async function* streamConversation(opts: {
     system,
     messages: [...opts.history, { role: "user", content: opts.userTurn }],
     maxTokens: 300,
-    voice: opts.voice,
     stream: true,
   };
 
@@ -178,7 +174,6 @@ export async function* streamConversation(opts: {
     "/llm/flash",
     {
       task: "feedback",
-      correctionStyle: opts.correctionStyle ?? "essential",
       history: opts.history,
       userTurn: opts.userTurn,
       tutorReply: fullText,

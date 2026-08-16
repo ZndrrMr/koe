@@ -31,6 +31,8 @@ type Env = {
 const app = new Hono<{ Bindings: Env }>();
 export { app };
 
+const KOE_V1_VOICE_ID = "Asuka";
+
 app.use("*", cors());
 
 function today(): string {
@@ -68,13 +70,8 @@ app.get("/", (c) => c.text("koe-worker ok"));
 // ---- TTS ---------------------------------------------------------------
 
 app.post("/tts", async (c) => {
-  const {
-    text,
-    voice = "ja-female-1",
-    speed = 1.0,
-  } = await c.req.json<{
+  const { text, speed = 1.0 } = await c.req.json<{
     text: string;
-    voice?: string;
     speed?: number;
   }>();
   if (!text) return c.text("text required", 400);
@@ -89,17 +86,11 @@ app.post("/tts", async (c) => {
   if (!ok) return c.text("rate limit", 429);
 
   // Cache key (KV holds pointer to R2 object; in v1 we just re-synth if missing).
-  const cacheKey = `tts:${await sha256Hex(`${text}|${voice}|${speed}`)}`;
+  const cacheKey = `tts:${await sha256Hex(`v1:${KOE_V1_VOICE_ID}|${text}|${speed}`)}`;
   const cached = await c.env.KOE_KV.get(cacheKey, "arrayBuffer");
   if (cached) {
     return new Response(cached, { headers: { "Content-Type": "audio/mpeg" } });
   }
-
-  const voiceMap: Record<string, string> = {
-    "ja-female-1": "Asuka",
-    "ja-female-2": "Asuka",
-    "ja-male-1": "Satoshi",
-  };
 
   const inworldRes = await fetch("https://api.inworld.ai/tts/v1/voice", {
     method: "POST",
@@ -109,7 +100,7 @@ app.post("/tts", async (c) => {
     },
     body: JSON.stringify({
       text,
-      voiceId: voiceMap[voice] ?? "Asuka",
+      voiceId: KOE_V1_VOICE_ID,
       modelId: c.env.INWORLD_MODEL || "inworld-tts-1.5-max",
       audioConfig: { audioEncoding: "MP3", sampleRateHertz: 24000 },
     }),
@@ -315,7 +306,6 @@ app.post("/llm/chat", async (c) => {
     system: string;
     messages: Array<{ role: "user" | "assistant"; content: string }>;
     model?: string;
-    voice?: string;
     maxTokens?: number;
     noAudio?: boolean;
     stream?: boolean;
@@ -332,11 +322,6 @@ app.post("/llm/chat", async (c) => {
 
   const messages = [{ role: "system", content: body.system }, ...body.messages];
 
-  const voiceMap: Record<string, string> = {
-    "ja-female-1": "Asuka",
-    "ja-female-2": "Ashley",
-    "ja-male-1": "Satoshi",
-  };
   const stream = body.stream !== false;
   const chatRes = await fetch("https://api.inworld.ai/v1/chat/completions", {
     method: "POST",
@@ -351,7 +336,7 @@ app.post("/llm/chat", async (c) => {
       ...(!body.noAudio && stream
         ? {
             audio: {
-              voice: voiceMap[body.voice ?? ""] ?? body.voice ?? "Asuka",
+              voice: KOE_V1_VOICE_ID,
               model: c.env.INWORLD_MODEL || "inworld-tts-1.5-max",
             },
           }
@@ -398,7 +383,7 @@ app.post("/llm/chat", async (c) => {
     },
     body: JSON.stringify({
       text,
-      voiceId: body.voice ?? "Asuka",
+      voiceId: KOE_V1_VOICE_ID,
       modelId: c.env.INWORLD_MODEL || "inworld-tts-1.5-max",
       audioConfig: { audioEncoding: "MP3", sampleRateHertz: 24000 },
     }),
@@ -446,23 +431,18 @@ app.post("/llm/flash", async (c) => {
   let prompt: string;
 
   if (task === "feedback") {
-    prompt = `You are Koe's optional coaching layer. Analyze the learner's latest utterance silently and never write the conversational response.
+    prompt = `You are Koe's quiet feedback layer. Analyze the learner's latest utterance silently and never write the conversational response.
 
-OPTIONAL RESPONSE STYLE: ${body.responseLevel ?? "none selected"}
-COACHING DETAIL: ${body.correctionStyle ?? "essential"}
 Prior dialogue: ${JSON.stringify(body.history ?? [])}
 User's utterance: ${JSON.stringify(body.userTurn ?? "")}
 Conversation reply: ${JSON.stringify(body.tutorReply ?? "")}
 
-DEFAULT COACHING CONTRACT:
+ESSENTIAL FEEDBACK CONTRACT:
 - Never praise, score, teach, or manufacture a problem for a natural understandable utterance.
-- With essential coaching, return a correction only when one issue materially changes the meaning or makes the utterance notably unnatural.
-- With balanced coaching, return at most one compact correction when it offers a useful improvement.
-- With detailed coaching, return up to three compact corrections covering grammar or naturalness without rewriting the whole utterance.
+- Return at most one compact correction, and only when one issue materially changes the meaning or makes the utterance notably unnatural.
 - Prefer the smallest useful replacement and a one-sentence explanation.
 - A compact note supplements the separate conversation reply; it must never demand a retry or assign an exercise.
 - If the learner explicitly asks for strict correction, translation, or teaching, analyze as requested. Even then, keep this payload to corrections only; the conversation reply handles the direct answer.
-- Optional response style is context, not a requirement. Do not manufacture a correction to enforce it.
 
 Return ONLY valid JSON:
 {

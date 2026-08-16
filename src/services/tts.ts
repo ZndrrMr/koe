@@ -10,8 +10,6 @@ import {
   pcmBase64ToWavBase64,
 } from "@/services/pcm";
 
-export type TTSVoice = "ja-female-1" | "ja-female-2" | "ja-male-1";
-
 export type SynthesizeResult = {
   audioUri: string;
   durationMs: number;
@@ -31,14 +29,15 @@ let currentStream: PCMPlaybackQueue | null = null;
 
 export async function synthesize(
   text: string,
-  opts?: { voice?: TTSVoice; speed?: number; withTimestamps?: boolean },
+  opts?: { speed?: number; withTimestamps?: boolean },
 ): Promise<SynthesizeResult> {
   if (!text || !text.trim()) {
     return { audioUri: "", durationMs: 0 };
   }
-  const voice = opts?.voice ?? "ja-female-1";
   const speed = opts?.speed ?? 1.0;
-  const key = await sha256(`${text}|${voice}|${speed}`);
+  // Version the cache around the one V1 voice so audio created by a removed
+  // voice preference can never leak into a current conversation.
+  const key = await sha256(`v1-asuka|${text}|${speed}`);
   await ensureCacheDir();
   const file = `${CACHE_DIR}/${key}.mp3`;
   const meta = `${CACHE_DIR}/${key}.json`;
@@ -69,7 +68,6 @@ export async function synthesize(
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
         text,
-        voice,
         speed,
         withTimestamps: opts?.withTimestamps,
       }),
@@ -352,8 +350,8 @@ export class PCMPlaybackQueue {
   }
 }
 
-export function prefetch(text: string, voice: TTSVoice = "ja-female-1"): void {
-  synthesize(text, { voice }).catch(() => {});
+export function prefetch(text: string): void {
+  synthesize(text).catch(() => {});
 }
 
 export { config as _config };

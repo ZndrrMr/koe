@@ -25,7 +25,6 @@ import {
 import { randomUUID } from "expo-crypto";
 
 import { useSession, type ChatTurn } from "@/stores/useSession";
-import { KOE_V1_PRODUCT_CONTRACT } from "@/product/v1";
 import { startStreaming, STTError } from "@/services/stt";
 import { ProviderTimeoutError, streamConversation } from "@/services/llm";
 import {
@@ -197,7 +196,6 @@ export default function SessionScreen() {
           previous?.referenceAudioUri ??
           (
             await synthesize(targetText, {
-              voice: KOE_V1_PRODUCT_CONTRACT.conversation.voice,
               withTimestamps: true,
             })
           ).audioUri;
@@ -328,8 +326,6 @@ export default function SessionScreen() {
         const generator = streamConversation({
           history: historyWithUser.slice(0, -1),
           userTurn: trimmed,
-          voice: KOE_V1_PRODUCT_CONTRACT.conversation.voice,
-          correctionStyle: KOE_V1_PRODUCT_CONTRACT.conversation.correctionStyle,
           signal: responseRun.signal,
         });
         while (true) {
@@ -370,9 +366,7 @@ export default function SessionScreen() {
             } else {
               await audioQueue.stop();
               if (finalText) {
-                const synthesized = await synthesize(finalText, {
-                  voice: KOE_V1_PRODUCT_CONTRACT.conversation.voice,
-                });
+                const synthesized = await synthesize(finalText);
                 useSession.getState().patchTurn(assistantTurnId, {
                   audioUri: synthesized.audioUri,
                 });
