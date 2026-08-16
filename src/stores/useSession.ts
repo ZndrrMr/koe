@@ -21,16 +21,10 @@ import {
   type VoicePhase,
 } from "@/voice/lifecycle";
 
-export type ConversationContext = {
-  topic?: string;
-  responseLevel?: string;
-};
-
 export type ChatTurn = SessionTurnSnapshot;
 
 type SessionState = {
   id: string | null;
-  context: ConversationContext;
   turns: ChatTurn[];
   hydration: "idle" | "loading" | "ready";
   closeout: SessionCloseout | null;
@@ -39,7 +33,7 @@ type SessionState = {
   voice: VoiceLifecycle;
   latency: VoiceLatency;
 
-  start: (id: string, context?: ConversationContext) => Promise<void>;
+  start: (id: string) => Promise<void>;
   addTurn: (turn: ChatTurn) => void;
   patchTurn: (id: string, patch: Partial<ChatTurn>) => void;
   appendAssistantText: (id: string, chunk: string) => void;
@@ -70,7 +64,6 @@ function mergeTurns(persisted: ChatTurn[], inMemory: ChatTurn[]): ChatTurn[] {
 
 export const useSession = create<SessionState>((set, get) => ({
   id: null,
-  context: {},
   turns: [],
   hydration: "idle",
   closeout: null,
@@ -78,10 +71,9 @@ export const useSession = create<SessionState>((set, get) => ({
   isStreaming: false,
   voice: INITIAL_VOICE_LIFECYCLE,
   latency: {},
-  start: async (id, context = {}) => {
+  start: async (id) => {
     set({
       id,
-      context,
       turns: [],
       hydration: "loading",
       closeout: null,
@@ -90,19 +82,13 @@ export const useSession = create<SessionState>((set, get) => ({
       voice: INITIAL_VOICE_LIFECYCLE,
       latency: {},
     });
-    const ready = persistSession({
-      id,
-      topic: context.topic,
-      responseLevel: context.responseLevel,
-    });
+    const ready = persistSession({ id });
     sessionPersistence.set(id, ready);
     try {
       await ready;
       const restored = await loadSession(id);
       if (get().id !== id) return;
-      const persistedContext = (restored?.context ?? {}) as ConversationContext;
       set((state) => ({
-        context: { ...persistedContext, ...context },
         turns: mergeTurns(restored?.turns ?? [], state.turns),
         closeout: restored?.closeout ?? null,
         hydration: "ready",
@@ -196,7 +182,6 @@ export const useSession = create<SessionState>((set, get) => ({
     if (get().id !== sessionId) return;
     set({
       id: null,
-      context: {},
       turns: [],
       hydration: "idle",
       closeout: null,

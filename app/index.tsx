@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { randomUUID } from "expo-crypto";
-import { ArrowRight, Clock3, Mic, Settings2 } from "lucide-react-native";
+import { ArrowRight, Clock3, Mic } from "lucide-react-native";
 
 import { getLatestActiveSession, type SessionSummary } from "@/db";
 import { tap } from "@/utils/haptics";
@@ -12,10 +12,10 @@ import {
   useConversationPalette,
 } from "@/theme/conversation";
 import { CONVERSATION_TARGET } from "@/theme/interaction";
-import { useSettings } from "@/stores/useSettings";
+import { useFirstUse } from "@/stores/useFirstUse";
 
 export default function IndexScreen() {
-  const onboardingDone = useSettings((state) => state.onboardingDone);
+  const onboardingDone = useFirstUse((state) => state.onboardingDone);
   return onboardingDone ? (
     <ConversationHome />
   ) : (
@@ -73,25 +73,6 @@ function ConversationHome() {
             <Text style={[styles.wordmark, { color: palette.ink }]}>声</Text>
             <Text style={[styles.kicker, { color: palette.muted }]}>KOE</Text>
           </View>
-          <Pressable
-            testID="conversation-settings"
-            accessibilityRole="button"
-            accessibilityLabel="Conversation settings"
-            accessibilityHint="Adjusts level, coaching detail, and tutor voice"
-            onPress={() => {
-              tap();
-              router.push("/preferences");
-            }}
-            style={({ pressed }) => [
-              styles.settingsButton,
-              {
-                borderColor: palette.hairline,
-                backgroundColor: pressed ? palette.seamSoft : "transparent",
-              },
-            ]}
-          >
-            <Settings2 color={palette.ink} size={20} />
-          </Pressable>
         </View>
 
         <View style={styles.hero}>
@@ -99,11 +80,11 @@ function ConversationHome() {
             CONVERSATION / 会話
           </Text>
           <Text style={[styles.heroTitle, { color: palette.ink }]}>
-            Your voice, answered.
+            Speak. Hear Koe. Keep going.
           </Text>
           <Text style={[styles.heroDetail, { color: palette.muted }]}>
-            Say one line. Hear a natural reply. Koe keeps the pronunciation note
-            separate so the conversation can keep moving.
+            One open Japanese conversation, with a compact note only when it
+            helps.
           </Text>
         </View>
 
@@ -167,20 +148,6 @@ function ConversationHome() {
             </Text>
           </Pressable>
         ) : null}
-
-        <View style={[styles.note, { borderColor: palette.hairline }]}>
-          <Text style={[styles.noteLabel, { color: palette.seam }]}>
-            START WITH YOUR VOICE
-          </Text>
-          <Text style={[styles.noteTitle, { color: palette.ink }]}>
-            Ask for what you need while you speak.
-          </Text>
-          <Text style={[styles.noteDetail, { color: palette.muted }]}>
-            Ask for hotel check-in practice, casual speech, or strict correction
-            while you are talking. Reply style, coaching detail, and voice stay
-            optional in settings.
-          </Text>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -268,14 +235,6 @@ const styles = StyleSheet.create({
     letterSpacing: 1.8,
     marginTop: 1,
   },
-  settingsButton: {
-    width: CONVERSATION_TARGET.roundIcon,
-    height: CONVERSATION_TARGET.roundIcon,
-    borderRadius: CONVERSATION_TARGET.roundIcon / 2,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   hero: { paddingTop: 54, paddingBottom: 34, maxWidth: 540 },
   heroLabel: {
     fontFamily: "SFMono-Medium",
@@ -333,19 +292,4 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   secondaryText: { fontSize: 13, lineHeight: 18, fontWeight: "700" },
-  note: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: 42,
-    paddingTop: 18,
-    paddingBottom: 24,
-    maxWidth: 510,
-  },
-  noteLabel: {
-    fontFamily: "SFMono-Medium",
-    fontSize: 8,
-    letterSpacing: 1.25,
-    lineHeight: 12,
-  },
-  noteTitle: { fontSize: 15, fontWeight: "700", lineHeight: 21, marginTop: 7 },
-  noteDetail: { fontSize: 12, lineHeight: 18, marginTop: 5 },
 });

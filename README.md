@@ -30,10 +30,10 @@ The Worker expects `INWORLD_API_KEY`, `SONIOX_API_KEY`, and `GEMINI_API_KEY` sec
 app/index.tsx          conversation home
 app/onboarding/        immediate first spoken exchange
 app/session/[id].tsx  live voice conversation, feedback, and retry
-app/preferences.tsx   optional reply style, coaching, focus, and voice
 
 src/services/         STT, conversation, TTS, pitch, and furigana primitives
-src/stores/           minimal settings and live-session state
+src/product/v1.ts     the fixed route, lifecycle, voice, and correction contract
+src/stores/           first-use and live-session state
 src/db/               conversation, turn, feedback, retry, and audio persistence
 worker/               provider proxy, streaming conversation, and feedback
 ```
@@ -44,11 +44,10 @@ Koe has no Learn, Review, drill, scenario-catalog, dictionary, Library, XP, stre
 
 ```bash
 npm run typecheck
+npm run test:product
 npm run test:prompts
 npm run test:voice
 npm run test:sessions
 npm run ios
 npm run worker:dev
 ```
-
-The repository also contains isolated research/proof routes for the current voice direction and later Pencil exploration. They are not top-level product navigation or curricular modes.

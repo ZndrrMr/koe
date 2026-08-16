@@ -5,7 +5,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { openDb } from "@/db";
-import { useSettings } from "@/stores/useSettings";
+import { useFirstUse } from "@/stores/useFirstUse";
 import { log } from "@/utils/log";
 
 export default function RootLayout() {
@@ -13,7 +13,7 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   const firstExchangeReviewApplied = useRef(false);
-  const onboardingDone = useSettings((s) => s.onboardingDone);
+  const onboardingDone = useFirstUse((s) => s.onboardingDone);
   const reviewStatusBarStyle =
     __DEV__ && process.env.EXPO_PUBLIC_KOE_REVIEW_SCHEME === "dark"
       ? "light"
@@ -34,7 +34,6 @@ export default function RootLayout() {
   useEffect(() => {
     if (!ready) return;
     const first = segments[0];
-    const firstRoute = String(first ?? "");
     const reviewRoute = __DEV__
       ? process.env.EXPO_PUBLIC_KOE_REVIEW_ROUTE
       : undefined;
@@ -55,21 +54,6 @@ export default function RootLayout() {
       });
       return;
     }
-    if (reviewRoute === "visual-study" && first !== "visual-study") {
-      router.replace("/visual-study");
-      return;
-    }
-    if (
-      reviewRoute === "marketing-capture" &&
-      firstRoute !== "marketing-capture"
-    ) {
-      router.replace("/marketing-capture" as never);
-      return;
-    }
-    if (reviewRoute === "landing" && firstRoute !== "landing") {
-      router.replace("/landing" as never);
-      return;
-    }
     if (reviewRoute === "session" && first !== "session") {
       router.replace({
         pathname: "/session/[id]",
@@ -81,28 +65,7 @@ export default function RootLayout() {
       });
       return;
     }
-    if (
-      reviewRoute === "song-pronunciation-proof" &&
-      firstRoute !== "song-pronunciation-proof"
-    ) {
-      router.replace("/song-pronunciation-proof" as never);
-      return;
-    }
-    if (
-      reviewRoute === "handwriting-practice" &&
-      firstRoute !== "handwriting-practice"
-    ) {
-      router.replace("/handwriting-practice" as never);
-      return;
-    }
-    const isPublicOrDevelopmentSurface =
-      first === "landing" ||
-      (__DEV__ && (first === "visual-study" || first === "marketing-capture"));
-    if (
-      !onboardingDone &&
-      first !== "onboarding" &&
-      !isPublicOrDevelopmentSurface
-    ) {
+    if (!onboardingDone && first !== "onboarding") {
       router.replace("/onboarding/welcome");
     }
   }, [ready, onboardingDone, segments]);
@@ -117,19 +80,9 @@ export default function RootLayout() {
           <Stack.Screen name="index" />
           <Stack.Screen name="onboarding" />
           <Stack.Screen
-            name="preferences"
-            options={{ presentation: "modal" }}
-          />
-          <Stack.Screen
             name="session/[id]"
             options={{ presentation: "fullScreenModal" }}
           />
-          <Stack.Screen name="about" options={{ presentation: "modal" }} />
-          <Stack.Screen name="visual-study" />
-          <Stack.Screen name="marketing-capture" />
-          <Stack.Screen name="landing" />
-          <Stack.Screen name="song-pronunciation-proof" />
-          <Stack.Screen name="handwriting-practice" />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

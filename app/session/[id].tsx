@@ -25,7 +25,7 @@ import {
 import { randomUUID } from "expo-crypto";
 
 import { useSession, type ChatTurn } from "@/stores/useSession";
-import { useSettings } from "@/stores/useSettings";
+import { KOE_V1_PRODUCT_CONTRACT } from "@/product/v1";
 import { startStreaming, STTError } from "@/services/stt";
 import { ProviderTimeoutError, streamConversation } from "@/services/llm";
 import {
@@ -59,10 +59,6 @@ import {
 import { ResponseRunController } from "@/voice/responseRun";
 import { shouldAutoSendFirstTranscript } from "@/voice/firstExchange";
 import {
-  conversationTopicForGoal,
-  responseGuidanceForLevel,
-} from "@/voice/conversationPreferences";
-import {
   buildSessionCloseout,
   type LearningMomentDecision,
   type SessionCloseout,
@@ -77,7 +73,6 @@ export default function SessionScreen() {
     id: string;
     intro?: string;
   }>();
-  const settings = useSettings();
   const session = useSession();
 
   const [draftTranscript, setDraftTranscript] = useState("");
@@ -105,10 +100,7 @@ export default function SessionScreen() {
   useEffect(() => {
     if (!id || useSession.getState().id === id) return;
     const store = useSession.getState();
-    void store.start(id, {
-      topic: conversationTopicForGoal(settings.goal),
-      responseLevel: responseGuidanceForLevel(settings.responseLevel),
-    });
+    void store.start(id);
     if (__DEV__) {
       const reviewPhase = process.env.EXPO_PUBLIC_KOE_REVIEW_PHASE as
         | VoiceLifecycle["phase"]
@@ -205,7 +197,7 @@ export default function SessionScreen() {
           previous?.referenceAudioUri ??
           (
             await synthesize(targetText, {
-              voice: settings.voice,
+              voice: KOE_V1_PRODUCT_CONTRACT.conversation.voice,
               withTimestamps: true,
             })
           ).audioUri;
@@ -228,7 +220,7 @@ export default function SessionScreen() {
         return undefined;
       }
     },
-    [settings.voice],
+    [],
   );
 
   const sendUser = useCallback(
@@ -334,11 +326,10 @@ export default function SessionScreen() {
 
       try {
         const generator = streamConversation({
-          context: useSession.getState().context,
           history: historyWithUser.slice(0, -1),
           userTurn: trimmed,
-          voice: settings.voice,
-          correctionStyle: settings.correctionStyle,
+          voice: KOE_V1_PRODUCT_CONTRACT.conversation.voice,
+          correctionStyle: KOE_V1_PRODUCT_CONTRACT.conversation.correctionStyle,
           signal: responseRun.signal,
         });
         while (true) {
@@ -380,7 +371,7 @@ export default function SessionScreen() {
               await audioQueue.stop();
               if (finalText) {
                 const synthesized = await synthesize(finalText, {
-                  voice: settings.voice,
+                  voice: KOE_V1_PRODUCT_CONTRACT.conversation.voice,
                 });
                 useSession.getState().patchTurn(assistantTurnId, {
                   audioUri: synthesized.audioUri,
@@ -475,13 +466,7 @@ export default function SessionScreen() {
           useSession.getState().setStreaming(false);
       }
     },
-    [
-      analyzeUserPronunciation,
-      settings.voice,
-      settings.correctionStyle,
-      settleReply,
-      updateLatency,
-    ],
+    [analyzeUserPronunciation, settleReply, updateLatency],
   );
 
   const onPressIn = useCallback(async () => {
@@ -848,28 +833,10 @@ export default function SessionScreen() {
           </Text>
         </View>
 
-        {isFirstExchange ? (
-          <View
-            style={[styles.headerIcon, { borderColor: "transparent" }]}
-            accessibilityElementsHidden
-          />
-        ) : (
-          <Pressable
-            testID="conversation-settings"
-            accessibilityRole="button"
-            accessibilityLabel="Conversation settings"
-            onPress={() => router.push("/preferences")}
-            style={[
-              styles.headerIcon,
-              {
-                borderColor: palette.hairline,
-                backgroundColor: "transparent",
-              },
-            ]}
-          >
-            <Settings color={palette.ink} size={19} />
-          </Pressable>
-        )}
+        <View
+          style={[styles.headerIcon, { borderColor: "transparent" }]}
+          accessibilityElementsHidden
+        />
       </View>
 
       <ScrollView
@@ -1490,7 +1457,8 @@ const styles = StyleSheet.create({
   conversationScroll: { flex: 1 },
   conversationContent: { flexGrow: 1 },
   header: {
-    minHeight: 68,
+    minHeight: 88,
+    paddingTop: 20,
     paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",

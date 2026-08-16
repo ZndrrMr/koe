@@ -1,10 +1,9 @@
 import { postJson, postStream } from "@/services/api";
 import { tutorSystemPrompt } from "@/prompts/tutor";
-import type { ConversationContext } from "@/stores/useSession";
 import { hasWorker } from "@/utils/config";
 import { log } from "@/utils/log";
 import { extractSSEEvents } from "@/services/sse";
-import type { CorrectionStyle } from "@/stores/useSettings";
+import type { CorrectionStyle, KoeVoice } from "@/product/v1";
 
 export type ConvoTurn = { role: "user" | "assistant"; content: string };
 
@@ -58,17 +57,13 @@ const EMPTY_CORRECTIONS = {
 };
 
 export async function* streamConversation(opts: {
-  context?: ConversationContext;
   history: ConvoTurn[];
   userTurn: string;
-  voice?: "ja-female-1" | "ja-female-2" | "ja-male-1";
+  voice?: KoeVoice;
   correctionStyle?: CorrectionStyle;
   signal?: AbortSignal;
 }): AsyncGenerator<ConversationChunk, ConversationResult, void> {
-  const system = tutorSystemPrompt({
-    topic: opts.context?.topic,
-    responseLevel: opts.context?.responseLevel,
-  });
+  const system = tutorSystemPrompt();
 
   if (!hasWorker()) {
     log.warn("LLM: worker unset, yielding stub reply.");
@@ -183,7 +178,6 @@ export async function* streamConversation(opts: {
     "/llm/flash",
     {
       task: "feedback",
-      responseLevel: opts.context?.responseLevel,
       correctionStyle: opts.correctionStyle ?? "essential",
       history: opts.history,
       userTurn: opts.userTurn,

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { CONVERSATION_BEHAVIOR_CASES, tutorSystemPrompt } from "./tutor";
 
-test("neutral conversation is the default without selected context", () => {
+test("neutral conversation is the only default", () => {
   const prompt = tutorSystemPrompt();
 
   assert.match(prompt, /default mode is free conversation/i);
@@ -11,22 +11,8 @@ test("neutral conversation is the default without selected context", () => {
     prompt,
     /Several turns should routinely pass with no praise, correction, modeled answer/i,
   );
-  assert.match(prompt, /No optional context was selected/);
   assert.doesNotMatch(prompt, /Your job every single turn/i);
-});
-
-test("optional context cannot replace the conversation contract", () => {
-  const prompt = tutorSystemPrompt({
-    topic: "Ordering at a ramen shop",
-    responseLevel: "natural everyday conversation at a measured pace",
-  });
-
-  assert.match(prompt, /Conversation topic: Ordering at a ramen shop/);
-  assert.match(prompt, /Preferred reply style: natural everyday conversation/);
-  assert.match(
-    prompt,
-    /does not authorize a character, roleplay, lesson, exercise, correction routine, or learning goal/,
-  );
+  assert.doesNotMatch(prompt, /optional context|preferred reply style/i);
 });
 
 test("representative conversation, confusion, correction, and roleplay cases are included", () => {
@@ -70,7 +56,7 @@ test("explicit coaching and roleplay requests are honored without becoming defau
   );
   assert.match(
     prompt,
-    /Enter a persona or roleplay only when the learner explicitly asks/,
+    /persona or roleplay only when the learner explicitly asks/,
   );
   assert.match(
     prompt,

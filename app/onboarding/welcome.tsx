@@ -4,7 +4,7 @@ import { randomUUID } from "expo-crypto";
 import { useRouter } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { useSettings } from "@/stores/useSettings";
+import { useFirstUse } from "@/stores/useFirstUse";
 import { useConversationPalette } from "@/theme/conversation";
 
 /**
@@ -15,11 +15,11 @@ import { useConversationPalette } from "@/theme/conversation";
 export default function WelcomeScreen() {
   const router = useRouter();
   const palette = useConversationPalette();
-  const complete = useSettings((state) => state.complete);
+  const complete = useFirstUse((state) => state.complete);
   const sessionId = useRef(randomUUID()).current;
 
   useEffect(() => {
-    complete({});
+    complete();
     router.replace({
       pathname: "/session/[id]",
       params: { id: sessionId, intro: "1" },

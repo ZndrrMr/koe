@@ -52,8 +52,6 @@ async function createSchema(db: SQLite.SQLiteDatabase) {
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
-      topic TEXT,
-      response_level TEXT,
       started_at INTEGER NOT NULL,
       ended_at INTEGER,
       updated_at INTEGER NOT NULL,
@@ -116,18 +114,16 @@ async function createSchema(db: SQLite.SQLiteDatabase) {
 
 export async function persistSession(input: {
   id: string;
-  topic?: string;
-  responseLevel?: string;
   startedAt?: number;
 }) {
   const db = await getNative();
   const now = input.startedAt ?? Date.now();
   await db.runAsync(
     `INSERT INTO sessions
-      (id, topic, response_level, started_at, updated_at, status, turn_count)
-     VALUES (?, ?, ?, ?, ?, 'active', 0)
+      (id, started_at, updated_at, status, turn_count)
+     VALUES (?, ?, ?, 'active', 0)
      ON CONFLICT(id) DO NOTHING`,
-    [input.id, input.topic ?? null, input.responseLevel ?? null, now, now],
+    [input.id, now, now],
   );
 }
 
@@ -212,8 +208,6 @@ export async function persistTurn(
 
 type SessionRow = {
   id: string;
-  topic: string | null;
-  response_level: string | null;
   started_at: number;
   ended_at: number | null;
   updated_at: number;
@@ -241,10 +235,6 @@ type TurnRow = {
 
 export type PersistedSession = {
   id: string;
-  context: {
-    topic?: string;
-    responseLevel?: string;
-  };
   startedAt: number;
   endedAt?: number;
   status: "active" | "completed";
@@ -372,10 +362,6 @@ export async function loadSession(
     : undefined;
   return {
     id: session.id,
-    context: {
-      topic: session.topic ?? undefined,
-      responseLevel: session.response_level ?? undefined,
-    },
     startedAt: session.started_at,
     endedAt: session.ended_at ?? undefined,
     status: session.status,
