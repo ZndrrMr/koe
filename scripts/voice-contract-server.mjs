@@ -23,11 +23,12 @@ function json(response, status, value, headers = {}) {
 }
 
 const server = createServer((request, response) => {
+  const requestUrl = new URL(request.url ?? "/", "http://fixture.invalid");
   console.log(
     JSON.stringify({
       event: "voice_contract_fixture_request",
       method: request.method,
-      path: request.url,
+      path: requestUrl.pathname,
     }),
   );
   if (request.method !== "POST") {
@@ -35,7 +36,7 @@ const server = createServer((request, response) => {
     return;
   }
 
-  if (request.url === "/v1/chat/completions") {
+  if (requestUrl.pathname === "/v1/chat/completions") {
     response.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-store",
@@ -57,7 +58,7 @@ const server = createServer((request, response) => {
     return;
   }
 
-  if (request.url === "/tts/v1/voice") {
+  if (requestUrl.pathname === "/tts/v1/voice") {
     json(
       response,
       200,
@@ -70,7 +71,7 @@ const server = createServer((request, response) => {
     return;
   }
 
-  if (request.url?.startsWith("/v1beta/models/")) {
+  if (requestUrl.pathname.startsWith("/v1beta/models/")) {
     json(response, 200, {
       candidates: [
         {
