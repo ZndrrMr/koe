@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { KOE_V1_PRODUCT_CONTRACT } from "./v1";
+import { KOE_V1_VOICE_ID } from "../../shared/inworld";
 
 const appDirectory = path.resolve(process.cwd(), "app");
 
@@ -56,7 +57,7 @@ test("V1 has one default conversation and no setup choices", () => {
   ]);
   assert.deepEqual(KOE_V1_PRODUCT_CONTRACT.conversation, {
     provider: "inworld",
-    voice: "Asuka",
+    voice: KOE_V1_VOICE_ID,
     feedback: "essential-only",
   });
 });

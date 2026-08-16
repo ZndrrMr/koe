@@ -1,3 +1,5 @@
+import { KOE_V1_VOICE_ID } from "../../shared/inworld";
+
 /**
  * The complete V1 surface and behavior contract. Product code consumes these
  * fixed values directly so a fresh or previously configured installation
@@ -18,7 +20,7 @@ export const KOE_V1_PRODUCT_CONTRACT = {
   ],
   conversation: {
     provider: "inworld",
-    voice: "Asuka",
+    voice: KOE_V1_VOICE_ID,
     feedback: "essential-only",
   },
 } as const;

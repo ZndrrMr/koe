@@ -1,4 +1,7 @@
-export function extractSSEEvents(buffer: string, flush = false): {
+export function extractSSEEvents(
+  buffer: string,
+  flush = false,
+): {
   events: string[];
   remainder: string;
 } {
@@ -16,4 +19,15 @@ export function extractSSEEvents(buffer: string, flush = false): {
     )
     .filter(Boolean);
   return { events, remainder };
+}
+
+export class TruncatedSSEError extends Error {
+  constructor(message = "Provider SSE ended before its [DONE] event") {
+    super(message);
+    this.name = "TruncatedSSEError";
+  }
+}
+
+export function assertCompleteSSE(sawDone: boolean, remainder: string): void {
+  if (!sawDone || remainder.trim()) throw new TruncatedSSEError();
 }

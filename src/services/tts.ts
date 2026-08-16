@@ -5,6 +5,20 @@ import { authHeaders, workerUrl } from "@/services/api";
 import { sha256 } from "@/utils/hash";
 import { log } from "@/utils/log";
 import {
+  AudioContractError,
+  decodeBase64Audio,
+  validateInworldStandaloneMP3,
+} from "@/services/audioContract";
+import {
+  errorName,
+  voiceEvent,
+  type VoiceTraceContext,
+} from "@/utils/telemetry";
+import {
+  INWORLD_STANDALONE_AUDIO_CONTRACT,
+  KOE_V1_VOICE_ID,
+} from "../../shared/inworld";
+import {
   pcm16EnergyFromBase64,
   pcmBase64ChunksToWavBase64,
   pcmBase64ToWavBase64,
@@ -29,7 +43,11 @@ let currentStream: PCMPlaybackQueue | null = null;
 
 export async function synthesize(
   text: string,
-  opts?: { speed?: number; withTimestamps?: boolean },
+  opts?: {
+    speed?: number;
+    withTimestamps?: boolean;
+    trace?: VoiceTraceContext;
+  },
 ): Promise<SynthesizeResult> {
   if (!text || !text.trim()) {
     return { audioUri: "", durationMs: 0 };
@@ -44,6 +62,9 @@ export async function synthesize(
 
   const info = await FileSystem.getInfoAsync(file);
   if (info.exists) {
+    voiceEvent("standalone_tts_cache_hit", opts?.trace, {
+      path: "cache",
+    });
     const metaInfo = await FileSystem.getInfoAsync(meta);
     let durationMs = 0;
     let timestamps: SynthesizeResult["timestamps"];
@@ -59,13 +80,34 @@ export async function synthesize(
 
   if (!hasWorker()) {
     log.warn("TTS: worker URL unset — returning silent placeholder.");
+    voiceEvent(
+      "standalone_tts_unavailable",
+      opts?.trace,
+      {
+        failureKind: "worker-unset",
+      },
+      "warn",
+    );
     return { audioUri: file, durationMs: 0 };
   }
 
   try {
+    voiceEvent("standalone_tts_started", opts?.trace, {
+      voiceId: KOE_V1_VOICE_ID,
+      declaredEncoding: INWORLD_STANDALONE_AUDIO_CONTRACT.encoding,
+      sampleRate: INWORLD_STANDALONE_AUDIO_CONTRACT.sampleRate,
+      channels: INWORLD_STANDALONE_AUDIO_CONTRACT.channels,
+    });
     const res = await fetch(workerUrl("/tts"), {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders({
+          "X-Koe-Session-Id": opts?.trace?.sessionId ?? "",
+          "X-Koe-Turn-Id": opts?.trace?.turnId ?? "",
+          "X-Koe-Response-Run-Id": opts?.trace?.responseRunId ?? "",
+        }),
+      },
       body: JSON.stringify({
         text,
         speed,
@@ -73,7 +115,7 @@ export async function synthesize(
       }),
     });
     if (!res.ok)
-      throw new Error(`TTS ${res.status}: ${await res.text().catch(() => "")}`);
+      throw new Error(`TTS request failed with status ${res.status}`);
 
     const durationHeader = Number(res.headers.get("X-Duration-Ms") ?? 0);
     const tsHeader = res.headers.get("X-Timestamps");
@@ -86,6 +128,26 @@ export async function synthesize(
 
     const ab = await res.arrayBuffer();
     const bytes = new Uint8Array(ab);
+    const observation = validateInworldStandaloneMP3(
+      bytes,
+      res.headers.get("Content-Type"),
+      {
+        encoding: res.headers.get("X-Koe-Audio-Encoding") ?? "",
+        sampleRate: Number(res.headers.get("X-Koe-Audio-Sample-Rate")),
+        channels: Number(res.headers.get("X-Koe-Audio-Channels")),
+      },
+    );
+    voiceEvent("standalone_tts_decoded", opts?.trace, {
+      status: res.status,
+      providerRequestId:
+        res.headers.get("X-Koe-Provider-Request-Id") ?? undefined,
+      contentType: res.headers.get("Content-Type") ?? "none",
+      declaredEncoding: observation.declaredEncoding,
+      observedEncoding: observation.observedEncoding,
+      sampleRate: observation.sampleRate,
+      channels: observation.channels,
+      byteCount: observation.byteCount,
+    });
     let bin = "";
     for (let i = 0; i < bytes.byteLength; i++)
       bin += String.fromCharCode(bytes[i]);
@@ -99,7 +161,15 @@ export async function synthesize(
     );
     return { audioUri: file, durationMs: durationHeader, timestamps };
   } catch (e) {
-    log.error("TTS synth failed", e);
+    voiceEvent(
+      "standalone_tts_failed",
+      opts?.trace,
+      {
+        failureKind: e instanceof AudioContractError ? e.kind : "provider",
+        errorName: errorName(e),
+      },
+      "error",
+    );
     throw e;
   }
 }
@@ -129,12 +199,14 @@ export async function play(
     onStarted?: () => void;
     onFinished?: () => void;
     onError?: (error: Error) => void;
+    trace?: VoiceTraceContext;
   },
 ): Promise<void> {
   if (!audioUri) return;
   try {
     await stop();
     const player = createAudioPlayer({ uri: audioUri }, { updateInterval: 50 });
+    voiceEvent("audio_session_ready", opts?.trace, { path: "standalone" });
     if (opts?.rate) player.setPlaybackRate(opts.rate);
     currentPlayer = player;
     let started = false;
@@ -142,6 +214,7 @@ export async function play(
     const listener = player.addListener("playbackStatusUpdate", (status) => {
       if (status.playing && !started) {
         started = true;
+        voiceEvent("playback_started", opts?.trace, { path: "standalone" });
         opts?.onStarted?.();
       }
       if (status.playbackState === "failed" && !settled) {
@@ -149,18 +222,36 @@ export async function play(
         listener.remove();
         if (currentPlayer === player) currentPlayer = null;
         player.remove();
+        voiceEvent(
+          "playback_failed",
+          opts?.trace,
+          {
+            path: "standalone",
+            failureKind: "player-status",
+          },
+          "error",
+        );
         opts?.onError?.(new Error("Audio playback failed"));
       } else if (status.didJustFinish && !settled) {
         settled = true;
         listener.remove();
         if (currentPlayer === player) currentPlayer = null;
         player.remove();
+        voiceEvent("playback_ended", opts?.trace, { path: "standalone" });
         opts?.onFinished?.();
       }
     });
     player.play();
   } catch (e) {
-    log.error("TTS play failed", e);
+    voiceEvent(
+      "audio_session_failed",
+      opts?.trace,
+      {
+        path: "standalone",
+        errorName: errorName(e),
+      },
+      "error",
+    );
     opts?.onError?.(
       e instanceof Error ? e : new Error("Audio playback could not start"),
     );
@@ -191,6 +282,7 @@ type PCMPlaybackQueueOptions = {
   onEnergy?: (energy: number) => void;
   captureKey?: string;
   onCaptured?: (audioUri: string) => void;
+  trace?: VoiceTraceContext;
 };
 
 export class PCMPlaybackQueue {
@@ -219,10 +311,20 @@ export class PCMPlaybackQueue {
     channels = 1,
   ): Promise<void> {
     if (!audioBase64 || this.stopped) return Promise.resolve();
+    const byteCount = decodeBase64Audio(audioBase64).byteLength;
     this.captureChunks.push(audioBase64);
     this.captureSampleRate = sampleRate;
     this.captureChannels = channels;
     this.options.onEnergy?.(pcm16EnergyFromBase64(audioBase64));
+    voiceEvent("playback_chunk_queued", this.options.trace, {
+      path: "stream",
+      byteCount,
+      queueDepth: this.queuedUris.length + 1,
+      declaredEncoding: "pcm_s16le",
+      observedEncoding: "pcm_s16le",
+      sampleRate,
+      channels,
+    });
     this.writeChain = this.writeChain.then(async () => {
       if (this.stopped) return;
       await ensureCacheDir();
@@ -236,7 +338,23 @@ export class PCMPlaybackQueue {
         return;
       }
       this.queuedUris.push(uri);
-      this.drain();
+      try {
+        this.drain();
+      } catch (error) {
+        voiceEvent(
+          "audio_session_failed",
+          this.options.trace,
+          {
+            path: "stream",
+            errorName: errorName(error),
+          },
+          "error",
+        );
+        this.options.onError?.(
+          error instanceof Error ? error : new Error("Audio session failed"),
+        );
+        throw error;
+      }
     });
     return this.writeChain;
   }
@@ -245,6 +363,10 @@ export class PCMPlaybackQueue {
     await this.writeChain;
     await this.persistCapture();
     this.inputFinished = true;
+    voiceEvent("playback_input_finished", this.options.trace, {
+      path: "stream",
+      queueDepth: this.queuedUris.length + (this.player ? 1 : 0),
+    });
     this.maybeFinish();
     return this.done;
   }
@@ -254,6 +376,15 @@ export class PCMPlaybackQueue {
     await this.writeChain;
     await this.persistCapture();
     this.stopped = true;
+    voiceEvent(
+      "playback_cancelled",
+      this.options.trace,
+      {
+        path: "stream",
+        queueDepth: this.queuedUris.length + (this.player ? 1 : 0),
+      },
+      "warn",
+    );
     const player = this.player;
     this.player = null;
     if (player) {
@@ -312,12 +443,30 @@ export class PCMPlaybackQueue {
       { updateInterval: 25, keepAudioSessionActive: true },
     );
     this.player = player;
+    voiceEvent("audio_session_ready", this.options.trace, {
+      path: "stream",
+      queueDepth: this.queuedUris.length + 1,
+    });
     const listener = player.addListener("playbackStatusUpdate", (status) => {
       if (status.playing && !this.started) {
         this.started = true;
+        voiceEvent("playback_started", this.options.trace, {
+          path: "stream",
+          queueDepth: this.queuedUris.length + 1,
+        });
         this.options.onStarted?.();
       }
       if (status.playbackState === "failed") {
+        voiceEvent(
+          "playback_failed",
+          this.options.trace,
+          {
+            path: "stream",
+            queueDepth: this.queuedUris.length + 1,
+            failureKind: "player-status",
+          },
+          "error",
+        );
         listener.remove();
         void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
         void this.stop().then(() => {
@@ -329,6 +478,10 @@ export class PCMPlaybackQueue {
       listener.remove();
       if (this.player === player) this.player = null;
       player.remove();
+      voiceEvent("playback_chunk_ended", this.options.trace, {
+        path: "stream",
+        queueDepth: this.queuedUris.length,
+      });
       void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
       this.drain();
     });
@@ -345,6 +498,10 @@ export class PCMPlaybackQueue {
       return;
     if (currentStream === this) currentStream = null;
     this.options.onEnergy?.(0);
+    voiceEvent("playback_ended", this.options.trace, {
+      path: "stream",
+      queueDepth: 0,
+    });
     this.options.onFinished?.();
     this.resolveDone();
   }

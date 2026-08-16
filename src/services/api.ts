@@ -1,6 +1,7 @@
 import { config } from "@/utils/config";
 import { getDeviceId } from "@/utils/device";
 import { log } from "@/utils/log";
+import { fetch as expoFetch } from "expo/fetch";
 
 export class WorkerError extends Error {
   constructor(
@@ -41,9 +42,11 @@ export async function postJson<T>(
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    log.error(`POST ${path} -> ${res.status}: ${text}`);
-    throw new WorkerError(text || res.statusText, res.status);
+    log.error(`POST ${path} -> ${res.status}`);
+    throw new WorkerError(
+      res.statusText || "Worker request failed",
+      res.status,
+    );
   }
   return (await res.json()) as T;
 }
@@ -51,8 +54,10 @@ export async function postJson<T>(
 export async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(workerUrl(path), { headers: authHeaders() });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new WorkerError(text || res.statusText, res.status);
+    throw new WorkerError(
+      res.statusText || "Worker request failed",
+      res.status,
+    );
   }
   return (await res.json()) as T;
 }
@@ -61,8 +66,10 @@ export async function postStream(
   path: string,
   body: unknown,
   init?: RequestInit,
-): Promise<Response> {
-  const res = await fetch(workerUrl(path), {
+): ReturnType<typeof expoFetch> {
+  // React Native's global fetch returns a null response.body on iOS. Expo's
+  // native fetch exposes the incremental ReadableStream required for SSE.
+  const res = await expoFetch(workerUrl(path), {
     ...init,
     method: "POST",
     headers: {
@@ -74,8 +81,10 @@ export async function postStream(
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new WorkerError(text || res.statusText, res.status);
+    throw new WorkerError(
+      res.statusText || "Worker request failed",
+      res.status,
+    );
   }
   return res;
 }

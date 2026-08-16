@@ -15,13 +15,21 @@ import {
 } from "@/db/sessionHistory";
 import { log } from "@/utils/log";
 import {
+  errorName,
+  voiceEvent,
+  type VoiceTraceContext,
+} from "@/utils/telemetry";
+import {
   INITIAL_VOICE_LIFECYCLE,
   type VoiceLatency,
   type VoiceLifecycle,
   type VoicePhase,
 } from "@/voice/lifecycle";
 
-export type ChatTurn = SessionTurnSnapshot;
+export type ChatTurn = SessionTurnSnapshot & {
+  traceTurnId?: string;
+  responseRunId?: string;
+};
 
 type SessionState = {
   id: string | null;
@@ -32,6 +40,7 @@ type SessionState = {
   isStreaming: boolean;
   voice: VoiceLifecycle;
   latency: VoiceLatency;
+  traceContext: VoiceTraceContext;
 
   start: (id: string) => Promise<void>;
   addTurn: (turn: ChatTurn) => void;
@@ -43,6 +52,7 @@ type SessionState = {
   setVoicePhase: (phase: VoicePhase, patch?: Partial<VoiceLifecycle>) => void;
   setInterimTranscript: (text: string) => void;
   setLatency: (latency: VoiceLatency) => void;
+  setTraceContext: (trace: Omit<VoiceTraceContext, "sessionId">) => void;
   prepareCloseout: () => Promise<SessionCloseout | null>;
   setMomentDecision: (
     momentId: string,
@@ -71,6 +81,7 @@ export const useSession = create<SessionState>((set, get) => ({
   isStreaming: false,
   voice: INITIAL_VOICE_LIFECYCLE,
   latency: {},
+  traceContext: {},
   start: async (id) => {
     set({
       id,
@@ -81,7 +92,9 @@ export const useSession = create<SessionState>((set, get) => ({
       isStreaming: false,
       voice: INITIAL_VOICE_LIFECYCLE,
       latency: {},
+      traceContext: { sessionId: id },
     });
+    voiceEvent("session_started", { sessionId: id });
     const ready = persistSession({ id });
     sessionPersistence.set(id, ready);
     try {
@@ -122,8 +135,26 @@ export const useSession = create<SessionState>((set, get) => ({
   },
   setRecording: (value) => set({ isRecording: value }),
   setStreaming: (value) => set({ isStreaming: value }),
-  setVoice: (voice) => set({ voice }),
-  setVoicePhase: (phase, patch = {}) =>
+  setVoice: (voice) => {
+    voiceEvent(
+      "lifecycle_transition",
+      get().traceContext,
+      {
+        fromPhase: get().voice.phase,
+        toPhase: voice.phase,
+        failureKind: voice.errorKind,
+        uiState: voice.phase,
+      },
+      voice.phase === "recoverableError" ? "error" : "info",
+    );
+    set({ voice });
+  },
+  setVoicePhase: (phase, patch = {}) => {
+    voiceEvent("lifecycle_transition", get().traceContext, {
+      fromPhase: get().voice.phase,
+      toPhase: phase,
+      uiState: phase,
+    });
     set((state) => ({
       voice: {
         ...state.voice,
@@ -133,16 +164,30 @@ export const useSession = create<SessionState>((set, get) => ({
         ...patch,
         phase,
       },
-    })),
-  setInterimTranscript: (interimTranscript) =>
+    }));
+  },
+  setInterimTranscript: (interimTranscript) => {
+    const phase = interimTranscript ? "interimTranscript" : "listening";
+    if (phase !== get().voice.phase) {
+      voiceEvent("lifecycle_transition", get().traceContext, {
+        fromPhase: get().voice.phase,
+        toPhase: phase,
+        uiState: phase,
+      });
+    }
     set((state) => ({
       voice: {
         ...state.voice,
-        phase: interimTranscript ? "interimTranscript" : "listening",
+        phase,
         interimTranscript,
       },
-    })),
+    }));
+  },
   setLatency: (latency) => set({ latency }),
+  setTraceContext: (trace) =>
+    set((state) => ({
+      traceContext: { sessionId: state.id ?? undefined, ...trace },
+    })),
   prepareCloseout: async () => {
     const sessionId = get().id;
     if (!sessionId) return null;
@@ -189,6 +234,7 @@ export const useSession = create<SessionState>((set, get) => ({
       isStreaming: false,
       voice: INITIAL_VOICE_LIFECYCLE,
       latency: {},
+      traceContext: {},
     });
   },
 }));
@@ -254,9 +300,34 @@ function persistChatTurn(sessionId: string | null, turn: ChatTurn) {
             : undefined,
       }),
     )
-    .then(() => undefined)
+    .then(() => {
+      voiceEvent(
+        "turn_persisted",
+        {
+          sessionId,
+          turnId: turn.traceTurnId ?? turn.id,
+          responseRunId: turn.responseRunId,
+        },
+        {
+          persistedTurnRole: turn.role,
+          streaming: Boolean(turn.streaming),
+          hasAudio: Boolean(turn.audioUri),
+        },
+      );
+    })
     .catch((error) => {
-      log.warn("Could not persist turn", error);
+      voiceEvent(
+        "turn_persistence_failed",
+        {
+          sessionId,
+          turnId: turn.traceTurnId ?? turn.id,
+          responseRunId: turn.responseRunId,
+        },
+        {
+          errorName: errorName(error),
+        },
+        "error",
+      );
     });
   turnPersistence.set(key, ready);
 }

@@ -4,6 +4,11 @@ import {
 } from "expo-speech-recognition";
 import { useAudioRecorder, type AudioRecorder } from "expo-audio";
 import { config } from "@/utils/config";
+import {
+  errorName,
+  voiceEvent,
+  type VoiceTraceContext,
+} from "@/utils/telemetry";
 
 export type STTChunk = {
   text: string;
@@ -73,14 +78,37 @@ export async function startStreaming(opts: {
   languageHint?: "ja" | "ja,en";
   /** Optional recorder injection for isolated audio-pipeline proof surfaces. */
   recorder?: AudioRecorder;
+  trace?: VoiceTraceContext;
 }): Promise<STTHandle> {
+  voiceEvent("stt_started", opts.trace, {
+    languageHint: opts.languageHint ?? "ja,en",
+  });
   const ok = await ensurePermission();
-  if (!ok)
+  if (!ok) {
+    voiceEvent(
+      "stt_failed",
+      opts.trace,
+      {
+        failureKind: "permission-denied",
+        stage: "permission",
+      },
+      "error",
+    );
     throw new STTError(
       "permission-denied",
       "Microphone or speech recognition permission denied",
     );
+  }
   if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
+    voiceEvent(
+      "stt_failed",
+      opts.trace,
+      {
+        failureKind: "unavailable",
+        stage: "availability",
+      },
+      "error",
+    );
     throw new STTError(
       "unavailable",
       "Speech recognition is unavailable on this device",
@@ -107,6 +135,10 @@ export async function startStreaming(opts: {
       const result = event.results[0];
       if (!result?.transcript) return;
       latestText = result.transcript;
+      voiceEvent(event.isFinal ? "stt_final" : "stt_interim", opts.trace, {
+        transcriptChars: latestText.length,
+        confidence: Math.max(0, result.confidence),
+      });
       opts.onChunk({
         text: latestText,
         isFinal: event.isFinal,
@@ -128,6 +160,26 @@ export async function startStreaming(opts: {
         kind,
         event.message || `Speech recognition ${event.error}`,
       );
+      voiceEvent(
+        "stt_failed",
+        opts.trace,
+        {
+          failureKind: kind,
+          stage: kind === "interrupted" ? "audio-session" : "recognition",
+        },
+        "error",
+      );
+      if (kind === "interrupted") {
+        voiceEvent(
+          "audio_session_failed",
+          opts.trace,
+          {
+            path: "recording",
+            failureKind: kind,
+          },
+          "error",
+        );
+      }
       settle();
     }),
     ExpoSpeechRecognitionModule.addListener("end", settle),
@@ -155,8 +207,28 @@ export async function startStreaming(opts: {
           }
         : undefined,
     });
+    voiceEvent("audio_session_ready", opts.trace, {
+      path: "recording",
+      sampleRate: 16_000,
+      channels: 1,
+      declaredEncoding: "pcm_s16le",
+    });
+    voiceEvent("microphone_capture_started", opts.trace, {
+      path: "speech-recognition",
+      sampleRate: 16_000,
+      channels: 1,
+    });
   } catch (error) {
     cleanup();
+    voiceEvent(
+      "audio_session_failed",
+      opts.trace,
+      {
+        path: "recording",
+        errorName: errorName(error),
+      },
+      "error",
+    );
     throw new STTError(
       "failed",
       error instanceof Error
@@ -190,17 +262,41 @@ export async function startStreaming(opts: {
         }
         if (recognitionError && recognitionError.kind !== "no-speech")
           throw recognitionError;
+        voiceEvent("stt_completed", opts.trace, {
+          transcriptChars: latestText.trim().length,
+          durationMs: Date.now() - startedAt,
+          capturedAudio: Boolean(audioUri),
+        });
         return {
           fullText: latestText.trim(),
           durationMs: Date.now() - startedAt,
           audioUri,
         };
       } finally {
+        voiceEvent("microphone_capture_ended", opts.trace, {
+          path: "speech-recognition",
+          durationMs: Date.now() - startedAt,
+          capturedAudio: Boolean(audioUri),
+          failed: Boolean(recognitionError),
+        });
         cleanup();
       }
     },
     cancel: async () => {
       cancelled = true;
+      voiceEvent(
+        "stt_cancelled",
+        opts.trace,
+        {
+          durationMs: Date.now() - startedAt,
+        },
+        "warn",
+      );
+      voiceEvent("microphone_capture_ended", opts.trace, {
+        path: "speech-recognition",
+        durationMs: Date.now() - startedAt,
+        cancelled: true,
+      });
       try {
         ExpoSpeechRecognitionModule.abort();
         await waitForFinish();

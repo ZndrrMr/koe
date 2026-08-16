@@ -1,7 +1,11 @@
 name = "koe-worker"
 main = "src/index.ts"
-compatibility_date = "2026-04-01"
+compatibility_date = "2026-08-16"
 compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
 
 # KV: per-device rate-limit counters + furigana cache.
 # Replace the id/preview_id with your own after `wrangler kv namespace create koe_cache`.
@@ -21,6 +25,8 @@ RATE_LIMIT_TTS = "500"
 RATE_LIMIT_LLM = "200"
 RATE_LIMIT_STT_SECONDS = "360000"
 INWORLD_MODEL = "inworld-tts-1.5-max"
+INWORLD_API_BASE_URL = "https://api.inworld.ai"
+GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com"
 # Tutor: streaming conversation. Flash-Lite is the cheapest + fastest Gemini (~$0.25/$1.50 per 1M, ~360 tok/s).
 GEMINI_TUTOR_MODEL = "gemini-3.1-flash-lite-preview"
 # Optional conversation feedback and furigana annotation.

@@ -12,34 +12,62 @@
  *   INWORLD_API_KEY, SONIOX_API_KEY, GEMINI_API_KEY
  */
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
+import {
+  INWORLD_STANDALONE_AUDIO_CONTRACT,
+  KOE_V1_VOICE_ID,
+} from "../../shared/inworld";
+import {
+  inspectRouterStream,
+  routerResponseHeaders,
+  standaloneResponseHeaders,
+  validateStandaloneAudio,
+  ProviderContractError,
+} from "./providerContract";
+import { providerRequestId, workerEvent, workerTrace } from "./telemetry";
 
-type Env = {
-  KOE_KV: KVNamespace;
+type SecretEnv = {
   INWORLD_API_KEY: string;
   SONIOX_API_KEY: string;
   GEMINI_API_KEY: string;
-  RATE_LIMIT_TTS: string;
-  RATE_LIMIT_LLM: string;
-  RATE_LIMIT_STT_SECONDS: string;
-  INWORLD_MODEL: string;
-  GEMINI_TUTOR_MODEL: string;
-  GEMINI_FLASH_MODEL: string;
 };
 
-const app = new Hono<{ Bindings: Env }>();
+type KoeEnv = Env & SecretEnv;
+
+const app = new Hono<{ Bindings: KoeEnv }>();
 export { app };
 
-const KOE_V1_VOICE_ID = "Asuka";
+type AppContext = Context<{ Bindings: KoeEnv }>;
 
-app.use("*", cors());
+app.use(
+  "*",
+  cors({
+    origin: "*",
+    allowHeaders: [
+      "Content-Type",
+      "Accept",
+      "X-Device-Id",
+      "X-Koe-Session-Id",
+      "X-Koe-Turn-Id",
+      "X-Koe-Response-Run-Id",
+    ],
+    exposeHeaders: [
+      "X-Koe-Audio-Encoding",
+      "X-Koe-Audio-Sample-Rate",
+      "X-Koe-Audio-Channels",
+      "X-Koe-Voice-Id",
+      "X-Koe-Provider-Request-Id",
+      "X-Koe-Response-Run-Id",
+    ],
+  }),
+);
 
 function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-function deviceId(c: any): string {
+function deviceId(c: AppContext): string {
   return c.req.header("X-Device-Id") ?? "anon";
 }
 
@@ -70,11 +98,18 @@ app.get("/", (c) => c.text("koe-worker ok"));
 // ---- TTS ---------------------------------------------------------------
 
 app.post("/tts", async (c) => {
+  const trace = workerTrace(c.req.raw.headers);
   const { text, speed = 1.0 } = await c.req.json<{
     text: string;
     speed?: number;
   }>();
   if (!text) return c.text("text required", 400);
+  workerEvent("standalone_tts_request", trace, {
+    voiceId: KOE_V1_VOICE_ID,
+    declaredEncoding: INWORLD_STANDALONE_AUDIO_CONTRACT.encoding,
+    sampleRate: INWORLD_STANDALONE_AUDIO_CONTRACT.sampleRate,
+    channels: INWORLD_STANDALONE_AUDIO_CONTRACT.channels,
+  });
 
   const dev = deviceId(c);
   const ok = await bumpCounter(
@@ -89,10 +124,21 @@ app.post("/tts", async (c) => {
   const cacheKey = `tts:${await sha256Hex(`v1:${KOE_V1_VOICE_ID}|${text}|${speed}`)}`;
   const cached = await c.env.KOE_KV.get(cacheKey, "arrayBuffer");
   if (cached) {
-    return new Response(cached, { headers: { "Content-Type": "audio/mpeg" } });
+    workerEvent("standalone_tts_cache_hit", trace, {
+      byteCount: cached.byteLength,
+    });
+    return new Response(cached, {
+      headers: {
+        "Content-Type": INWORLD_STANDALONE_AUDIO_CONTRACT.contentType,
+        ...standaloneResponseHeaders,
+        "X-Koe-Voice-Id": KOE_V1_VOICE_ID,
+        "X-Koe-Provider-Request-Id": "cache",
+        "X-Koe-Response-Run-Id": trace.responseRunId,
+      },
+    });
   }
 
-  const inworldRes = await fetch("https://api.inworld.ai/tts/v1/voice", {
+  const inworldRes = await fetch(`${c.env.INWORLD_API_BASE_URL}/tts/v1/voice`, {
     method: "POST",
     headers: {
       Authorization: `Basic ${c.env.INWORLD_API_KEY}`,
@@ -105,21 +151,52 @@ app.post("/tts", async (c) => {
       audioConfig: { audioEncoding: "MP3", sampleRateHertz: 24000 },
     }),
   });
+  const requestId = providerRequestId(inworldRes);
+  workerEvent(
+    "provider_response",
+    trace,
+    {
+      endpoint: "tts",
+      status: inworldRes.status,
+      providerRequestId: requestId,
+      contentType: inworldRes.headers.get("Content-Type") ?? "none",
+    },
+    inworldRes.ok ? "info" : "error",
+  );
 
   if (!inworldRes.ok) {
-    const body = await inworldRes.text();
-    return c.text(`inworld error: ${body}`, 502);
+    return c.text("inworld tts failed", 502);
   }
 
   const payload = (await inworldRes.json()) as {
     audioContent?: string;
     durationMs?: number;
   };
-  if (!payload.audioContent) return c.text("inworld: empty audioContent", 502);
-
-  const bin = Uint8Array.from(atob(payload.audioContent), (ch) =>
-    ch.charCodeAt(0),
-  );
+  let bin: Uint8Array;
+  try {
+    bin = validateStandaloneAudio(payload.audioContent ?? "");
+  } catch (error) {
+    workerEvent(
+      "provider_contract_failed",
+      trace,
+      {
+        endpoint: "tts",
+        failureKind:
+          error instanceof ProviderContractError ? error.kind : "unknown",
+        providerRequestId: requestId,
+      },
+      "error",
+    );
+    return c.text("inworld tts audio contract failed", 502);
+  }
+  workerEvent("standalone_tts_decoded", trace, {
+    providerRequestId: requestId,
+    declaredEncoding: INWORLD_STANDALONE_AUDIO_CONTRACT.encoding,
+    observedEncoding: INWORLD_STANDALONE_AUDIO_CONTRACT.encoding,
+    sampleRate: INWORLD_STANDALONE_AUDIO_CONTRACT.sampleRate,
+    channels: INWORLD_STANDALONE_AUDIO_CONTRACT.channels,
+    byteCount: bin.byteLength,
+  });
 
   // Cache audio up to 25MB (KV limit). Larger fallbacks to R2 if bound.
   if (bin.byteLength < 25 * 1024 * 1024) {
@@ -130,6 +207,10 @@ app.post("/tts", async (c) => {
     headers: {
       "Content-Type": "audio/mpeg",
       "X-Duration-Ms": String(payload.durationMs ?? 0),
+      ...standaloneResponseHeaders,
+      "X-Koe-Voice-Id": KOE_V1_VOICE_ID,
+      "X-Koe-Provider-Request-Id": requestId ?? "unavailable",
+      "X-Koe-Response-Run-Id": trace.responseRunId,
     },
   });
 });
@@ -137,6 +218,7 @@ app.post("/tts", async (c) => {
 // ---- STT transcribe (file upload → async REST) -------------------------
 
 app.post("/stt/transcribe", async (c) => {
+  const trace = workerTrace(c.req.raw.headers);
   const dev = deviceId(c);
   const ok = await bumpCounter(
     c.env.KOE_KV,
@@ -148,6 +230,10 @@ app.post("/stt/transcribe", async (c) => {
 
   const audioBytes = await c.req.arrayBuffer();
   if (!audioBytes.byteLength) return c.text("empty audio", 400);
+  workerEvent("stt_started", trace, {
+    path: "async-rest",
+    byteCount: audioBytes.byteLength,
+  });
 
   const langParam = c.req.query("lang") ?? "ja,en";
   const languageHints = langParam
@@ -164,8 +250,17 @@ app.post("/stt/transcribe", async (c) => {
     headers: { Authorization: auth },
     body: uploadForm,
   });
-  if (!uploadRes.ok)
-    return c.text(`soniox upload: ${await uploadRes.text()}`, 502);
+  workerEvent(
+    "provider_response",
+    trace,
+    {
+      endpoint: "stt-upload",
+      status: uploadRes.status,
+      providerRequestId: providerRequestId(uploadRes),
+    },
+    uploadRes.ok ? "info" : "error",
+  );
+  if (!uploadRes.ok) return c.text("soniox upload failed", 502);
   const { id: fileId } = (await uploadRes.json()) as { id: string };
 
   const createRes = await fetch("https://api.soniox.com/v1/transcriptions", {
@@ -177,8 +272,17 @@ app.post("/stt/transcribe", async (c) => {
       language_hints: languageHints,
     }),
   });
-  if (!createRes.ok)
-    return c.text(`soniox create: ${await createRes.text()}`, 502);
+  workerEvent(
+    "provider_response",
+    trace,
+    {
+      endpoint: "stt-create",
+      status: createRes.status,
+      providerRequestId: providerRequestId(createRes),
+    },
+    createRes.ok ? "info" : "error",
+  );
+  if (!createRes.ok) return c.text("soniox transcription creation failed", 502);
   const { id: txId } = (await createRes.json()) as { id: string };
 
   const deadline = Date.now() + 25_000;
@@ -188,7 +292,7 @@ app.post("/stt/transcribe", async (c) => {
     const s = await fetch(`https://api.soniox.com/v1/transcriptions/${txId}`, {
       headers: { Authorization: auth },
     });
-    if (!s.ok) return c.text(`soniox status: ${await s.text()}`, 502);
+    if (!s.ok) return c.text("soniox status failed", 502);
     const body = (await s.json()) as { status: string; error_message?: string };
     status = body.status;
     errorMessage = body.error_message;
@@ -196,6 +300,15 @@ app.post("/stt/transcribe", async (c) => {
     await new Promise((r) => setTimeout(r, 400));
   }
   if (status !== "completed") {
+    workerEvent(
+      "stt_failed",
+      trace,
+      {
+        failureKind: status === "processing" ? "timeout" : "provider",
+        providerStatus: status,
+      },
+      "error",
+    );
     return c.text(`soniox ${status}: ${errorMessage ?? "timeout"}`, 502);
   }
 
@@ -205,7 +318,7 @@ app.post("/stt/transcribe", async (c) => {
       headers: { Authorization: auth },
     },
   );
-  if (!trRes.ok) return c.text(`soniox transcript: ${await trRes.text()}`, 502);
+  if (!trRes.ok) return c.text("soniox transcript failed", 502);
   const { tokens } = (await trRes.json()) as {
     tokens: Array<{ text: string }>;
   };
@@ -213,6 +326,10 @@ app.post("/stt/transcribe", async (c) => {
     .map((t) => t.text)
     .join("")
     .trim();
+  workerEvent("stt_final", trace, {
+    transcriptChars: text.length,
+    providerStatus: status,
+  });
 
   c.executionCtx.waitUntil(
     Promise.all([
@@ -257,7 +374,7 @@ app.get("/stt/token", async (c) => {
     }),
   });
   if (!res.ok) {
-    return c.text(`soniox token: ${await res.text()}`, 502);
+    return c.text("soniox token failed", 502);
   }
   const data = (await res.json()) as { api_key?: string; expires_at?: string };
   return c.json({
@@ -271,37 +388,8 @@ app.get("/stt/token", async (c) => {
 
 // ---- LLM chat (Inworld Router: Claude Opus 4.7 + Asuka TTS) -----------
 
-function detectAudioFormat(
-  bytes: Uint8Array,
-): "flac" | "mp3" | "ogg" | "wav" | "unknown" {
-  if (bytes.length < 4) return "unknown";
-  if (
-    bytes[0] === 0x66 &&
-    bytes[1] === 0x4c &&
-    bytes[2] === 0x61 &&
-    bytes[3] === 0x43
-  )
-    return "flac";
-  if (
-    bytes[0] === 0x4f &&
-    bytes[1] === 0x67 &&
-    bytes[2] === 0x67 &&
-    bytes[3] === 0x53
-  )
-    return "ogg";
-  if (
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46
-  )
-    return "wav";
-  if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return "mp3";
-  if (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0) return "mp3";
-  return "unknown";
-}
-
 app.post("/llm/chat", async (c) => {
+  const trace = workerTrace(c.req.raw.headers);
   const body = await c.req.json<{
     system: string;
     messages: Array<{ role: "user" | "assistant"; content: string }>;
@@ -323,38 +411,55 @@ app.post("/llm/chat", async (c) => {
   const messages = [{ role: "system", content: body.system }, ...body.messages];
 
   const stream = body.stream !== false;
-  const chatRes = await fetch("https://api.inworld.ai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${c.env.INWORLD_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: body.model ?? "mistral/mistral-small-2603",
-      max_tokens: body.maxTokens ?? 600,
-      stream,
-      ...(!body.noAudio && stream
-        ? {
-            audio: {
-              voice: KOE_V1_VOICE_ID,
-              model: c.env.INWORLD_MODEL || "inworld-tts-1.5-max",
-            },
-          }
-        : {}),
-      messages,
-    }),
+  workerEvent("provider_request_started", trace, {
+    endpoint: "chat",
+    stream,
+    voiceId: KOE_V1_VOICE_ID,
   });
+  const chatRes = await fetch(
+    `${c.env.INWORLD_API_BASE_URL}/v1/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${c.env.INWORLD_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: body.model ?? "mistral/mistral-small-2603",
+        max_tokens: body.maxTokens ?? 600,
+        stream,
+        ...(!body.noAudio && stream
+          ? {
+              audio: {
+                voice: KOE_V1_VOICE_ID,
+                model: c.env.INWORLD_MODEL || "inworld-tts-1.5-max",
+              },
+            }
+          : {}),
+        messages,
+      }),
+    },
+  );
+  const chatRequestId = providerRequestId(chatRes);
+  workerEvent(
+    "provider_response",
+    trace,
+    {
+      endpoint: "chat",
+      status: chatRes.status,
+      providerRequestId: chatRequestId,
+      contentType: chatRes.headers.get("Content-Type") ?? "none",
+    },
+    chatRes.ok ? "info" : "error",
+  );
 
   if (!chatRes.ok) {
-    return c.text(
-      `inworld chat error: ${await chatRes.text().catch(() => "")}`,
-      502,
-    );
+    return c.text("inworld chat failed", 502);
   }
 
   if (stream) {
     if (!chatRes.body) return c.text("inworld chat returned no stream", 502);
-    return new Response(chatRes.body, {
+    return new Response(inspectRouterStream(chatRes, trace), {
       status: chatRes.status,
       headers: {
         "Content-Type":
@@ -362,6 +467,10 @@ app.post("/llm/chat", async (c) => {
           "text/event-stream; charset=utf-8",
         "Cache-Control": "no-store, no-transform",
         "X-Accel-Buffering": "no",
+        ...routerResponseHeaders,
+        "X-Koe-Voice-Id": KOE_V1_VOICE_ID,
+        "X-Koe-Provider-Request-Id": chatRequestId ?? "unavailable",
+        "X-Koe-Response-Run-Id": trace.responseRunId,
       },
     });
   }
@@ -375,7 +484,7 @@ app.post("/llm/chat", async (c) => {
     return c.json({ text, audioBase64: undefined, audioFormat: "none" });
   }
 
-  const ttsRes = await fetch("https://api.inworld.ai/tts/v1/voice", {
+  const ttsRes = await fetch(`${c.env.INWORLD_API_BASE_URL}/tts/v1/voice`, {
     method: "POST",
     headers: {
       Authorization: `Basic ${c.env.INWORLD_API_KEY}`,
@@ -388,13 +497,25 @@ app.post("/llm/chat", async (c) => {
       audioConfig: { audioEncoding: "MP3", sampleRateHertz: 24000 },
     }),
   });
+  const ttsRequestId = providerRequestId(ttsRes);
+  workerEvent(
+    "provider_response",
+    trace,
+    {
+      endpoint: "chat-fallback-tts",
+      status: ttsRes.status,
+      providerRequestId: ttsRequestId,
+      contentType: ttsRes.headers.get("Content-Type") ?? "none",
+    },
+    ttsRes.ok ? "info" : "error",
+  );
 
   if (!ttsRes.ok) {
     return c.json({
       text,
       audioBase64: undefined,
       audioFormat: "none",
-      ttsError: await ttsRes.text().catch(() => ""),
+      ttsError: "provider-failed",
     });
   }
 
@@ -402,22 +523,63 @@ app.post("/llm/chat", async (c) => {
   let audioBase64: string | undefined;
   let audioFormat: string = "unknown";
   if (ttsData.audioContent) {
-    audioBase64 = ttsData.audioContent;
-    const head = Uint8Array.from(
-      atob(ttsData.audioContent.slice(0, 12)),
-      (ch) => ch.charCodeAt(0),
-    );
-    audioFormat = detectAudioFormat(head);
-    if (audioFormat === "unknown") audioFormat = "mp3";
+    try {
+      const decoded = validateStandaloneAudio(ttsData.audioContent);
+      audioBase64 = ttsData.audioContent;
+      audioFormat = INWORLD_STANDALONE_AUDIO_CONTRACT.encoding;
+      workerEvent("standalone_tts_decoded", trace, {
+        endpoint: "chat-fallback-tts",
+        providerRequestId: ttsRequestId,
+        declaredEncoding: INWORLD_STANDALONE_AUDIO_CONTRACT.encoding,
+        observedEncoding: audioFormat,
+        sampleRate: INWORLD_STANDALONE_AUDIO_CONTRACT.sampleRate,
+        channels: INWORLD_STANDALONE_AUDIO_CONTRACT.channels,
+        byteCount: decoded.byteLength,
+      });
+    } catch (error) {
+      workerEvent(
+        "provider_contract_failed",
+        trace,
+        {
+          endpoint: "chat-fallback-tts",
+          failureKind:
+            error instanceof ProviderContractError ? error.kind : "unknown",
+          providerRequestId: ttsRequestId,
+        },
+        "error",
+      );
+      return c.json(
+        {
+          text,
+          audioBase64: undefined,
+          audioFormat: "none",
+          ttsError: "audio-contract-failed",
+        },
+        502,
+      );
+    }
   }
 
-  return c.json({ text, audioBase64, audioFormat });
+  return c.json({
+    text,
+    audioBase64,
+    audioFormat,
+    sampleRate: INWORLD_STANDALONE_AUDIO_CONTRACT.sampleRate,
+    channels: INWORLD_STANDALONE_AUDIO_CONTRACT.channels,
+    voiceId: KOE_V1_VOICE_ID,
+  });
 });
 
 // ---- LLM flash (Gemini) -------------------------------------------------
 
 app.post("/llm/flash", async (c) => {
-  const body = await c.req.json<any>();
+  const trace = workerTrace(c.req.raw.headers);
+  const body = await c.req.json<{
+    task?: string;
+    history?: unknown;
+    userTurn?: string;
+    tutorReply?: string;
+  }>();
   const dev = deviceId(c);
   const ok = await bumpCounter(
     c.env.KOE_KV,
@@ -427,7 +589,7 @@ app.post("/llm/flash", async (c) => {
   );
   if (!ok) return c.text("rate limit", 429);
 
-  const task = body.task as string;
+  const task = body.task;
   let prompt: string;
 
   if (task === "feedback") {
@@ -462,7 +624,7 @@ Always translate both nonempty utterances. Unless correction is clearly useful u
   }
 
   const gemRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${c.env.GEMINI_FLASH_MODEL}:generateContent?key=${c.env.GEMINI_API_KEY}`,
+    `${c.env.GEMINI_API_BASE_URL}/v1beta/models/${c.env.GEMINI_FLASH_MODEL}:generateContent?key=${c.env.GEMINI_API_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -475,9 +637,24 @@ Always translate both nonempty utterances. Unless correction is clearly useful u
       }),
     },
   );
-  if (!gemRes.ok) return c.text(`gemini error: ${await gemRes.text()}`, 502);
-  const data = (await gemRes.json()) as any;
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+  workerEvent(
+    "provider_response",
+    trace,
+    {
+      endpoint: "feedback",
+      status: gemRes.status,
+      providerRequestId: providerRequestId(gemRes),
+      contentType: gemRes.headers.get("Content-Type") ?? "none",
+    },
+    gemRes.ok ? "info" : "error",
+  );
+  if (!gemRes.ok) return c.text("gemini feedback failed", 502);
+  const data = (await gemRes.json()) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+    }>;
+  };
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
   try {
     return new Response(text, {
       headers: { "Content-Type": "application/json" },
@@ -514,7 +691,7 @@ Return ONLY valid JSON: {"runs":[{"base":"今日","reading":"きょう"},{"base"
 Text: ${text}`;
 
   const gemRes = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${c.env.GEMINI_FLASH_MODEL}:generateContent?key=${c.env.GEMINI_API_KEY}`,
+    `${c.env.GEMINI_API_BASE_URL}/v1beta/models/${c.env.GEMINI_FLASH_MODEL}:generateContent?key=${c.env.GEMINI_API_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -527,9 +704,13 @@ Text: ${text}`;
       }),
     },
   );
-  if (!gemRes.ok) return c.text(`gemini error: ${await gemRes.text()}`, 502);
-  const data = (await gemRes.json()) as any;
-  const out = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '{"runs":[]}';
+  if (!gemRes.ok) return c.text("gemini furigana failed", 502);
+  const data = (await gemRes.json()) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+    }>;
+  };
+  const out = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '{"runs":[]}';
   await c.env.KOE_KV.put(key, out, { expirationTtl: 60 * 60 * 24 * 30 });
   return new Response(out, { headers: { "Content-Type": "application/json" } });
 });

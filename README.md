@@ -24,6 +24,36 @@ npx wrangler dev
 
 The Worker expects `INWORLD_API_KEY`, `SONIOX_API_KEY`, and `GEMINI_API_KEY` secrets plus the rate-limit/model variables in `worker/wrangler.toml`.
 
+## Voice and audio contract
+
+Koe V1 uses one Inworld voice everywhere: `Asuka`. Router voice responses are
+validated as raw signed 16-bit little-endian PCM, 48,000 Hz, mono. Standalone
+Inworld TTS is requested and validated as MP3, 24,000 Hz, mono. The canonical
+values live in `shared/inworld.ts`; app and Worker tests import the same values
+so a voice, encoding, sample-rate, or channel disagreement fails the build.
+
+Every voice turn also carries `sessionId`, `turnId`, and `responseRunId` from
+the app to the Worker. Structured logs record lifecycle and failure categories,
+provider status/request ID, SSE event kind, declared and observed audio format,
+byte counts, queue depth, fallback, timeout, cancellation, retry, playback, and
+persistence. Logs intentionally omit transcript text, request bodies, audio
+payloads, authorization data, and secrets. Search one of the three correlation
+IDs to reconstruct a turn without exposing what the learner said.
+
+The checked-in audio fixture contains non-silent Japanese speech for decoder
+and framing tests and labels its provenance explicitly. It is not claimed to be
+a provider capture; refreshing real Inworld evidence requires an authenticated
+provider or deployed Worker configuration.
+
+For a development-only end-to-end simulator trace, point
+`EXPO_PUBLIC_WORKER_URL` at the Worker, set
+`EXPO_PUBLIC_KOE_REVIEW_ROUTE=session` and
+`EXPO_PUBLIC_KOE_AUTORUN_VOICE_TRACE=1`, then launch an iPhone Simulator build.
+The diagnostic attempts the real speech-recognition/audio-session path first;
+if the simulator cannot return speech, it records that specific failure and
+continues with a fixed, non-private transcript so streaming decode, playback,
+persistence, and UI transitions remain observable under the same turn ID.
+
 ## Shipping product structure
 
 ```text
