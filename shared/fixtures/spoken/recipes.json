@@ -1,0 +1,424 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": "1.0.0",
+  "voiceId": "Asuka",
+  "provider": "Inworld",
+  "model": "inworld-tts-1.5-max",
+  "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+  "requiredCoverage": [
+    "short-japanese",
+    "long-japanese",
+    "beginner-errors",
+    "natural-fluent-speech",
+    "hesitation",
+    "self-correction",
+    "english",
+    "code-switching",
+    "request-teaching",
+    "request-translation",
+    "request-strict-correction",
+    "request-roleplay",
+    "numbers",
+    "names",
+    "counters",
+    "particles",
+    "pitch-sensitive-phrases",
+    "quiet-speech",
+    "fast-speech",
+    "long-pauses",
+    "silence",
+    "noise",
+    "clipping",
+    "truncation",
+    "malformed"
+  ],
+  "baseFixtures": [
+    {
+      "id": "natural-short-ja",
+      "file": "audio/natural-short-ja.mp3",
+      "sourceText": "こんにちは。今日は少し緊張しています。",
+      "language": "ja-JP",
+      "categories": ["short-japanese", "natural-fluent-speech"],
+      "intendedBehavior": "A brief, natural opening that should receive a warm Japanese response and an easy follow-up question.",
+      "expectedTranscript": "こんにちは。今日は少し緊張しています。",
+      "expectedIntent": "greeting-and-emotional-state",
+      "tutorAssertions": {
+        "must": [
+          "respond-in-japanese",
+          "acknowledge-nervousness",
+          "offer-low-pressure-opening"
+        ],
+        "mustNot": ["force-correction", "switch-to-lesson-mode"]
+      }
+    },
+    {
+      "id": "natural-long-ja",
+      "file": "audio/natural-long-ja.mp3",
+      "sourceText": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+      "language": "ja-JP",
+      "categories": ["long-japanese", "natural-fluent-speech"],
+      "intendedBehavior": "A long fluent narrative that should be understood as one coherent experience and followed naturally rather than graded.",
+      "expectedTranscript": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+      "expectedIntent": "share-a-weekend-memory",
+      "tutorAssertions": {
+        "must": ["respond-to-story-content", "continue-natural-conversation"],
+        "mustNot": ["summarize-every-sentence", "invent-an-error"]
+      }
+    },
+    {
+      "id": "beginner-particle-errors",
+      "file": "audio/beginner-particle-errors.mp3",
+      "sourceText": "昨日、私は友達を会って、いっしょに映画が見ました。とても楽しいでした。",
+      "language": "ja-JP",
+      "categories": ["beginner-errors", "particles"],
+      "intendedBehavior": "Intelligible beginner Japanese with particle and adjective errors; the tutor should preserve the conversation and offer only compact useful correction.",
+      "expectedTranscript": "昨日、私は友達を会って、いっしょに映画が見ました。とても楽しいでした。",
+      "expectedIntent": "describe-yesterdays-activity-with-errors",
+      "tutorAssertions": {
+        "must": [
+          "understand-intended-meaning",
+          "keep-conversation-moving",
+          "correction-may-be-compact"
+        ],
+        "mustNot": ["reject-utterance", "produce-long-grammar-lecture"]
+      }
+    },
+    {
+      "id": "hesitation-self-correction",
+      "file": "audio/hesitation-self-correction.mp3",
+      "sourceText": "ええと、昨日は京都に……あ、違います。大阪に行きました。それで、たしか三時ごろに友達と会って、うーん、まずお好み焼きを食べました。",
+      "language": "ja-JP",
+      "categories": ["hesitation", "self-correction"],
+      "intendedBehavior": "Disfluent but recoverable speech; the corrected destination must win over the abandoned one.",
+      "expectedTranscript": "ええと、昨日は京都に……あ、違います。大阪に行きました。それで、たしか三時ごろに友達と会って、うーん、まずお好み焼きを食べました。",
+      "expectedIntent": "self-correct-destination-and-describe-outing",
+      "tutorAssertions": {
+        "must": [
+          "treat-osaka-as-final-destination",
+          "tolerate-hesitation",
+          "respond-to-outing"
+        ],
+        "mustNot": ["treat-kyoto-as-final-destination", "correct-filler-words"]
+      }
+    },
+    {
+      "id": "english-only",
+      "file": "audio/english-only.mp3",
+      "sourceText": "I had a busy morning, but I would still like to practice Japanese for a few minutes.",
+      "language": "en-US",
+      "categories": ["english"],
+      "intendedBehavior": "English meta-conversation should be understood and gently open a short Japanese exchange.",
+      "expectedTranscript": "I had a busy morning, but I would still like to practice Japanese for a few minutes.",
+      "expectedIntent": "request-brief-japanese-practice",
+      "tutorAssertions": {
+        "must": [
+          "acknowledge-time-constraint",
+          "offer-simple-japanese-opening"
+        ],
+        "mustNot": ["claim-english-is-invalid"]
+      }
+    },
+    {
+      "id": "japanese-english-code-switch",
+      "file": "audio/japanese-english-code-switch.mp3",
+      "sourceText": "今日は仕事がすごく busy だったけど、after work に友達とラーメンを食べて、ちょっと元気になりました。",
+      "language": "ja-JP,en-US",
+      "categories": ["code-switching"],
+      "intendedBehavior": "Natural Japanese/English code-switching should retain both languages and the positive turn after work.",
+      "expectedTranscript": "今日は仕事がすごく busy だったけど、after work に友達とラーメンを食べて、ちょっと元気になりました。",
+      "expectedIntent": "describe-busy-workday-and-recovery",
+      "tutorAssertions": {
+        "must": ["understand-both-languages", "respond-to-after-work-meal"],
+        "mustNot": ["translate-unprompted", "flag-code-switching-as-error"]
+      }
+    },
+    {
+      "id": "request-teaching",
+      "file": "audio/request-teaching.mp3",
+      "sourceText": "『わけではない』の使い方がまだよく分かりません。短い例を二つ使って教えてください。",
+      "language": "ja-JP",
+      "categories": ["request-teaching"],
+      "intendedBehavior": "An explicit teaching request should temporarily switch from free conversation to a concise explanation with two examples.",
+      "expectedTranscript": "『わけではない』の使い方がまだよく分かりません。短い例を二つ使って教えてください。",
+      "expectedIntent": "request-grammar-teaching",
+      "tutorAssertions": {
+        "must": ["explain-wake-dewa-nai", "provide-two-short-examples"],
+        "mustNot": ["avoid-the-request", "provide-more-than-two-examples"]
+      }
+    },
+    {
+      "id": "request-translation",
+      "file": "audio/request-translation.mp3",
+      "sourceText": "『I ended up staying home』は自然な日本語でどう言いますか。直訳じゃなくて、会話で使う言い方を教えてください。",
+      "language": "ja-JP,en-US",
+      "categories": ["request-translation", "code-switching"],
+      "intendedBehavior": "An explicit translation request should yield a natural conversational Japanese rendering, not a literal word-by-word answer.",
+      "expectedTranscript": "『I ended up staying home』は自然な日本語でどう言いますか。直訳じゃなくて、会話で使う言い方を教えてください。",
+      "expectedIntent": "request-natural-translation",
+      "tutorAssertions": {
+        "must": [
+          "provide-natural-japanese-translation",
+          "briefly-explain-nuance"
+        ],
+        "mustNot": ["give-only-literal-translation"]
+      }
+    },
+    {
+      "id": "request-strict-correction",
+      "file": "audio/request-strict-correction.mp3",
+      "sourceText": "これからは間違いを見逃さないでください。会話を止めてもいいので、助詞と敬語を厳しく直してください。",
+      "language": "ja-JP",
+      "categories": ["request-strict-correction", "particles"],
+      "intendedBehavior": "An explicit preference for strict correction should be acknowledged and applied without changing the user's request into roleplay.",
+      "expectedTranscript": "これからは間違いを見逃さないでください。会話を止めてもいいので、助詞と敬語を厳しく直してください。",
+      "expectedIntent": "request-strict-particle-and-register-correction",
+      "tutorAssertions": {
+        "must": [
+          "acknowledge-strict-correction-request",
+          "focus-on-particles-and-register"
+        ],
+        "mustNot": ["continue-default-light-correction-without-acknowledgment"]
+      }
+    },
+    {
+      "id": "request-roleplay",
+      "file": "audio/request-roleplay.mp3",
+      "sourceText": "駅で新幹線の切符を買う練習をしたいです。あなたは駅員になって、まず行き先を聞いてください。",
+      "language": "ja-JP",
+      "categories": ["request-roleplay"],
+      "intendedBehavior": "An explicit roleplay request should make the tutor act as a station clerk and begin by asking for the destination.",
+      "expectedTranscript": "駅で新幹線の切符を買う練習をしたいです。あなたは駅員になって、まず行き先を聞いてください。",
+      "expectedIntent": "request-station-ticket-roleplay",
+      "tutorAssertions": {
+        "must": ["enter-station-clerk-role", "ask-destination-first"],
+        "mustNot": ["explain-roleplay-instead-of-starting"]
+      }
+    },
+    {
+      "id": "numbers-names-counters",
+      "file": "audio/numbers-names-counters.mp3",
+      "sourceText": "田中真理さんと二〇二六年八月二十三日に会います。大人三人と子ども二人で、京都駅までの切符を五枚お願いします。",
+      "language": "ja-JP",
+      "categories": ["numbers", "names", "counters"],
+      "intendedBehavior": "Names, a date, people counters, and ticket counters must remain distinct and usable in a transactional reply.",
+      "expectedTranscript": "田中真理さんと二〇二六年八月二十三日に会います。大人三人と子ども二人で、京都駅までの切符を五枚お願いします。",
+      "expectedIntent": "state-travel-party-date-and-ticket-count",
+      "tutorAssertions": {
+        "must": [
+          "preserve-tanaka-mari",
+          "preserve-date",
+          "preserve-three-adults-two-children",
+          "preserve-five-tickets"
+        ],
+        "mustNot": ["collapse-counters"]
+      }
+    },
+    {
+      "id": "particles-focus",
+      "file": "audio/particles-focus.mp3",
+      "sourceText": "私は母と電車で鎌倉へ行って、海を見ました。帰りは駅の近くでお茶を飲みました。",
+      "language": "ja-JP",
+      "categories": ["particles", "natural-fluent-speech"],
+      "intendedBehavior": "A dense but correct sequence of は、と、で、へ、を、の should transcribe without dropping grammatical particles.",
+      "expectedTranscript": "私は母と電車で鎌倉へ行って、海を見ました。帰りは駅の近くでお茶を飲みました。",
+      "expectedIntent": "describe-kamakura-trip",
+      "tutorAssertions": {
+        "must": ["understand-trip-sequence", "avoid-false-particle-correction"],
+        "mustNot": ["invent-particle-error"]
+      }
+    },
+    {
+      "id": "pitch-sensitive-pairs",
+      "file": "audio/pitch-sensitive-pairs.mp3",
+      "sourceText": "雨と飴、橋と箸、柿と牡蠣。発音の高低で意味が変わる言葉を、自然な文の中で練習したいです。",
+      "language": "ja-JP",
+      "categories": ["pitch-sensitive-phrases"],
+      "intendedBehavior": "Pitch-sensitive minimal pairs should remain available for pronunciation analysis while the semantic request is understood.",
+      "expectedTranscript": "雨と飴、橋と箸、柿と牡蠣。発音の高低で意味が変わる言葉を、自然な文の中で練習したいです。",
+      "expectedIntent": "request-pitch-accent-practice",
+      "tutorAssertions": {
+        "must": [
+          "recognize-minimal-pair-practice",
+          "offer-contextual-practice"
+        ],
+        "mustNot": ["claim-the-pairs-have-identical-meaning"]
+      }
+    }
+  ],
+  "derivedFixtures": [
+    {
+      "id": "acoustic-quiet",
+      "file": "audio/acoustic-quiet.mp3",
+      "kind": "quiet",
+      "from": "natural-short-ja",
+      "categories": ["quiet-speech"],
+      "intendedBehavior": "Very quiet but decodable speech should either transcribe equivalently or produce a recoverable low-confidence response.",
+      "expectedIntent": "quiet-greeting",
+      "tutorAssertions": {
+        "must": ["accept-or-recover-clearly"],
+        "mustNot": ["hang", "crash"]
+      }
+    },
+    {
+      "id": "acoustic-fast",
+      "file": "audio/acoustic-fast.mp3",
+      "kind": "fast",
+      "from": "numbers-names-counters",
+      "categories": ["fast-speech", "numbers", "names", "counters"],
+      "intendedBehavior": "Time-compressed speech should preserve the named traveler and quantities within documented STT tolerance.",
+      "expectedIntent": "fast-travel-details",
+      "tutorAssertions": {
+        "must": ["accept-or-recover-clearly"],
+        "mustNot": ["hang", "crash"]
+      }
+    },
+    {
+      "id": "acoustic-long-pauses",
+      "file": "audio/acoustic-long-pauses.mp3",
+      "kind": "long-pauses",
+      "from": "hesitation-self-correction",
+      "categories": ["long-pauses", "hesitation", "self-correction"],
+      "intendedBehavior": "Controlled silence around a hesitant utterance should not cause stale-turn leakage; Osaka remains the final destination if speech is accepted.",
+      "expectedIntent": "paused-self-correction",
+      "tutorAssertions": {
+        "must": [
+          "accept-or-recover-clearly",
+          "treat-osaka-as-final-if-transcribed"
+        ],
+        "mustNot": ["hang", "reuse-stale-transcript"]
+      }
+    },
+    {
+      "id": "failure-noise",
+      "file": "audio/failure-noise.mp3",
+      "kind": "noise",
+      "from": "beginner-particle-errors",
+      "categories": ["noise", "beginner-errors"],
+      "intendedBehavior": "Speech mixed with deterministic pink noise should transcribe within tolerance or enter explicit recoverable STT failure.",
+      "expectedIntent": "noisy-beginner-utterance",
+      "tutorAssertions": {
+        "must": ["accept-or-recover-clearly"],
+        "mustNot": ["hang", "crash", "persist-empty-turn"]
+      }
+    },
+    {
+      "id": "failure-clipped",
+      "file": "audio/failure-clipped.mp3",
+      "kind": "clipped",
+      "from": "natural-long-ja",
+      "categories": ["clipping", "long-japanese"],
+      "intendedBehavior": "Hard-clipped speech should remain a bounded input and either produce partial content or an explicit recoverable failure.",
+      "expectedIntent": "clipped-long-narrative",
+      "tutorAssertions": {
+        "must": ["accept-or-recover-clearly"],
+        "mustNot": ["hang", "crash"]
+      }
+    },
+    {
+      "id": "failure-truncated-utterance",
+      "file": "audio/failure-truncated-utterance.mp3",
+      "kind": "truncated-utterance",
+      "from": "natural-long-ja",
+      "categories": ["truncation"],
+      "intendedBehavior": "A valid MP3 cut off mid-utterance should decode, yield only a prefix or silence, and recover without inventing the omitted story.",
+      "expectedIntent": "truncated-narrative-prefix",
+      "tutorAssertions": {
+        "must": [
+          "avoid-inventing-missing-content",
+          "accept-or-recover-clearly"
+        ],
+        "mustNot": ["hang", "crash"]
+      }
+    },
+    {
+      "id": "failure-silence",
+      "file": "audio/failure-silence.mp3",
+      "kind": "silence",
+      "categories": ["silence"],
+      "intendedBehavior": "A valid silent MP3 must produce a recoverable no-speech result and no conversation turn.",
+      "expectedIntent": "silence",
+      "tutorAssertions": {
+        "must": ["recover-as-no-speech"],
+        "mustNot": [
+          "persist-empty-turn",
+          "call-reply-provider",
+          "hang",
+          "crash"
+        ]
+      }
+    },
+    {
+      "id": "failure-malformed-bytes",
+      "file": "audio/failure-malformed-bytes.mp3",
+      "kind": "malformed-bytes",
+      "categories": ["malformed"],
+      "intendedBehavior": "A non-audio payload with an MP3 extension must fail local decode before upload.",
+      "expectedIntent": "invalid-audio",
+      "tutorAssertions": {
+        "must": ["reject-before-provider", "recover-clearly"],
+        "mustNot": ["upload-bytes", "persist-turn", "hang", "crash"]
+      }
+    },
+    {
+      "id": "failure-truncated-frame",
+      "file": "audio/failure-truncated-frame.mp3",
+      "kind": "truncated-frame",
+      "from": "natural-short-ja",
+      "categories": ["malformed", "truncation"],
+      "intendedBehavior": "An MP3 cut inside its first encoded frame must fail local decode before upload.",
+      "expectedIntent": "truncated-audio",
+      "tutorAssertions": {
+        "must": ["reject-before-provider", "recover-clearly"],
+        "mustNot": ["upload-bytes", "persist-turn", "hang", "crash"]
+      }
+    }
+  ],
+  "conversationScripts": [
+    {
+      "id": "getting-acquainted",
+      "description": "A natural opening that grows from a short statement into a longer story and a self-correction.",
+      "turnFixtureIds": [
+        "natural-short-ja",
+        "natural-long-ja",
+        "hesitation-self-correction"
+      ],
+      "assertions": [
+        "preserve-turn-order",
+        "persist-every-accepted-turn",
+        "reply-audibly-before-resuming",
+        "no-unsolicited-lesson-mode"
+      ]
+    },
+    {
+      "id": "learner-directed-support",
+      "description": "The learner makes errors, asks for stricter correction, requests teaching, and then requests a natural translation.",
+      "turnFixtureIds": [
+        "beginner-particle-errors",
+        "request-strict-correction",
+        "request-teaching",
+        "request-translation"
+      ],
+      "assertions": [
+        "honor-latest-correction-preference",
+        "keep-context-across-turns",
+        "answer-explicit-teaching-requests",
+        "return-to-conversation"
+      ]
+    },
+    {
+      "id": "station-roleplay",
+      "description": "The learner initiates ticket-counter roleplay and supplies dense travel details with later code-switching.",
+      "turnFixtureIds": [
+        "request-roleplay",
+        "numbers-names-counters",
+        "japanese-english-code-switch"
+      ],
+      "assertions": [
+        "stay-in-role",
+        "preserve-names-dates-counters",
+        "understand-code-switching",
+        "persist-every-accepted-turn"
+      ]
+    }
+  ]
+}

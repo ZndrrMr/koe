@@ -1,0 +1,1206 @@
+{
+  "schemaVersion": 1,
+  "corpusVersion": "1.0.0",
+  "generatedAt": "2026-08-16T23:30:37.877Z",
+  "privacy": "All source phrases were authored for this test corpus. No private user recording or user transcript was sent to Inworld.",
+  "providerContract": {
+    "route": "koe-worker:/tts",
+    "provider": "Inworld",
+    "model": "inworld-tts-1.5-max",
+    "voiceId": "Asuka",
+    "encoding": "mp3",
+    "sampleRate": 24000,
+    "channels": 1
+  },
+  "generationPolicy": {
+    "providerSpendGuard": "--allow-provider-spend",
+    "ordinaryValidationUsesNetwork": false,
+    "regenerationRequiresForce": true
+  },
+  "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+  "requiredCoverage": [
+    "short-japanese",
+    "long-japanese",
+    "beginner-errors",
+    "natural-fluent-speech",
+    "hesitation",
+    "self-correction",
+    "english",
+    "code-switching",
+    "request-teaching",
+    "request-translation",
+    "request-strict-correction",
+    "request-roleplay",
+    "numbers",
+    "names",
+    "counters",
+    "particles",
+    "pitch-sensitive-phrases",
+    "quiet-speech",
+    "fast-speech",
+    "long-pauses",
+    "silence",
+    "noise",
+    "clipping",
+    "truncation",
+    "malformed"
+  ],
+  "conversationScripts": [
+    {
+      "id": "getting-acquainted",
+      "description": "A natural opening that grows from a short statement into a longer story and a self-correction.",
+      "turnFixtureIds": [
+        "natural-short-ja",
+        "natural-long-ja",
+        "hesitation-self-correction"
+      ],
+      "assertions": [
+        "preserve-turn-order",
+        "persist-every-accepted-turn",
+        "reply-audibly-before-resuming",
+        "no-unsolicited-lesson-mode"
+      ]
+    },
+    {
+      "id": "learner-directed-support",
+      "description": "The learner makes errors, asks for stricter correction, requests teaching, and then requests a natural translation.",
+      "turnFixtureIds": [
+        "beginner-particle-errors",
+        "request-strict-correction",
+        "request-teaching",
+        "request-translation"
+      ],
+      "assertions": [
+        "honor-latest-correction-preference",
+        "keep-context-across-turns",
+        "answer-explicit-teaching-requests",
+        "return-to-conversation"
+      ]
+    },
+    {
+      "id": "station-roleplay",
+      "description": "The learner initiates ticket-counter roleplay and supplies dense travel details with later code-switching.",
+      "turnFixtureIds": [
+        "request-roleplay",
+        "numbers-names-counters",
+        "japanese-english-code-switch"
+      ],
+      "assertions": [
+        "stay-in-role",
+        "preserve-names-dates-counters",
+        "understand-code-switching",
+        "persist-every-accepted-turn"
+      ]
+    }
+  ],
+  "assets": [
+    {
+      "id": "natural-short-ja",
+      "file": "audio/natural-short-ja.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "こんにちは。今日は少し緊張しています。",
+      "language": "ja-JP",
+      "categories": ["short-japanese", "natural-fluent-speech"],
+      "intendedBehavior": "A brief, natural opening that should receive a warm Japanese response and an easy follow-up question.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 3096,
+      "byteCount": 49536,
+      "sha256": "3c8ed3e541391ab814c46e6ace65e3a80e0b000827a300caf08b9be99881c231",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "こんにちは。今日は少し緊張しています。",
+      "expectedIntent": "greeting-and-emotional-state",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "こんにちは。今日は少し緊張しています。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": [
+            "respond-in-japanese",
+            "acknowledge-nervousness",
+            "offer-low-pressure-opening"
+          ],
+          "mustNot": ["force-correction", "switch-to-lesson-mode"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "natural-long-ja",
+      "file": "audio/natural-long-ja.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+      "language": "ja-JP",
+      "categories": ["long-japanese", "natural-fluent-speech"],
+      "intendedBehavior": "A long fluent narrative that should be understood as one coherent experience and followed naturally rather than graded.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 19344,
+      "byteCount": 309504,
+      "sha256": "3e013559fd03680e3aed0c06cea543ceb6c6169f1b749b086018ae620ff69f00",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+      "expectedIntent": "share-a-weekend-memory",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": ["respond-to-story-content", "continue-natural-conversation"],
+          "mustNot": ["summarize-every-sentence", "invent-an-error"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "beginner-particle-errors",
+      "file": "audio/beginner-particle-errors.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "昨日、私は友達を会って、いっしょに映画が見ました。とても楽しいでした。",
+      "language": "ja-JP",
+      "categories": ["beginner-errors", "particles"],
+      "intendedBehavior": "Intelligible beginner Japanese with particle and adjective errors; the tutor should preserve the conversation and offer only compact useful correction.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 5736,
+      "byteCount": 91776,
+      "sha256": "86c7ea7e3c1175c9a659e6b17fcd4fed77ba47a3a3675de87892cd8f5830f2cd",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "昨日、私は友達を会って、いっしょに映画が見ました。とても楽しいでした。",
+      "expectedIntent": "describe-yesterdays-activity-with-errors",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "昨日、私は友達を会って、いっしょに映画が見ました。とても楽しいでした。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": [
+            "understand-intended-meaning",
+            "keep-conversation-moving",
+            "correction-may-be-compact"
+          ],
+          "mustNot": ["reject-utterance", "produce-long-grammar-lecture"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "hesitation-self-correction",
+      "file": "audio/hesitation-self-correction.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "ええと、昨日は京都に……あ、違います。大阪に行きました。それで、たしか三時ごろに友達と会って、うーん、まずお好み焼きを食べました。",
+      "language": "ja-JP",
+      "categories": ["hesitation", "self-correction"],
+      "intendedBehavior": "Disfluent but recoverable speech; the corrected destination must win over the abandoned one.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 12000,
+      "byteCount": 192000,
+      "sha256": "a084fa113e1a789fc8b3c95b0c65173917791537c8b5d16924d9639808da251e",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "ええと、昨日は京都に……あ、違います。大阪に行きました。それで、たしか三時ごろに友達と会って、うーん、まずお好み焼きを食べました。",
+      "expectedIntent": "self-correct-destination-and-describe-outing",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "ええと、昨日は京都に……あ、違います。大阪に行きました。それで、たしか三時ごろに友達と会って、うーん、まずお好み焼きを食べました。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": [
+            "treat-osaka-as-final-destination",
+            "tolerate-hesitation",
+            "respond-to-outing"
+          ],
+          "mustNot": [
+            "treat-kyoto-as-final-destination",
+            "correct-filler-words"
+          ]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "english-only",
+      "file": "audio/english-only.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "I had a busy morning, but I would still like to practice Japanese for a few minutes.",
+      "language": "en-US",
+      "categories": ["english"],
+      "intendedBehavior": "English meta-conversation should be understood and gently open a short Japanese exchange.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 5112,
+      "byteCount": 81792,
+      "sha256": "3674de64961af21c148586eeb39978d20fe6299e75578cef556ae7162a5f58ea",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "I had a busy morning, but I would still like to practice Japanese for a few minutes.",
+      "expectedIntent": "request-brief-japanese-practice",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "I had a busy morning, but I would still like to practice Japanese for a few minutes.",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": [
+            "acknowledge-time-constraint",
+            "offer-simple-japanese-opening"
+          ],
+          "mustNot": ["claim-english-is-invalid"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "japanese-english-code-switch",
+      "file": "audio/japanese-english-code-switch.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "今日は仕事がすごく busy だったけど、after work に友達とラーメンを食べて、ちょっと元気になりました。",
+      "language": "ja-JP,en-US",
+      "categories": ["code-switching"],
+      "intendedBehavior": "Natural Japanese/English code-switching should retain both languages and the positive turn after work.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 7128,
+      "byteCount": 114048,
+      "sha256": "cb87aeefc6051fcdb90e55702db45467c6e7f3dba4d37547920f253bf712b7b2",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "今日は仕事がすごく busy だったけど、after work に友達とラーメンを食べて、ちょっと元気になりました。",
+      "expectedIntent": "describe-busy-workday-and-recovery",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "今日は仕事がすごく busy だったけど、after work に友達とラーメンを食べて、ちょっと元気になりました。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": ["understand-both-languages", "respond-to-after-work-meal"],
+          "mustNot": ["translate-unprompted", "flag-code-switching-as-error"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "request-teaching",
+      "file": "audio/request-teaching.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "『わけではない』の使い方がまだよく分かりません。短い例を二つ使って教えてください。",
+      "language": "ja-JP",
+      "categories": ["request-teaching"],
+      "intendedBehavior": "An explicit teaching request should temporarily switch from free conversation to a concise explanation with two examples.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 5928,
+      "byteCount": 94848,
+      "sha256": "4dbb7292efee03e053c49d4b8b568b5cd8e96d857b25fa3e9a9433c4f571cfc1",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "『わけではない』の使い方がまだよく分かりません。短い例を二つ使って教えてください。",
+      "expectedIntent": "request-grammar-teaching",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "『わけではない』の使い方がまだよく分かりません。短い例を二つ使って教えてください。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": ["explain-wake-dewa-nai", "provide-two-short-examples"],
+          "mustNot": ["avoid-the-request", "provide-more-than-two-examples"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "request-translation",
+      "file": "audio/request-translation.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "『I ended up staying home』は自然な日本語でどう言いますか。直訳じゃなくて、会話で使う言い方を教えてください。",
+      "language": "ja-JP,en-US",
+      "categories": ["request-translation", "code-switching"],
+      "intendedBehavior": "An explicit translation request should yield a natural conversational Japanese rendering, not a literal word-by-word answer.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 8448,
+      "byteCount": 135168,
+      "sha256": "1657f31c994461c2f16b74a5eaebef60c6fc7c2a72cfb8e45e8294a746d81e15",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "『I ended up staying home』は自然な日本語でどう言いますか。直訳じゃなくて、会話で使う言い方を教えてください。",
+      "expectedIntent": "request-natural-translation",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "『I ended up staying home』は自然な日本語でどう言いますか。直訳じゃなくて、会話で使う言い方を教えてください。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": [
+            "provide-natural-japanese-translation",
+            "briefly-explain-nuance"
+          ],
+          "mustNot": ["give-only-literal-translation"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "request-strict-correction",
+      "file": "audio/request-strict-correction.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "これからは間違いを見逃さないでください。会話を止めてもいいので、助詞と敬語を厳しく直してください。",
+      "language": "ja-JP",
+      "categories": ["request-strict-correction", "particles"],
+      "intendedBehavior": "An explicit preference for strict correction should be acknowledged and applied without changing the user's request into roleplay.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 7464,
+      "byteCount": 119424,
+      "sha256": "84936cacee38d7fa1ed7d7ee2a7966dbc616b79899ec382d0d5d834de4d5ddab",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "これからは間違いを見逃さないでください。会話を止めてもいいので、助詞と敬語を厳しく直してください。",
+      "expectedIntent": "request-strict-particle-and-register-correction",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "これからは間違いを見逃さないでください。会話を止めてもいいので、助詞と敬語を厳しく直してください。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": [
+            "acknowledge-strict-correction-request",
+            "focus-on-particles-and-register"
+          ],
+          "mustNot": [
+            "continue-default-light-correction-without-acknowledgment"
+          ]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "request-roleplay",
+      "file": "audio/request-roleplay.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "駅で新幹線の切符を買う練習をしたいです。あなたは駅員になって、まず行き先を聞いてください。",
+      "language": "ja-JP",
+      "categories": ["request-roleplay"],
+      "intendedBehavior": "An explicit roleplay request should make the tutor act as a station clerk and begin by asking for the destination.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 6768,
+      "byteCount": 108288,
+      "sha256": "60aaf880c0be1f4f3fb9fd161751ecc8cae0183a4f0dc24534a1ebb2a602e7be",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "駅で新幹線の切符を買う練習をしたいです。あなたは駅員になって、まず行き先を聞いてください。",
+      "expectedIntent": "request-station-ticket-roleplay",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "駅で新幹線の切符を買う練習をしたいです。あなたは駅員になって、まず行き先を聞いてください。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": ["enter-station-clerk-role", "ask-destination-first"],
+          "mustNot": ["explain-roleplay-instead-of-starting"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "numbers-names-counters",
+      "file": "audio/numbers-names-counters.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "田中真理さんと二〇二六年八月二十三日に会います。大人三人と子ども二人で、京都駅までの切符を五枚お願いします。",
+      "language": "ja-JP",
+      "categories": ["numbers", "names", "counters"],
+      "intendedBehavior": "Names, a date, people counters, and ticket counters must remain distinct and usable in a transactional reply.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 9888,
+      "byteCount": 158208,
+      "sha256": "c7abb69d0e890cf24dfe81b7e51d830a264f0c2664fdb6051c78e7c212086587",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "田中真理さんと二〇二六年八月二十三日に会います。大人三人と子ども二人で、京都駅までの切符を五枚お願いします。",
+      "expectedIntent": "state-travel-party-date-and-ticket-count",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "田中真理さんと二〇二六年八月二十三日に会います。大人三人と子ども二人で、京都駅までの切符を五枚お願いします。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": [
+            "preserve-tanaka-mari",
+            "preserve-date",
+            "preserve-three-adults-two-children",
+            "preserve-five-tickets"
+          ],
+          "mustNot": ["collapse-counters"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "particles-focus",
+      "file": "audio/particles-focus.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "私は母と電車で鎌倉へ行って、海を見ました。帰りは駅の近くでお茶を飲みました。",
+      "language": "ja-JP",
+      "categories": ["particles", "natural-fluent-speech"],
+      "intendedBehavior": "A dense but correct sequence of は、と、で、へ、を、の should transcribe without dropping grammatical particles.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 6504,
+      "byteCount": 104064,
+      "sha256": "f004951dd9112b70a25942b1156e61fe3068f5e4ce3b23eda00c3e903133424c",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "私は母と電車で鎌倉へ行って、海を見ました。帰りは駅の近くでお茶を飲みました。",
+      "expectedIntent": "describe-kamakura-trip",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "私は母と電車で鎌倉へ行って、海を見ました。帰りは駅の近くでお茶を飲みました。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": [
+            "understand-trip-sequence",
+            "avoid-false-particle-correction"
+          ],
+          "mustNot": ["invent-particle-error"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "pitch-sensitive-pairs",
+      "file": "audio/pitch-sensitive-pairs.mp3",
+      "scenario": "spoken-input",
+      "sourceText": "雨と飴、橋と箸、柿と牡蠣。発音の高低で意味が変わる言葉を、自然な文の中で練習したいです。",
+      "language": "ja-JP",
+      "categories": ["pitch-sensitive-phrases"],
+      "intendedBehavior": "Pitch-sensitive minimal pairs should remain available for pronunciation analysis while the semantic request is understood.",
+      "voiceId": "Asuka",
+      "provider": "Inworld",
+      "model": "inworld-tts-1.5-max",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 7992,
+      "byteCount": 127872,
+      "sha256": "de45db87a272feb4490b9ede7aec80a2ee1ff5a985a112055b5accd26ca939fd",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "雨と飴、橋と箸、柿と牡蠣。発音の高低で意味が変わる言葉を、自然な文の中で練習したいです。",
+      "expectedIntent": "request-pitch-accent-practice",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass",
+        "transcript": {
+          "mode": "equivalent",
+          "expected": "雨と飴、橋と箸、柿と牡蠣。発音の高低で意味が変わる言葉を、自然な文の中で練習したいです。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.12
+        },
+        "tutor": {
+          "must": [
+            "recognize-minimal-pair-practice",
+            "offer-contextual-practice"
+          ],
+          "mustNot": ["claim-the-pairs-have-identical-meaning"]
+        }
+      },
+      "provenance": {
+        "kind": "project-configured-inworld-route",
+        "route": "koe-worker:/tts",
+        "providerRequestId": "unavailable",
+        "providerDurationMs": null,
+        "responseContractHeaders": {
+          "content-type": "audio/mpeg",
+          "x-koe-audio-encoding": "missing-on-deployed-route",
+          "x-koe-audio-sample-rate": "missing-on-deployed-route",
+          "x-koe-audio-channels": "missing-on-deployed-route",
+          "x-koe-voice-id": "missing-on-deployed-route"
+        }
+      }
+    },
+    {
+      "id": "acoustic-quiet",
+      "file": "audio/acoustic-quiet.mp3",
+      "scenario": "isolated-edge-case",
+      "sourceText": "こんにちは。今日は少し緊張しています。",
+      "language": "ja-JP",
+      "categories": ["quiet-speech"],
+      "intendedBehavior": "Very quiet but decodable speech should either transcribe equivalently or produce a recoverable low-confidence response.",
+      "voiceId": "Asuka",
+      "provider": "Local transform of Inworld fixture",
+      "model": "ffmpeg/8.1.2",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 3096,
+      "byteCount": 25389,
+      "sha256": "6351bf782f07dc13ddbb08cf1b6c2ef0e6c75cac15809e6b02e1ea3d6d8c1db7",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "こんにちは。今日は少し緊張しています。",
+      "expectedIntent": "quiet-greeting",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass-or-recoverably-fail",
+        "expectedFailureKind": null,
+        "transcript": {
+          "mode": "equivalent-with-acoustic-tolerance",
+          "expected": "こんにちは。今日は少し緊張しています。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.3
+        },
+        "tutor": {
+          "must": ["accept-or-recover-clearly"],
+          "mustNot": ["hang", "crash"]
+        }
+      },
+      "provenance": {
+        "kind": "local-controlled-variant",
+        "tool": "ffmpeg/8.1.2",
+        "transform": "volume=0.035",
+        "inputFile": "audio/natural-short-ja.mp3",
+        "inputSha256": "3c8ed3e541391ab814c46e6ace65e3a80e0b000827a300caf08b9be99881c231",
+        "upstreamProvider": "Inworld",
+        "upstreamModel": "inworld-tts-1.5-max",
+        "upstreamVoiceId": "Asuka"
+      }
+    },
+    {
+      "id": "acoustic-fast",
+      "file": "audio/acoustic-fast.mp3",
+      "scenario": "isolated-edge-case",
+      "sourceText": "田中真理さんと二〇二六年八月二十三日に会います。大人三人と子ども二人で、京都駅までの切符を五枚お願いします。",
+      "language": "ja-JP",
+      "categories": ["fast-speech", "numbers", "names", "counters"],
+      "intendedBehavior": "Time-compressed speech should preserve the named traveler and quantities within documented STT tolerance.",
+      "voiceId": "Asuka",
+      "provider": "Local transform of Inworld fixture",
+      "model": "ffmpeg/8.1.2",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 5978,
+      "byteCount": 48621,
+      "sha256": "5452f111f84db34aecc49ad9ce1f9ce5b51fbbc9f579bd94fa9988b171b9e0ef",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "田中真理さんと二〇二六年八月二十三日に会います。大人三人と子ども二人で、京都駅までの切符を五枚お願いします。",
+      "expectedIntent": "fast-travel-details",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass-or-recoverably-fail",
+        "expectedFailureKind": null,
+        "transcript": {
+          "mode": "equivalent-with-acoustic-tolerance",
+          "expected": "田中真理さんと二〇二六年八月二十三日に会います。大人三人と子ども二人で、京都駅までの切符を五枚お願いします。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.3
+        },
+        "tutor": {
+          "must": ["accept-or-recover-clearly"],
+          "mustNot": ["hang", "crash"]
+        }
+      },
+      "provenance": {
+        "kind": "local-controlled-variant",
+        "tool": "ffmpeg/8.1.2",
+        "transform": "atempo=1.65",
+        "inputFile": "audio/numbers-names-counters.mp3",
+        "inputSha256": "c7abb69d0e890cf24dfe81b7e51d830a264f0c2664fdb6051c78e7c212086587",
+        "upstreamProvider": "Inworld",
+        "upstreamModel": "inworld-tts-1.5-max",
+        "upstreamVoiceId": "Asuka"
+      }
+    },
+    {
+      "id": "acoustic-long-pauses",
+      "file": "audio/acoustic-long-pauses.mp3",
+      "scenario": "isolated-edge-case",
+      "sourceText": "ええと、昨日は京都に……あ、違います。大阪に行きました。それで、たしか三時ごろに友達と会って、うーん、まずお好み焼きを食べました。",
+      "language": "ja-JP",
+      "categories": ["long-pauses", "hesitation", "self-correction"],
+      "intendedBehavior": "Controlled silence around a hesitant utterance should not cause stale-turn leakage; Osaka remains the final destination if speech is accepted.",
+      "voiceId": "Asuka",
+      "provider": "Local transform of Inworld fixture",
+      "model": "ffmpeg/8.1.2",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 17500,
+      "byteCount": 140781,
+      "sha256": "b5bc660f8bbdcc2e3c86984e8df8c5c9a2a3282e596bf6d01ec9eaa82bb11795",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "ええと、昨日は京都に……あ、違います。大阪に行きました。それで、たしか三時ごろに友達と会って、うーん、まずお好み焼きを食べました。",
+      "expectedIntent": "paused-self-correction",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass-or-recoverably-fail",
+        "expectedFailureKind": null,
+        "transcript": {
+          "mode": "equivalent-with-acoustic-tolerance",
+          "expected": "ええと、昨日は京都に……あ、違います。大阪に行きました。それで、たしか三時ごろに友達と会って、うーん、まずお好み焼きを食べました。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.3
+        },
+        "tutor": {
+          "must": [
+            "accept-or-recover-clearly",
+            "treat-osaka-as-final-if-transcribed"
+          ],
+          "mustNot": ["hang", "reuse-stale-transcript"]
+        }
+      },
+      "provenance": {
+        "kind": "local-controlled-variant",
+        "tool": "ffmpeg/8.1.2",
+        "transform": "2.5s leading silence and 3s trailing silence",
+        "inputFile": "audio/hesitation-self-correction.mp3",
+        "inputSha256": "a084fa113e1a789fc8b3c95b0c65173917791537c8b5d16924d9639808da251e",
+        "upstreamProvider": "Inworld",
+        "upstreamModel": "inworld-tts-1.5-max",
+        "upstreamVoiceId": "Asuka"
+      }
+    },
+    {
+      "id": "failure-noise",
+      "file": "audio/failure-noise.mp3",
+      "scenario": "isolated-edge-case",
+      "sourceText": "昨日、私は友達を会って、いっしょに映画が見ました。とても楽しいでした。",
+      "language": "ja-JP",
+      "categories": ["noise", "beginner-errors"],
+      "intendedBehavior": "Speech mixed with deterministic pink noise should transcribe within tolerance or enter explicit recoverable STT failure.",
+      "voiceId": "Asuka",
+      "provider": "Local transform of Inworld fixture",
+      "model": "ffmpeg/8.1.2",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 5736,
+      "byteCount": 46509,
+      "sha256": "261d09692b97b7a3a413ffb6423870829458e2410abda46380ed410382a76c8f",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "昨日、私は友達を会って、いっしょに映画が見ました。とても楽しいでした。",
+      "expectedIntent": "noisy-beginner-utterance",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass-or-recoverably-fail",
+        "expectedFailureKind": null,
+        "transcript": {
+          "mode": "equivalent-with-acoustic-tolerance",
+          "expected": "昨日、私は友達を会って、いっしょに映画が見ました。とても楽しいでした。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.3
+        },
+        "tutor": {
+          "must": ["accept-or-recover-clearly"],
+          "mustNot": ["hang", "crash", "persist-empty-turn"]
+        }
+      },
+      "provenance": {
+        "kind": "local-controlled-variant",
+        "tool": "ffmpeg/8.1.2",
+        "transform": "deterministic-amplitude pink noise mixed at 0.045",
+        "inputFile": "audio/beginner-particle-errors.mp3",
+        "inputSha256": "86c7ea7e3c1175c9a659e6b17fcd4fed77ba47a3a3675de87892cd8f5830f2cd",
+        "upstreamProvider": "Inworld",
+        "upstreamModel": "inworld-tts-1.5-max",
+        "upstreamVoiceId": "Asuka"
+      }
+    },
+    {
+      "id": "failure-clipped",
+      "file": "audio/failure-clipped.mp3",
+      "scenario": "isolated-edge-case",
+      "sourceText": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+      "language": "ja-JP",
+      "categories": ["clipping", "long-japanese"],
+      "intendedBehavior": "Hard-clipped speech should remain a bounded input and either produce partial content or an explicit recoverable failure.",
+      "voiceId": "Asuka",
+      "provider": "Local transform of Inworld fixture",
+      "model": "ffmpeg/8.1.2",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 19344,
+      "byteCount": 155373,
+      "sha256": "930d4b60fa916d27ab0274e9f577e3e59c5dad0d1cee2ccf28c1fbe2ca65e35f",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+      "expectedIntent": "clipped-long-narrative",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass-or-recoverably-fail",
+        "expectedFailureKind": null,
+        "transcript": {
+          "mode": "equivalent-with-acoustic-tolerance",
+          "expected": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.3
+        },
+        "tutor": {
+          "must": ["accept-or-recover-clearly"],
+          "mustNot": ["hang", "crash"]
+        }
+      },
+      "provenance": {
+        "kind": "local-controlled-variant",
+        "tool": "ffmpeg/8.1.2",
+        "transform": "20dB gain into hard clip at threshold 0.25",
+        "inputFile": "audio/natural-long-ja.mp3",
+        "inputSha256": "3e013559fd03680e3aed0c06cea543ceb6c6169f1b749b086018ae620ff69f00",
+        "upstreamProvider": "Inworld",
+        "upstreamModel": "inworld-tts-1.5-max",
+        "upstreamVoiceId": "Asuka"
+      }
+    },
+    {
+      "id": "failure-truncated-utterance",
+      "file": "audio/failure-truncated-utterance.mp3",
+      "scenario": "isolated-edge-case",
+      "sourceText": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+      "language": "ja-JP",
+      "categories": ["truncation"],
+      "intendedBehavior": "A valid MP3 cut off mid-utterance should decode, yield only a prefix or silence, and recover without inventing the omitted story.",
+      "voiceId": "Asuka",
+      "provider": "Local transform of Inworld fixture",
+      "model": "ffmpeg/8.1.2",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 750,
+      "byteCount": 6765,
+      "sha256": "d1556780deb2a4b701ab3a90cbfea642c14aa7af39fcb2b20ac36bb8af81cb43",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+      "expectedIntent": "truncated-narrative-prefix",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "pass-or-recoverably-fail",
+        "expectedFailureKind": null,
+        "transcript": {
+          "mode": "nonempty-prefix-or-recoverable-silence",
+          "expected": "先週の日曜日、朝早く起きて近所の川沿いを散歩しました。桜はもうほとんど散っていましたが、水面に花びらが流れていて、とても静かできれいでした。そのあと小さな喫茶店に入り、窓際の席でコーヒーを飲みながら、今年やってみたいことをノートに書きました。",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": 0.3
+        },
+        "tutor": {
+          "must": [
+            "avoid-inventing-missing-content",
+            "accept-or-recover-clearly"
+          ],
+          "mustNot": ["hang", "crash"]
+        }
+      },
+      "provenance": {
+        "kind": "local-controlled-variant",
+        "tool": "ffmpeg/8.1.2",
+        "transform": "decoded speech re-encoded after a 0.75s cutoff",
+        "inputFile": "audio/natural-long-ja.mp3",
+        "inputSha256": "3e013559fd03680e3aed0c06cea543ceb6c6169f1b749b086018ae620ff69f00",
+        "upstreamProvider": "Inworld",
+        "upstreamModel": "inworld-tts-1.5-max",
+        "upstreamVoiceId": "Asuka"
+      }
+    },
+    {
+      "id": "failure-silence",
+      "file": "audio/failure-silence.mp3",
+      "scenario": "isolated-edge-case",
+      "sourceText": "",
+      "language": "und",
+      "categories": ["silence"],
+      "intendedBehavior": "A valid silent MP3 must produce a recoverable no-speech result and no conversation turn.",
+      "voiceId": "none",
+      "provider": "Local synthetic fixture",
+      "model": "ffmpeg/8.1.2",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "mp3",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 2500,
+      "byteCount": 20781,
+      "sha256": "011837ef68164862de2840d96fe5ec28136632f7723527b098907d90d87cb064",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "",
+      "expectedIntent": "silence",
+      "assertions": {
+        "decode": "pass",
+        "ingestion": "fail-recoverably",
+        "expectedFailureKind": "silence",
+        "transcript": {
+          "mode": "none",
+          "expected": "",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": null
+        },
+        "tutor": {
+          "must": ["recover-as-no-speech"],
+          "mustNot": [
+            "persist-empty-turn",
+            "call-reply-provider",
+            "hang",
+            "crash"
+          ]
+        }
+      },
+      "provenance": {
+        "kind": "local-controlled-variant",
+        "tool": "ffmpeg/8.1.2",
+        "transform": "2.5s generated digital silence",
+        "inputFile": null,
+        "inputSha256": null,
+        "upstreamProvider": null,
+        "upstreamModel": null,
+        "upstreamVoiceId": null
+      }
+    },
+    {
+      "id": "failure-malformed-bytes",
+      "file": "audio/failure-malformed-bytes.mp3",
+      "scenario": "isolated-edge-case",
+      "sourceText": "",
+      "language": "und",
+      "categories": ["malformed"],
+      "intendedBehavior": "A non-audio payload with an MP3 extension must fail local decode before upload.",
+      "voiceId": "none",
+      "provider": "Local synthetic fixture",
+      "model": "ffmpeg/8.1.2",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "undecodable",
+      "sampleRate": null,
+      "channels": null,
+      "durationMs": null,
+      "byteCount": 28,
+      "sha256": "952616287d228f05f043550ba59f0eeee3d99c55b8f2dd1825fc2ca9955a87de",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "",
+      "expectedIntent": "invalid-audio",
+      "assertions": {
+        "decode": "fail",
+        "ingestion": "fail-recoverably",
+        "expectedFailureKind": "decode-failed",
+        "transcript": {
+          "mode": "none",
+          "expected": "",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": null
+        },
+        "tutor": {
+          "must": ["reject-before-provider", "recover-clearly"],
+          "mustNot": ["upload-bytes", "persist-turn", "hang", "crash"]
+        }
+      },
+      "provenance": {
+        "kind": "local-controlled-variant",
+        "tool": "ffmpeg/8.1.2",
+        "transform": "non-audio sentinel bytes with an MP3 extension",
+        "inputFile": null,
+        "inputSha256": null,
+        "upstreamProvider": null,
+        "upstreamModel": null,
+        "upstreamVoiceId": null
+      }
+    },
+    {
+      "id": "failure-truncated-frame",
+      "file": "audio/failure-truncated-frame.mp3",
+      "scenario": "isolated-edge-case",
+      "sourceText": "こんにちは。今日は少し緊張しています。",
+      "language": "ja-JP",
+      "categories": ["malformed", "truncation"],
+      "intendedBehavior": "An MP3 cut inside its first encoded frame must fail local decode before upload.",
+      "voiceId": "Asuka",
+      "provider": "Local transform of Inworld fixture",
+      "model": "ffmpeg/8.1.2",
+      "generationDate": "2026-08-16T23:30:37.877Z",
+      "encoding": "undecodable",
+      "sampleRate": null,
+      "channels": null,
+      "durationMs": null,
+      "byteCount": 96,
+      "sha256": "d24c6d4b763294f8948669299e07959b3f7acfb9db9aa9b541b5350a27bab306",
+      "licenseUsageScope": "Koe repository test fixture for development and automated testing under the account's applicable Inworld terms; not sourced from a private user recording and not licensed for unrelated redistribution or model training.",
+      "expectedTranscript": "こんにちは。今日は少し緊張しています。",
+      "expectedIntent": "truncated-audio",
+      "assertions": {
+        "decode": "fail",
+        "ingestion": "fail-recoverably",
+        "expectedFailureKind": "truncated-audio",
+        "transcript": {
+          "mode": "none",
+          "expected": "",
+          "ignorePunctuationAndWhitespace": true,
+          "maxNormalizedEditDistance": null
+        },
+        "tutor": {
+          "must": ["reject-before-provider", "recover-clearly"],
+          "mustNot": ["upload-bytes", "persist-turn", "hang", "crash"]
+        }
+      },
+      "provenance": {
+        "kind": "local-controlled-variant",
+        "tool": "ffmpeg/8.1.2",
+        "transform": "source MP3 truncated to its first 96 bytes",
+        "inputFile": "audio/natural-short-ja.mp3",
+        "inputSha256": "3c8ed3e541391ab814c46e6ace65e3a80e0b000827a300caf08b9be99881c231",
+        "upstreamProvider": "Inworld",
+        "upstreamModel": "inworld-tts-1.5-max",
+        "upstreamVoiceId": "Asuka"
+      }
+    }
+  ]
+}

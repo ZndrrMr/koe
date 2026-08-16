@@ -17,6 +17,8 @@
     "test:prompts": "tsx --test src/prompts/tutor.test.ts",
     "test:voice": "tsx --test src/voice/*.test.ts src/services/audioContract.test.ts src/services/recordedAudioInput.test.ts src/services/sse.test.ts src/services/pcm.test.ts src/services/pitch.test.ts src/theme/interaction.test.ts src/utils/telemetry.test.ts",
     "test:sessions": "tsx --test src/db/sessionHistory.test.ts",
+    "test:spoken-fixtures": "node scripts/validate-spoken-fixtures.mjs",
+    "fixtures:spoken:generate": "node scripts/generate-spoken-fixtures.mjs",
     "voice:contract-server": "node scripts/voice-contract-server.mjs"
   },
   "dependencies": {
