@@ -30,14 +30,28 @@ export class ResponseRunController {
     return run.turnId;
   }
 
-  complete(turnId: string): boolean {
-    if (this.current?.turnId !== turnId) return false;
+  /** Invalidates every token, even when the active request already completed. */
+  invalidate(): string | undefined {
+    const turnId = this.interrupt();
+    this.generation += 1;
+    return turnId;
+  }
+
+  complete(turnId: string, token?: number): boolean {
+    if (
+      this.current?.turnId !== turnId ||
+      (token !== undefined && this.current.token !== token)
+    )
+      return false;
     this.current = undefined;
     return true;
   }
 
-  isCurrent(turnId: string): boolean {
-    return this.current?.turnId === turnId;
+  isCurrent(turnId: string, token?: number): boolean {
+    return (
+      this.current?.turnId === turnId &&
+      (token === undefined || this.current.token === token)
+    );
   }
 
   isLatest(token: number): boolean {

@@ -1,0 +1,1477 @@
+import type { ConversationChunk, ConversationResult } from "../services/llm";
+import type { PronunciationFeedback } from "../services/pitch";
+import type { ChatTurn } from "../stores/useSession";
+import type { VoiceLatency, VoiceLifecycle, VoicePhase } from "./lifecycle";
+import type { VoiceTraceContext } from "../utils/telemetry";
+import { VoiceLatencyTracker, voiceError } from "./lifecycle";
+import { ResponseRunController, type ResponseRun } from "./responseRun";
+
+export type ConversationPhase =
+  | "idle"
+  | "start"
+  | "listening"
+  | "endpoint"
+  | "finalizing"
+  | "understanding"
+  | "speaking"
+  | "resuming"
+  | "recovery"
+  | "ending"
+  | "ended";
+
+export type ConversationOwnership = {
+  audioSession: "none" | "microphone" | "playback";
+  microphone: number | null;
+  providerRequest: number | null;
+  playbackQueue: number | null;
+  retry: string | null;
+};
+
+export type ConversationEngineState = {
+  phase: ConversationPhase;
+  ownership: ConversationOwnership;
+  draftTranscript: string;
+  draftAudioUri?: string;
+  audioEnergy: number;
+  retryingTurnId: string | null;
+  showCoda: boolean;
+};
+
+export type TranscriptInputEvent =
+  | {
+      type: "interim" | "final";
+      text: string;
+      confidence: number;
+    }
+  | { type: "endpoint" };
+
+export type SpeechInputHandle = {
+  stop: () => Promise<{
+    fullText: string;
+    durationMs: number;
+    audioUri: string;
+  }>;
+  cancel: () => Promise<void>;
+};
+
+export type PlaybackQueue = {
+  enqueue: (
+    audioBase64: string,
+    sampleRate: number,
+    channels: number,
+  ) => Promise<void>;
+  finish: () => Promise<void>;
+  stop: () => Promise<void>;
+};
+
+export type ConversationSessionSnapshot = {
+  id: string | null;
+  turns: ChatTurn[];
+  isRecording: boolean;
+  isStreaming: boolean;
+  voice: VoiceLifecycle;
+  latency: VoiceLatency;
+  traceContext: VoiceTraceContext;
+  closeout: unknown;
+};
+
+type TimerHandle = unknown;
+
+export type ConversationFailure =
+  | "permissionDenied"
+  | "network"
+  | "sttFailure"
+  | "providerTimeout"
+  | "audioInterruption"
+  | "playbackFailure"
+  | "audioContract"
+  | "cancelled";
+
+export type ConversationDependencies = {
+  speechInput: {
+    start: (options: {
+      onEvent: (event: TranscriptInputEvent) => void;
+      onAudioEnergy: (energy: number) => void;
+      trace: VoiceTraceContext;
+    }) => Promise<SpeechInputHandle>;
+  };
+  replyStream: (options: {
+    history: Array<{ role: "user" | "assistant"; content: string }>;
+    userTurn: string;
+    signal: AbortSignal;
+    trace: VoiceTraceContext;
+  }) => AsyncGenerator<ConversationChunk, ConversationResult, void>;
+  audio: {
+    createQueue: (options: {
+      captureKey: string;
+      trace: VoiceTraceContext;
+      onCaptured: (audioUri: string) => void;
+      onStarted: () => void;
+      onFinished: () => void;
+      onError: (error: Error) => void;
+      onEnergy: (energy: number) => void;
+    }) => PlaybackQueue;
+    synthesize: (
+      text: string,
+      options: { trace?: VoiceTraceContext; withTimestamps?: boolean },
+    ) => Promise<{ audioUri: string }>;
+    play: (
+      audioUri: string,
+      options: {
+        trace?: VoiceTraceContext;
+        onStarted?: () => void;
+        onFinished?: () => void;
+        onError?: (error: Error) => void;
+      },
+    ) => Promise<void>;
+    stop: () => Promise<void>;
+  };
+  pronunciation: {
+    analyze: (options: {
+      targetText: string;
+      attemptAudioUri: string;
+      previous?: ChatTurn;
+    }) => Promise<{
+      referenceAudioUri: string;
+      pronunciation: PronunciationFeedback;
+    }>;
+  };
+  session: {
+    snapshot: () => ConversationSessionSnapshot;
+    start: (sessionId: string) => Promise<void>;
+    addTurn: (turn: ChatTurn) => void;
+    patchTurn: (turnId: string, patch: Partial<ChatTurn>) => void;
+    appendAssistantText: (turnId: string, chunk: string) => void;
+    setRecording: (recording: boolean) => void;
+    setStreaming: (streaming: boolean) => void;
+    setVoice: (voice: VoiceLifecycle) => void;
+    setVoicePhase: (phase: VoicePhase, patch?: Partial<VoiceLifecycle>) => void;
+    setInterimTranscript: (text: string) => void;
+    setLatency: (latency: VoiceLatency) => void;
+    setTraceContext: (trace: Omit<VoiceTraceContext, "sessionId">) => void;
+    prepareCloseout: () => Promise<unknown>;
+    end: () => Promise<void>;
+  };
+  clock: {
+    now: () => number;
+    setTimer: (callback: () => void, delayMs: number) => TimerHandle;
+    clearTimer: (handle: TimerHandle) => void;
+  };
+  ids: { next: () => string };
+  telemetry: (
+    event: string,
+    trace?: VoiceTraceContext,
+    fields?: Record<string, string | number | boolean | null | undefined>,
+    level?: "info" | "warn" | "error",
+  ) => void;
+  logger: { warn: (...values: unknown[]) => void };
+  classifyError: (error: unknown) => ConversationFailure;
+  errorName: (error: unknown) => string;
+  haptics: { tap: () => void; success: () => void; fail: () => void };
+  openSettings: () => Promise<void>;
+  shouldAutoSend: (input: {
+    intro?: string;
+    existingTurnCount: number;
+    transcript: string;
+  }) => boolean;
+};
+
+type FailedReply = {
+  text: string;
+  audioUri?: string;
+  assistantTurnId: string;
+  traceTurnId: string;
+};
+
+type ActiveCapture = {
+  token: number;
+  traceTurnId: string;
+  startedAt: number;
+  ready: Promise<SpeechInputHandle>;
+  handle?: SpeechInputHandle;
+  finalTranscript: string;
+};
+
+const LEGAL_TRANSITIONS: Record<ConversationPhase, ConversationPhase[]> = {
+  idle: [
+    "start",
+    "listening",
+    "finalizing",
+    "understanding",
+    "recovery",
+    "ending",
+  ],
+  start: ["idle", "listening", "recovery", "ending"],
+  listening: ["endpoint", "resuming", "recovery", "ending"],
+  endpoint: ["finalizing", "idle", "recovery", "ending"],
+  finalizing: ["idle", "understanding", "recovery", "ending"],
+  understanding: ["speaking", "resuming", "recovery", "listening", "ending"],
+  speaking: ["resuming", "recovery", "listening", "ending"],
+  resuming: ["idle", "listening", "understanding", "recovery", "ending"],
+  recovery: ["idle", "resuming", "listening", "understanding", "ending"],
+  ending: ["resuming", "ended"],
+  ended: [],
+};
+
+const EMPTY_OWNERSHIP: ConversationOwnership = {
+  audioSession: "none",
+  microphone: null,
+  providerRequest: null,
+  playbackQueue: null,
+  retry: null,
+};
+
+/**
+ * Owns a conversation's asynchronous resources. React and diagnostic callers
+ * both enter through these intent methods; providers never coordinate each
+ * other outside this class.
+ */
+export class ConversationEngine {
+  private state: ConversationEngineState = {
+    phase: "idle",
+    ownership: EMPTY_OWNERSHIP,
+    draftTranscript: "",
+    audioEnergy: 0,
+    retryingTurnId: null,
+    showCoda: false,
+  };
+  private readonly listeners = new Set<() => void>();
+  private readonly responseRuns = new ResponseRunController();
+  private latency: VoiceLatencyTracker;
+  private capture?: ActiveCapture;
+  private captureGeneration = 0;
+  private eventGeneration = 0;
+  private failedReply?: FailedReply;
+  private responseQueue?: PlaybackQueue;
+  private settleTimer?: TimerHandle;
+  private startPromise?: Promise<void>;
+  private closeoutPreparation: Promise<unknown> = Promise.resolve();
+  private interruptionCleanup: Promise<unknown> = Promise.resolve();
+  private readonly pendingEnrichment = new Set<Promise<void>>();
+  private pendingPronunciationTurnId?: string;
+  private resumeListening = false;
+  private disposed = false;
+
+  constructor(
+    private readonly sessionId: string,
+    private readonly intro: string | undefined,
+    private readonly dependencies: ConversationDependencies,
+  ) {
+    this.latency = new VoiceLatencyTracker(dependencies.clock.now);
+  }
+
+  readonly getState = (): ConversationEngineState => this.state;
+
+  readonly subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  start(): Promise<void> {
+    if (this.startPromise) return this.startPromise;
+    this.transition("start");
+    this.startPromise = (async () => {
+      if (this.dependencies.session.snapshot().id !== this.sessionId) {
+        await this.dependencies.session.start(this.sessionId);
+      }
+      if (!this.disposed && this.state.phase === "start") {
+        this.transition("idle");
+      }
+    })().catch((error) => {
+      if (!this.disposed) this.enterRecovery("network");
+      throw error;
+    });
+    return this.startPromise;
+  }
+
+  async startListening(): Promise<void> {
+    await this.start();
+    if (
+      this.disposed ||
+      this.state.phase === "ending" ||
+      this.state.phase === "ended"
+    )
+      return;
+    if (this.dependencies.session.snapshot().isRecording) return;
+
+    const epoch = ++this.eventGeneration;
+    const wasResponding =
+      this.responseRuns.hasActiveRun() ||
+      this.dependencies.session.snapshot().isStreaming;
+    if (wasResponding) {
+      this.dependencies.telemetry(
+        "response_cancelled",
+        this.dependencies.session.snapshot().traceContext,
+        { reason: "barge-in" },
+        "warn",
+      );
+      this.dependencies.session.setVoicePhase("interrupted");
+      await this.cancelResponse("barge-in");
+      this.transition("resuming");
+    }
+
+    const token = ++this.captureGeneration;
+    const traceTurnId = this.dependencies.ids.next();
+    this.dependencies.session.setTraceContext({ turnId: traceTurnId });
+    const trace = { sessionId: this.sessionId, turnId: traceTurnId };
+    this.latency = new VoiceLatencyTracker(this.dependencies.clock.now);
+    this.latency.listeningStarted();
+    this.dependencies.session.setLatency({});
+    this.dependencies.session.setRecording(true);
+    this.dependencies.session.setVoicePhase(
+      this.state.retryingTurnId ? "retryListening" : "listening",
+      { interimTranscript: "" },
+    );
+    this.transition("listening");
+    this.publish({
+      draftTranscript: "",
+      draftAudioUri: undefined,
+      audioEnergy: 0,
+      ownership: {
+        ...this.state.ownership,
+        audioSession: "microphone",
+        microphone: token,
+      },
+    });
+
+    const ready = this.dependencies.speechInput.start({
+      trace,
+      onAudioEnergy: (energy) => {
+        if (this.isCaptureCurrent(token, epoch))
+          this.publish({ audioEnergy: energy });
+      },
+      onEvent: (event) => this.receiveTranscriptEvent(token, epoch, event),
+    });
+    const capture: ActiveCapture = {
+      token,
+      traceTurnId,
+      startedAt: this.dependencies.clock.now(),
+      ready,
+      finalTranscript: "",
+    };
+    this.capture = capture;
+    try {
+      const handle = await ready;
+      if (!this.isCaptureCurrent(token, epoch)) {
+        await handle.cancel();
+        return;
+      }
+      capture.handle = handle;
+    } catch (error) {
+      if (!this.isCaptureCurrent(token, epoch)) return;
+      this.capture = undefined;
+      this.dependencies.session.setRecording(false);
+      this.publish({
+        audioEnergy: 0,
+        ownership: {
+          ...this.state.ownership,
+          audioSession: "none",
+          microphone: null,
+        },
+      });
+      this.reportSpeechFailure(error, "start", trace);
+    }
+  }
+
+  async stopListening(): Promise<void> {
+    const capture = this.capture;
+    if (!capture || this.state.phase !== "listening") return;
+    const epoch = this.eventGeneration;
+    this.transition("endpoint");
+    this.dependencies.session.setRecording(false);
+    this.publish({
+      audioEnergy: 0,
+      ownership: {
+        ...this.state.ownership,
+        audioSession: "none",
+        microphone: null,
+      },
+    });
+    const duration = this.dependencies.clock.now() - capture.startedAt;
+
+    try {
+      const handle = capture.handle ?? (await capture.ready);
+      if (!this.isCaptureCurrent(capture.token, epoch, "endpoint")) {
+        await handle.cancel();
+        return;
+      }
+      if (duration < 400) {
+        await handle.cancel();
+        if (!this.isCaptureCurrent(capture.token, epoch, "endpoint")) return;
+        this.capture = undefined;
+        this.dependencies.session.setVoicePhase("idle", {
+          interimTranscript: "",
+        });
+        this.transition("idle");
+        return;
+      }
+
+      const result = await handle.stop();
+      if (!this.isCaptureCurrent(capture.token, epoch, "endpoint")) return;
+      this.capture = undefined;
+      this.transition("finalizing");
+      await this.finalizeTranscript(
+        result.fullText ||
+          capture.finalTranscript ||
+          this.state.draftTranscript,
+        result.audioUri || undefined,
+        capture.traceTurnId,
+        this.dependencies.shouldAutoSend({
+          intro: this.intro,
+          existingTurnCount: this.dependencies.session.snapshot().turns.length,
+          transcript: result.fullText,
+        }),
+      );
+    } catch (error) {
+      if (!this.isEpochCurrent(epoch)) return;
+      this.capture = undefined;
+      this.reportSpeechFailure(
+        error,
+        "final",
+        this.dependencies.session.snapshot().traceContext,
+      );
+    }
+  }
+
+  /** Uses the exact final-transcript path used by microphone capture. */
+  async submitInjectedTranscript(input: {
+    text: string;
+    audioUri?: string;
+    traceTurnId?: string;
+  }): Promise<void> {
+    await this.start();
+    if (this.state.phase === "idle" || this.state.phase === "recovery") {
+      this.transition("finalizing");
+    }
+    await this.finalizeTranscript(
+      input.text,
+      input.audioUri,
+      input.traceTurnId ?? this.dependencies.ids.next(),
+      true,
+    );
+  }
+
+  editTranscript(text: string): void {
+    if (this.state.phase !== "finalizing") return;
+    this.publish({ draftTranscript: text });
+  }
+
+  async submitTranscript(): Promise<void> {
+    if (this.state.phase !== "finalizing") return;
+    const text = this.state.draftTranscript.trim();
+    if (!text) {
+      this.enterRecovery("sttFailure", "silence");
+      return;
+    }
+    const traceTurnId =
+      this.capture?.traceTurnId ??
+      this.dependencies.session.snapshot().traceContext.turnId;
+    if (this.state.retryingTurnId) {
+      await this.submitPronunciationRetry(
+        this.state.retryingTurnId,
+        text,
+        this.state.draftAudioUri,
+        traceTurnId,
+      );
+      return;
+    }
+    const audioUri = this.state.draftAudioUri;
+    this.publish({ draftTranscript: "", draftAudioUri: undefined });
+    await this.sendUser(text, audioUri, undefined, traceTurnId);
+  }
+
+  discardTranscript(): void {
+    ++this.eventGeneration;
+    this.capture = undefined;
+    this.dependencies.session.setVoicePhase("idle", { interimTranscript: "" });
+    this.transition("idle");
+    this.publish({
+      draftTranscript: "",
+      draftAudioUri: undefined,
+      audioEnergy: 0,
+      retryingTurnId: null,
+      ownership: EMPTY_OWNERSHIP,
+    });
+  }
+
+  async recover(): Promise<void> {
+    const recovery = this.dependencies.session.snapshot().voice.recovery;
+    if (recovery === "openSettings") {
+      await this.dependencies.openSettings();
+      return;
+    }
+    if (recovery === "retryResponse" && this.failedReply) {
+      const failed = this.failedReply;
+      this.dependencies.telemetry(
+        "response_retry",
+        { sessionId: this.sessionId, turnId: failed.traceTurnId },
+        { retry: true },
+        "warn",
+      );
+      await this.sendUser(
+        failed.text,
+        failed.audioUri,
+        failed.assistantTurnId,
+        failed.traceTurnId,
+      );
+      return;
+    }
+    if (recovery === "resume") {
+      await this.resume();
+      return;
+    }
+    this.failedReply = undefined;
+    this.dependencies.session.setVoicePhase("idle", { interimTranscript: "" });
+    this.transition("idle");
+    this.publish({
+      ownership: { ...this.state.ownership, retry: null },
+    });
+  }
+
+  async interrupt(kind: "app" | "audio"): Promise<void> {
+    if (
+      this.state.phase === "ending" ||
+      this.state.phase === "ended" ||
+      this.disposed
+    )
+      return;
+    this.resumeListening ||= this.state.phase === "listening";
+    ++this.eventGeneration;
+    const capture = this.capture;
+    this.capture = undefined;
+    const interruptedTurnId = this.responseRuns.invalidate();
+    if (interruptedTurnId) {
+      this.dependencies.session.patchTurn(interruptedTurnId, {
+        streaming: false,
+        interrupted: true,
+      });
+    }
+    const queue = this.responseQueue;
+    this.responseQueue = undefined;
+    this.dependencies.session.setRecording(false);
+    this.dependencies.session.setStreaming(false);
+    this.transition("recovery");
+    this.publish({
+      audioEnergy: 0,
+      ownership: EMPTY_OWNERSHIP,
+    });
+    this.dependencies.session.setVoice(
+      voiceError(
+        "audioInterruption",
+        kind === "app" ? "Koe paused while the app was inactive." : undefined,
+      ),
+    );
+    this.interruptionCleanup = Promise.allSettled([
+      this.interruptionCleanup,
+      capture?.ready.then((handle) => handle.cancel()) ?? Promise.resolve(),
+      queue?.stop() ?? Promise.resolve(),
+      this.dependencies.audio.stop(),
+    ]);
+    await this.interruptionCleanup;
+  }
+
+  async resume(): Promise<void> {
+    if (this.state.phase !== "recovery" || this.disposed) return;
+    const resumeListening = this.resumeListening;
+    this.resumeListening = false;
+    this.transition("resuming");
+    this.dependencies.session.setVoicePhase("idle", { interimTranscript: "" });
+    await this.interruptionCleanup;
+    if (!this.isPhase("resuming") || this.disposed) return;
+    if (resumeListening) {
+      await this.startListening();
+    } else {
+      this.transition("idle");
+    }
+  }
+
+  async startPronunciationRetry(turnId: string): Promise<void> {
+    this.dependencies.haptics.tap();
+    ++this.eventGeneration;
+    await this.cancelResponse("pronunciation-retry");
+    if (
+      this.state.phase === "understanding" ||
+      this.state.phase === "speaking"
+    ) {
+      this.transition("resuming");
+    }
+    if (this.state.phase !== "idle") this.transition("idle");
+    this.dependencies.session.setVoicePhase("retryListening", {
+      interimTranscript: "",
+    });
+    this.publish({
+      retryingTurnId: turnId,
+      draftTranscript: "",
+      draftAudioUri: undefined,
+      ownership: EMPTY_OWNERSHIP,
+    });
+  }
+
+  async playAudio(audioUri: string): Promise<void> {
+    await this.dependencies.audio.play(audioUri, {});
+  }
+
+  async runSimulatorDiagnostic(): Promise<void> {
+    await this.start();
+    const traceTurnId = this.dependencies.ids.next();
+    const trace = { sessionId: this.sessionId, turnId: traceTurnId };
+    this.dependencies.telemetry("simulator_diagnostic_started", trace, {
+      target: "iPhone Simulator",
+    });
+    try {
+      await this.startListening();
+      await new Promise<void>((resolve) => {
+        this.dependencies.clock.setTimer(resolve, 700);
+      });
+      await this.stopListening();
+    } catch (error) {
+      this.dependencies.telemetry(
+        "stt_ui_failure",
+        trace,
+        {
+          stage: "simulator-diagnostic",
+          failureKind: this.dependencies.classifyError(error),
+          errorName: this.dependencies.errorName(error),
+        },
+        "error",
+      );
+    }
+    this.dependencies.telemetry("simulator_diagnostic_fallback", trace, {
+      path: "fixed-private-free-transcript",
+    });
+    await this.submitInjectedTranscript({
+      text: "こんにちは。",
+      traceTurnId,
+    });
+  }
+
+  requestEnd(): void {
+    if (this.state.phase === "ending" || this.state.phase === "ended") return;
+    this.dependencies.haptics.tap();
+    ++this.eventGeneration;
+    const interruptedTurnId = this.responseRuns.invalidate();
+    if (interruptedTurnId) {
+      this.dependencies.session.patchTurn(interruptedTurnId, {
+        streaming: false,
+        interrupted: true,
+      });
+    }
+    const capture = this.capture;
+    this.capture = undefined;
+    const queue = this.responseQueue;
+    this.responseQueue = undefined;
+    this.clearSettleTimer();
+    this.dependencies.telemetry(
+      "session_cancelled",
+      this.dependencies.session.snapshot().traceContext,
+      { reason: "user-ended-session" },
+      "warn",
+    );
+    this.dependencies.session.setRecording(false);
+    this.dependencies.session.setStreaming(false);
+    this.transition("ending");
+    this.publish({
+      showCoda: true,
+      audioEnergy: 0,
+      ownership: EMPTY_OWNERSHIP,
+    });
+    this.closeoutPreparation = Promise.allSettled([
+      capture?.ready.then((handle) => handle.cancel()) ?? Promise.resolve(),
+      queue?.stop() ?? Promise.resolve(),
+      this.dependencies.audio.stop(),
+    ]).then(() => this.dependencies.session.prepareCloseout());
+  }
+
+  async finishEnd(): Promise<void> {
+    if (this.state.phase !== "ending") return;
+    await this.closeoutPreparation;
+    await Promise.allSettled([...this.pendingEnrichment]);
+    await this.dependencies.session.end();
+    this.transition("ended");
+    this.publish({ showCoda: false, ownership: EMPTY_OWNERSHIP });
+  }
+
+  continueAfterCoda(): void {
+    if (this.state.phase !== "ending") {
+      this.publish({ showCoda: false });
+      return;
+    }
+    this.transition("resuming");
+    this.dependencies.session.setVoicePhase("idle", { interimTranscript: "" });
+    this.publish({ showCoda: false });
+    this.transition("idle");
+  }
+
+  async endImmediately(): Promise<void> {
+    this.requestEnd();
+    await this.finishEnd();
+  }
+
+  setReviewState(options: {
+    phase?: VoicePhase;
+    draftTranscript?: string;
+    audioEnergy?: number;
+    showCoda?: boolean;
+  }): void {
+    if (options.phase) this.dependencies.session.setVoicePhase(options.phase);
+    this.publish({
+      draftTranscript: options.draftTranscript ?? this.state.draftTranscript,
+      audioEnergy: options.audioEnergy ?? this.state.audioEnergy,
+      showCoda: options.showCoda ?? this.state.showCoda,
+    });
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    ++this.eventGeneration;
+    const interruptedTurnId = this.responseRuns.invalidate();
+    if (interruptedTurnId) {
+      this.dependencies.session.patchTurn(interruptedTurnId, {
+        streaming: false,
+        interrupted: true,
+      });
+    }
+    this.dependencies.session.setRecording(false);
+    this.dependencies.session.setStreaming(false);
+    this.clearSettleTimer();
+    const capture = this.capture;
+    this.capture = undefined;
+    void capture?.ready.then((handle) => handle.cancel()).catch(() => {});
+    void this.responseQueue?.stop().catch(() => {});
+    void this.dependencies.audio.stop();
+    this.listeners.clear();
+  }
+
+  private receiveTranscriptEvent(
+    token: number,
+    epoch: number,
+    event: TranscriptInputEvent,
+  ): void {
+    if (!this.isCaptureCurrent(token, epoch)) return;
+    if (event.type === "endpoint") {
+      void this.stopListening();
+      return;
+    }
+    const capture = this.capture;
+    if (!capture) return;
+    if (event.type === "final") capture.finalTranscript = event.text;
+    const previous =
+      this.dependencies.session.snapshot().latency.listeningToTranscriptMs;
+    const latency = this.latency.transcriptReceived();
+    if (previous === undefined) {
+      this.updateLatency(latency, "listeningToTranscriptMs");
+    }
+    this.publish({ draftTranscript: event.text });
+    this.dependencies.session.setInterimTranscript(event.text);
+  }
+
+  private async finalizeTranscript(
+    text: string,
+    audioUri: string | undefined,
+    traceTurnId: string,
+    autoSend: boolean,
+  ): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      this.enterRecovery("sttFailure", "silence");
+      return;
+    }
+    this.publish({ draftTranscript: trimmed, draftAudioUri: audioUri });
+    if (!autoSend) {
+      this.dependencies.session.setVoicePhase("transcriptCheck", {
+        interimTranscript: trimmed,
+      });
+      return;
+    }
+    this.publish({ draftTranscript: "", draftAudioUri: undefined });
+    await this.sendUser(trimmed, audioUri, undefined, traceTurnId);
+  }
+
+  private async sendUser(
+    text: string,
+    audioUri?: string,
+    retryAssistantTurnId?: string,
+    existingTraceTurnId?: string,
+  ): Promise<void> {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      this.enterRecovery("sttFailure", "silence");
+      return;
+    }
+    if (this.state.phase === "recovery") this.transition("resuming");
+    if (
+      this.state.phase === "finalizing" ||
+      this.state.phase === "resuming" ||
+      this.state.phase === "idle"
+    ) {
+      this.transition("understanding");
+    }
+
+    const epoch = ++this.eventGeneration;
+    const previousTrace = this.dependencies.session.snapshot().traceContext;
+    const interruptedTurnId = this.responseRuns.interrupt();
+    if (interruptedTurnId && interruptedTurnId !== retryAssistantTurnId) {
+      this.dependencies.telemetry(
+        "response_cancelled",
+        previousTrace,
+        { reason: "superseded-by-turn" },
+        "warn",
+      );
+      this.dependencies.session.patchTurn(interruptedTurnId, {
+        streaming: false,
+        interrupted: true,
+      });
+    }
+    const previousQueue = this.responseQueue;
+    this.responseQueue = undefined;
+    await Promise.allSettled([
+      previousQueue?.stop() ?? Promise.resolve(),
+      this.dependencies.audio.stop(),
+    ]);
+
+    const assistantTurnId =
+      retryAssistantTurnId ?? this.dependencies.ids.next();
+    const traceTurnId =
+      existingTraceTurnId ??
+      (retryAssistantTurnId
+        ? (this.failedReply?.traceTurnId ?? this.dependencies.ids.next())
+        : this.dependencies.ids.next());
+    const responseRunId = this.dependencies.ids.next();
+    const trace: VoiceTraceContext = {
+      sessionId: this.sessionId,
+      turnId: traceTurnId,
+      responseRunId,
+    };
+    this.dependencies.session.setTraceContext({
+      turnId: traceTurnId,
+      responseRunId,
+    });
+    this.dependencies.telemetry("response_run_started", trace, {
+      retry: Boolean(retryAssistantTurnId),
+      capturedAudio: Boolean(audioUri),
+    });
+
+    let userTurnId: string | undefined;
+    if (retryAssistantTurnId) {
+      this.dependencies.session.patchTurn(assistantTurnId, {
+        textJa: "",
+        streaming: true,
+        interrupted: false,
+        corrections: undefined,
+        traceTurnId,
+        responseRunId,
+      });
+    } else {
+      userTurnId = traceTurnId;
+      this.dependencies.session.addTurn({
+        id: userTurnId,
+        role: "user",
+        textJa: trimmed,
+        audioUri,
+        attemptNumber: audioUri ? 1 : undefined,
+        createdAt: this.dependencies.clock.now(),
+        traceTurnId,
+        responseRunId,
+      });
+      this.dependencies.session.addTurn({
+        id: assistantTurnId,
+        role: "assistant",
+        textJa: "",
+        streaming: true,
+        createdAt: this.dependencies.clock.now(),
+        traceTurnId,
+        responseRunId,
+      });
+      this.dependencies.haptics.success();
+    }
+
+    const responseRun = this.responseRuns.start(assistantTurnId);
+    this.failedReply = undefined;
+    this.dependencies.session.setStreaming(true);
+    this.dependencies.session.setVoicePhase(
+      retryAssistantTurnId ? "responseRetry" : "understanding",
+      { interimTranscript: "" },
+    );
+    this.latency.transcriptCommitted();
+    this.publish({
+      ownership: {
+        audioSession: "none",
+        microphone: null,
+        providerRequest: responseRun.token,
+        playbackQueue: responseRun.token,
+        retry: null,
+      },
+    });
+
+    if (userTurnId && audioUri) {
+      void this.analyzeUserPronunciation(
+        userTurnId,
+        trimmed,
+        audioUri,
+        undefined,
+        epoch,
+      );
+    }
+
+    await this.runReply({
+      trimmed,
+      audioUri,
+      assistantTurnId,
+      traceTurnId,
+      trace,
+      userTurnId,
+      retry: Boolean(retryAssistantTurnId),
+      responseRun,
+      epoch,
+    });
+  }
+
+  private async runReply(input: {
+    trimmed: string;
+    audioUri?: string;
+    assistantTurnId: string;
+    traceTurnId: string;
+    trace: VoiceTraceContext;
+    userTurnId?: string;
+    retry: boolean;
+    responseRun: ResponseRun;
+    epoch: number;
+  }): Promise<void> {
+    let receivedText = false;
+    let receivedAudio = false;
+    let playbackFailed = false;
+    let reply = "";
+    const isCurrent = () =>
+      this.isEpochCurrent(input.epoch) &&
+      this.responseRuns.isCurrent(
+        input.assistantTurnId,
+        input.responseRun.token,
+      );
+    const handlePlaybackFailure = (error: Error) => {
+      if (playbackFailed || !isCurrent()) return;
+      playbackFailed = true;
+      this.dependencies.telemetry(
+        "playback_failed",
+        input.trace,
+        {
+          failureKind: "callback",
+          errorName: this.dependencies.errorName(error),
+        },
+        "error",
+      );
+      this.failedReply = {
+        text: input.trimmed,
+        audioUri: input.audioUri,
+        assistantTurnId: input.assistantTurnId,
+        traceTurnId: input.traceTurnId,
+      };
+      this.responseRuns.interrupt();
+      this.dependencies.session.setStreaming(false);
+      this.dependencies.session.patchTurn(input.assistantTurnId, {
+        streaming: false,
+      });
+      this.responseQueue = undefined;
+      this.dependencies.haptics.fail();
+      this.transition("recovery");
+      this.publish({
+        audioEnergy: 0,
+        ownership: {
+          ...EMPTY_OWNERSHIP,
+          retry: input.assistantTurnId,
+        },
+      });
+      this.dependencies.session.setVoice(voiceError("playbackFailure"));
+    };
+    const queue = this.dependencies.audio.createQueue({
+      captureKey: input.assistantTurnId,
+      trace: input.trace,
+      onCaptured: (audioUri) => {
+        if (isCurrent())
+          this.dependencies.session.patchTurn(input.assistantTurnId, {
+            audioUri,
+          });
+      },
+      onStarted: () => {
+        if (!isCurrent()) return;
+        const latency = this.latency.firstAudioPlayed();
+        this.updateLatency(latency, "firstTextToFirstAudioMs");
+        this.transition("speaking");
+        this.publish({
+          ownership: { ...this.state.ownership, audioSession: "playback" },
+        });
+        this.dependencies.session.setVoicePhase("speaking");
+      },
+      onFinished: () => {
+        if (!isCurrent()) return;
+        this.settleReply(input.responseRun, input.retry);
+      },
+      onError: handlePlaybackFailure,
+      onEnergy: (energy) => {
+        if (isCurrent()) this.publish({ audioEnergy: energy });
+      },
+    });
+    this.responseQueue = queue;
+
+    try {
+      const historyWithUser = this.dependencies.session
+        .snapshot()
+        .turns.filter(
+          (turn) => turn.id !== input.assistantTurnId && turn.textJa,
+        )
+        .map((turn) => ({ role: turn.role, content: turn.textJa }));
+      const generator = this.dependencies.replyStream({
+        history: historyWithUser.slice(0, -1),
+        userTurn: input.trimmed,
+        signal: input.responseRun.signal,
+        trace: input.trace,
+      });
+      while (true) {
+        const next = await generator.next();
+        if (!isCurrent()) {
+          await queue.stop();
+          return;
+        }
+        if (next.done) {
+          const result = next.value;
+          const finalText = result.fullText || reply;
+          this.publish({
+            ownership: {
+              ...this.state.ownership,
+              providerRequest: null,
+            },
+          });
+          this.dependencies.session.patchTurn(input.assistantTurnId, {
+            textJa: finalText,
+            streaming: false,
+          });
+          if (input.userTurnId) {
+            const enrichment = result.feedback.then(async (feedback) => {
+              if (!this.isEpochCurrent(input.epoch)) return;
+              this.dependencies.session.patchTurn(input.userTurnId!, {
+                corrections: feedback.corrections,
+                textEn: feedback.translations.user,
+              });
+              this.dependencies.session.patchTurn(input.assistantTurnId, {
+                textEn: feedback.translations.tutor,
+              });
+              if (this.dependencies.session.snapshot().closeout) {
+                await this.dependencies.session.prepareCloseout();
+              }
+            });
+            this.pendingEnrichment.add(enrichment);
+            void enrichment.finally(() =>
+              this.pendingEnrichment.delete(enrichment),
+            );
+          }
+          this.failedReply = undefined;
+          if (receivedAudio) {
+            await queue.finish();
+          } else {
+            await queue.stop();
+            if (!isCurrent()) return;
+            if (finalText) {
+              this.dependencies.telemetry(
+                "response_fallback",
+                input.trace,
+                { path: "standalone-tts", reason: "stream-contained-no-audio" },
+                "warn",
+              );
+              const synthesized = await this.dependencies.audio.synthesize(
+                finalText,
+                {
+                  trace: input.trace,
+                },
+              );
+              if (!isCurrent()) return;
+              this.dependencies.session.patchTurn(input.assistantTurnId, {
+                audioUri: synthesized.audioUri,
+              });
+              if (synthesized.audioUri) {
+                await this.dependencies.audio.play(synthesized.audioUri, {
+                  trace: input.trace,
+                  onStarted: () => {
+                    if (!isCurrent()) return;
+                    const latency = this.latency.firstAudioPlayed();
+                    this.updateLatency(latency, "firstTextToFirstAudioMs");
+                    this.transition("speaking");
+                    this.publish({
+                      ownership: {
+                        ...this.state.ownership,
+                        audioSession: "playback",
+                      },
+                    });
+                    this.dependencies.session.setVoicePhase("speaking");
+                  },
+                  onFinished: () => {
+                    if (isCurrent())
+                      this.settleReply(input.responseRun, input.retry);
+                  },
+                  onError: handlePlaybackFailure,
+                });
+              } else {
+                this.settleReply(input.responseRun, input.retry);
+              }
+            } else {
+              this.settleReply(input.responseRun, input.retry);
+            }
+          }
+          return;
+        }
+
+        const chunk = next.value;
+        if (chunk.type === "text") {
+          reply += chunk.text;
+          this.dependencies.session.appendAssistantText(
+            input.assistantTurnId,
+            chunk.text,
+          );
+          if (!receivedText) {
+            receivedText = true;
+            const latency = this.latency.firstTextReceived();
+            this.updateLatency(latency, "transcriptToFirstTextMs");
+            this.dependencies.session.setVoicePhase("firstReply");
+          }
+        } else {
+          receivedAudio = true;
+          await queue.enqueue(
+            chunk.audioBase64,
+            chunk.sampleRate,
+            chunk.channels,
+          );
+          if (!isCurrent()) return;
+        }
+      }
+    } catch (error) {
+      await queue.stop();
+      if (!isCurrent()) return;
+      if (
+        input.responseRun.signal.aborted &&
+        this.dependencies.classifyError(error) !== "providerTimeout"
+      ) {
+        this.dependencies.session.patchTurn(input.assistantTurnId, {
+          streaming: false,
+          interrupted: !playbackFailed,
+        });
+        return;
+      }
+      this.dependencies.telemetry(
+        "response_run_failed",
+        input.trace,
+        {
+          failureKind:
+            this.dependencies.classifyError(error) === "audioContract"
+              ? "decode"
+              : this.dependencies.classifyError(error) === "providerTimeout"
+                ? "timeout"
+                : "provider",
+          errorName: this.dependencies.errorName(error),
+        },
+        "error",
+      );
+      this.responseRuns.complete(
+        input.assistantTurnId,
+        input.responseRun.token,
+      );
+      this.responseQueue = undefined;
+      this.failedReply = {
+        text: input.trimmed,
+        audioUri: input.audioUri,
+        assistantTurnId: input.assistantTurnId,
+        traceTurnId: input.traceTurnId,
+      };
+      this.dependencies.session.patchTurn(input.assistantTurnId, {
+        textJa: reply || "Koe could not finish that reply.",
+        streaming: false,
+      });
+      const failure = this.dependencies.classifyError(error);
+      this.enterRecovery(
+        failure === "providerTimeout" ? "providerTimeout" : "network",
+      );
+      this.publish({
+        ownership: { ...this.state.ownership, retry: input.assistantTurnId },
+      });
+    } finally {
+      if (this.responseRuns.isLatest(input.responseRun.token)) {
+        this.dependencies.session.setStreaming(false);
+      }
+    }
+  }
+
+  private async submitPronunciationRetry(
+    previousTurnId: string,
+    transcript: string,
+    audioUri: string | undefined,
+    traceTurnId?: string,
+  ): Promise<void> {
+    const previous = this.dependencies.session
+      .snapshot()
+      .turns.find((turn) => turn.id === previousTurnId);
+    if (!previous || !audioUri) {
+      this.publish({ retryingTurnId: null });
+      this.enterRecovery("sttFailure");
+      return;
+    }
+    const epoch = ++this.eventGeneration;
+    const turnId = traceTurnId ?? this.dependencies.ids.next();
+    const targetText = previous.pronunciation?.targetText ?? previous.textJa;
+    this.dependencies.session.addTurn({
+      id: turnId,
+      role: "user",
+      textJa: transcript,
+      audioUri,
+      referenceAudioUri: previous.referenceAudioUri,
+      retryOfTurnId: previous.id,
+      attemptNumber: (previous.attemptNumber ?? 1) + 1,
+      createdAt: this.dependencies.clock.now(),
+      traceTurnId: turnId,
+    });
+    this.dependencies.session.setVoicePhase("comparing", {
+      interimTranscript: "",
+    });
+    this.transition("understanding");
+    this.publish({
+      retryingTurnId: null,
+      draftTranscript: "",
+      draftAudioUri: undefined,
+      ownership: {
+        ...EMPTY_OWNERSHIP,
+        providerRequest: epoch,
+      },
+    });
+    const result = await this.analyzeUserPronunciation(
+      turnId,
+      targetText,
+      audioUri,
+      previous,
+      epoch,
+    );
+    if (!this.isEpochCurrent(epoch)) return;
+    if (result) {
+      this.dependencies.session.setVoicePhase("success");
+      result.retry?.targetImproved
+        ? this.dependencies.haptics.success()
+        : this.dependencies.haptics.tap();
+      this.transition("resuming");
+      this.clearSettleTimer();
+      this.settleTimer = this.dependencies.clock.setTimer(() => {
+        if (!this.isEpochCurrent(epoch) || this.state.phase !== "resuming")
+          return;
+        if (this.dependencies.session.snapshot().voice.phase === "success") {
+          this.dependencies.session.setVoicePhase("idle");
+        }
+        this.transition("idle");
+      }, 1_400);
+    } else {
+      this.enterRecovery("sttFailure");
+    }
+  }
+
+  private async analyzeUserPronunciation(
+    turnId: string,
+    targetText: string,
+    attemptAudioUri: string,
+    previous: ChatTurn | undefined,
+    epoch: number,
+  ): Promise<PronunciationFeedback | undefined> {
+    try {
+      const result = await this.dependencies.pronunciation.analyze({
+        targetText,
+        attemptAudioUri,
+        previous,
+      });
+      if (!this.isEpochCurrent(epoch)) return undefined;
+      this.dependencies.session.patchTurn(turnId, result);
+      if (!previous) {
+        this.pendingPronunciationTurnId = turnId;
+        if (this.state.phase === "idle") {
+          this.dependencies.session.setVoicePhase("feedback");
+          this.pendingPronunciationTurnId = undefined;
+        }
+      }
+      return result.pronunciation;
+    } catch (error) {
+      if (this.isEpochCurrent(epoch)) {
+        this.dependencies.logger.warn("pronunciation analysis failed", error);
+      }
+      return undefined;
+    }
+  }
+
+  private settleReply(run: ResponseRun, successfulRetry: boolean): void {
+    if (!this.responseRuns.complete(run.turnId, run.token)) return;
+    this.responseQueue = undefined;
+    this.dependencies.session.setStreaming(false);
+    this.transition("resuming");
+    this.publish({
+      audioEnergy: 0,
+      ownership: EMPTY_OWNERSHIP,
+    });
+    if (successfulRetry) {
+      this.dependencies.session.setVoicePhase("success");
+      this.dependencies.haptics.success();
+      const epoch = this.eventGeneration;
+      this.clearSettleTimer();
+      this.settleTimer = this.dependencies.clock.setTimer(() => {
+        if (!this.isEpochCurrent(epoch) || this.state.phase !== "resuming")
+          return;
+        if (this.dependencies.session.snapshot().voice.phase === "success") {
+          this.dependencies.session.setVoicePhase("idle");
+        }
+        this.transition("idle");
+      }, 1_400);
+      return;
+    }
+    if (this.pendingPronunciationTurnId) {
+      this.pendingPronunciationTurnId = undefined;
+      this.dependencies.session.setVoicePhase("feedback");
+    } else {
+      this.dependencies.session.setVoicePhase("idle");
+    }
+    this.transition("idle");
+  }
+
+  private async cancelResponse(reason: string): Promise<void> {
+    const interruptedTurnId = this.responseRuns.invalidate();
+    if (interruptedTurnId) {
+      this.dependencies.session.patchTurn(interruptedTurnId, {
+        streaming: false,
+        interrupted: true,
+      });
+    }
+    const queue = this.responseQueue;
+    this.responseQueue = undefined;
+    await Promise.allSettled([
+      queue?.stop() ?? Promise.resolve(),
+      this.dependencies.audio.stop(),
+    ]);
+    this.dependencies.session.setStreaming(false);
+    this.publish({
+      audioEnergy: 0,
+      ownership: { ...EMPTY_OWNERSHIP, retry: this.state.ownership.retry },
+    });
+    this.dependencies.telemetry(
+      "conversation_resources_released",
+      this.dependencies.session.snapshot().traceContext,
+      { reason },
+    );
+  }
+
+  private reportSpeechFailure(
+    error: unknown,
+    stage: "start" | "final",
+    trace: VoiceTraceContext,
+  ): void {
+    const failure = this.dependencies.classifyError(error);
+    this.dependencies.telemetry(
+      "stt_ui_failure",
+      trace,
+      {
+        stage,
+        failureKind: failure,
+        errorName: this.dependencies.errorName(error),
+      },
+      "error",
+    );
+    this.dependencies.haptics.fail();
+    const voiceFailure =
+      failure === "permissionDenied"
+        ? "permissionDenied"
+        : failure === "audioInterruption"
+          ? "audioInterruption"
+          : failure === "network"
+            ? "network"
+            : "sttFailure";
+    this.resumeListening = failure === "audioInterruption";
+    this.enterRecovery(voiceFailure);
+  }
+
+  private enterRecovery(
+    failure:
+      | "permissionDenied"
+      | "network"
+      | "sttFailure"
+      | "providerTimeout"
+      | "audioInterruption"
+      | "playbackFailure",
+    semantic?: "silence",
+  ): void {
+    if (this.state.phase !== "recovery") {
+      if (LEGAL_TRANSITIONS[this.state.phase].includes("recovery")) {
+        this.transition("recovery");
+      } else {
+        return;
+      }
+    }
+    this.dependencies.session.setRecording(false);
+    this.dependencies.session.setStreaming(false);
+    this.dependencies.session.setVoice(
+      voiceError(semantic === "silence" ? "silence" : failure),
+    );
+    this.publish({
+      audioEnergy: 0,
+      ownership: {
+        ...EMPTY_OWNERSHIP,
+        retry: this.failedReply?.assistantTurnId ?? null,
+      },
+    });
+  }
+
+  private updateLatency(
+    latency: VoiceLatency,
+    stage: keyof VoiceLatency,
+  ): void {
+    this.dependencies.session.setLatency(latency);
+    this.dependencies.telemetry(
+      "voice_latency",
+      this.dependencies.session.snapshot().traceContext,
+      { stage, valueMs: latency[stage] },
+    );
+  }
+
+  private isCaptureCurrent(
+    token: number,
+    epoch: number,
+    allowedPhase: ConversationPhase = "listening",
+  ): boolean {
+    return (
+      !this.disposed &&
+      this.capture?.token === token &&
+      this.eventGeneration === epoch &&
+      this.state.phase === allowedPhase
+    );
+  }
+
+  private isEpochCurrent(epoch: number): boolean {
+    return !this.disposed && this.eventGeneration === epoch;
+  }
+
+  private isPhase(phase: ConversationPhase): boolean {
+    return this.state.phase === phase;
+  }
+
+  private transition(next: ConversationPhase): void {
+    if (this.state.phase === next) return;
+    if (!LEGAL_TRANSITIONS[this.state.phase].includes(next)) {
+      throw new Error(
+        `Illegal conversation transition: ${this.state.phase} -> ${next}`,
+      );
+    }
+    this.publish({ phase: next });
+  }
+
+  private publish(patch: Partial<ConversationEngineState>): void {
+    this.state = {
+      ...this.state,
+      ...patch,
+      ownership: patch.ownership ?? this.state.ownership,
+    };
+    for (const listener of this.listeners) listener();
+  }
+
+  private clearSettleTimer(): void {
+    if (this.settleTimer === undefined) return;
+    this.dependencies.clock.clearTimer(this.settleTimer);
+    this.settleTimer = undefined;
+  }
+}

@@ -27,3 +27,23 @@ test("a stale completion cannot clear the newer response", () => {
   assert.equal(controller.complete("assistant-2"), true);
   assert.equal(controller.hasActiveRun(), false);
 });
+
+test("a stale callback for a retried turn cannot complete the newer run", () => {
+  const controller = new ResponseRunController();
+  const first = controller.start("assistant-1");
+  const retry = controller.start("assistant-1");
+
+  assert.equal(controller.complete(first.turnId, first.token), false);
+  assert.equal(controller.isCurrent(retry.turnId, retry.token), true);
+  assert.equal(controller.complete(retry.turnId, retry.token), true);
+});
+
+test("invalidation rejects late work after a completed response", () => {
+  const controller = new ResponseRunController();
+  const run = controller.start("assistant-1");
+  assert.equal(controller.complete(run.turnId, run.token), true);
+  assert.equal(controller.isLatest(run.token), true);
+
+  controller.invalidate();
+  assert.equal(controller.isLatest(run.token), false);
+});

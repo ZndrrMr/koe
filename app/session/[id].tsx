@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
-  Linking,
   Modal,
   Pressable,
   ScrollView,
@@ -22,59 +21,27 @@ import {
   Volume2,
   X,
 } from "lucide-react-native";
-import { randomUUID } from "expo-crypto";
 
 import { useSession, type ChatTurn } from "@/stores/useSession";
-import { startStreaming, STTError } from "@/services/stt";
-import { ProviderTimeoutError, streamConversation } from "@/services/llm";
-import {
-  PCMPlaybackQueue,
-  synthesize,
-  play,
-  stop as stopSpeech,
-} from "@/services/tts";
 import { MicButton } from "@/components/MicButton";
 import { AcousticVoiceForm } from "@/components/AcousticVoiceForm";
 import { PronunciationFeedbackCard } from "@/components/PronunciationFeedbackCard";
-import { tap, fail as failHaptic, success } from "@/utils/haptics";
-import { log } from "@/utils/log";
-import {
-  errorName,
-  voiceEvent,
-  type VoiceTraceContext,
-} from "@/utils/telemetry";
-import { AudioContractError } from "@/services/audioContract";
-import {
-  analyzePronunciation,
-  type PronunciationFeedback,
-} from "@/services/pitch";
-import { annotate } from "@/services/furigana";
 import {
   type ConversationPalette,
   useConversationPalette,
 } from "@/theme/conversation";
 import { CONVERSATION_TARGET } from "@/theme/interaction";
 import {
-  VoiceLatencyTracker,
   VOICE_PHASE_COPY,
-  voiceError,
   type VoiceLatency,
   type VoiceLifecycle,
 } from "@/voice/lifecycle";
-import { ResponseRunController } from "@/voice/responseRun";
-import { shouldAutoSendFirstTranscript } from "@/voice/firstExchange";
+import { useConversationEngine } from "@/voice/useConversationEngine";
 import {
   buildSessionCloseout,
   type LearningMomentDecision,
   type SessionCloseout,
 } from "@/db/sessionHistory";
-
-type FailedReply = {
-  text: string;
-  audioUri?: string;
-  assistantTurnId: string;
-  traceTurnId: string;
-};
 
 export default function SessionScreen() {
   const router = useRouter();
@@ -84,49 +51,35 @@ export default function SessionScreen() {
     intro?: string;
   }>();
   const session = useSession();
-
-  const [draftTranscript, setDraftTranscript] = useState("");
-  const [draftAudioUri, setDraftAudioUri] = useState<string | undefined>();
-  const [audioEnergy, setAudioEnergy] = useState(0);
-  const [showCoda, setShowCoda] = useState(false);
+  const { engine, state: engineState } = useConversationEngine(id, intro);
+  const { draftTranscript, audioEnergy, retryingTurnId, showCoda } =
+    engineState;
   const [dismissedCorrectionId, setDismissedCorrectionId] = useState<
     string | null
   >(null);
-  const [retryingTurnId, setRetryingTurnId] = useState<string | null>(null);
-  const sttHandleRef = useRef<Awaited<
-    ReturnType<typeof startStreaming>
-  > | null>(null);
-  const pressStartRef = useRef(0);
-  const activeTurnIdRef = useRef<string | null>(null);
-  const responseRunsRef = useRef(new ResponseRunController());
-  const failedReplyRef = useRef<FailedReply | null>(null);
-  const latencyTrackerRef = useRef(new VoiceLatencyTracker());
-  const pendingEnrichmentRef = useRef(new Set<Promise<void>>());
-  const presentedPronunciationRef = useRef<string | null>(null);
-  const closeoutPreparationRef = useRef<Promise<unknown>>(Promise.resolve());
-  const voiceSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
   const diagnosticRunStartedRef = useRef(false);
 
   useEffect(() => {
-    if (!id || useSession.getState().id === id) return;
-    const store = useSession.getState();
-    void store.start(id);
-    if (__DEV__) {
+    void engine.start().then(() => {
+      if (!__DEV__) return;
       const reviewPhase = process.env.EXPO_PUBLIC_KOE_REVIEW_PHASE as
         | VoiceLifecycle["phase"]
         | undefined;
       if (reviewPhase && reviewPhase in VOICE_PHASE_COPY) {
-        store.setVoicePhase(reviewPhase);
-        if (reviewPhase === "transcriptCheck") {
-          setDraftTranscript("明日は友達と京都へ行きます。");
-        }
-        if (reviewPhase === "listening" || reviewPhase === "speaking") {
-          setAudioEnergy(0.62);
-        }
+        engine.setReviewState({
+          phase: reviewPhase,
+          draftTranscript:
+            reviewPhase === "transcriptCheck"
+              ? "明日は友達と京都へ行きます。"
+              : undefined,
+          audioEnergy:
+            reviewPhase === "listening" || reviewPhase === "speaking"
+              ? 0.62
+              : undefined,
+        });
       }
       if (process.env.EXPO_PUBLIC_KOE_REVIEW_CODA === "1") {
+        const store = useSession.getState();
         store.addTurn({
           id: "review-user-1",
           role: "user",
@@ -150,771 +103,48 @@ export default function SessionScreen() {
           textJa: "いいですね。京都では何を見たいですか？",
           createdAt: Date.now() - 1_000,
         });
-        setShowCoda(true);
+        engine.setReviewState({ showCoda: true });
       }
-    }
-  }, [id]);
-
-  useEffect(
-    () => () => {
-      responseRunsRef.current.interrupt();
-      void sttHandleRef.current?.cancel();
-      void stopSpeech();
-      if (voiceSettleTimerRef.current)
-        clearTimeout(voiceSettleTimerRef.current);
-    },
-    [],
-  );
-
-  const settleReply = useCallback((successfulRetry: boolean) => {
-    setAudioEnergy(0);
-    if (!successfulRetry) {
-      useSession.getState().setVoicePhase("idle");
-      return;
-    }
-    useSession.getState().setVoicePhase("success");
-    success();
-    if (voiceSettleTimerRef.current) clearTimeout(voiceSettleTimerRef.current);
-    voiceSettleTimerRef.current = setTimeout(() => {
-      if (useSession.getState().voice.phase === "success")
-        useSession.getState().setVoicePhase("idle");
-    }, 1_400);
-  }, []);
-
-  const updateLatency = useCallback(
-    (latency: VoiceLatency, stage: keyof VoiceLatency) => {
-      useSession.getState().setLatency(latency);
-      voiceEvent("voice_latency", useSession.getState().traceContext, {
-        stage,
-        valueMs: latency[stage],
-      });
-    },
-    [],
-  );
-
-  const analyzeUserPronunciation = useCallback(
-    async (
-      turnId: string,
-      targetText: string,
-      attemptAudioUri: string,
-      previous?: ChatTurn,
-    ): Promise<PronunciationFeedback | undefined> => {
-      try {
-        const targetReading = (await annotate(targetText))
-          .map((run) => run.reading ?? run.base)
-          .join("");
-        const referenceAudioUri =
-          previous?.referenceAudioUri ??
-          (
-            await synthesize(targetText, {
-              withTimestamps: true,
-            })
-          ).audioUri;
-        const pronunciation = await analyzePronunciation({
-          targetText,
-          targetReading,
-          referenceAudioUri,
-          attemptAudioUri,
-          previous: previous?.pronunciation
-            ? { attemptId: previous.id, feedback: previous.pronunciation }
-            : undefined,
-        });
-        useSession.getState().patchTurn(turnId, {
-          referenceAudioUri,
-          pronunciation,
-        });
-        return pronunciation;
-      } catch (error) {
-        log.warn("pronunciation analysis failed", error);
-        return undefined;
-      }
-    },
-    [],
-  );
-
-  const sendUser = useCallback(
-    async (
-      text: string,
-      audioUri?: string,
-      retryAssistantTurnId?: string,
-      existingTraceTurnId?: string,
-    ) => {
-      const trimmed = text.trim();
-      if (!trimmed) {
-        useSession.getState().setVoice(voiceError("silence"));
-        return;
-      }
-
-      const previousTrace = useSession.getState().traceContext;
-      const interruptedTurnId = responseRunsRef.current.interrupt();
-      if (interruptedTurnId && interruptedTurnId !== retryAssistantTurnId) {
-        voiceEvent(
-          "response_cancelled",
-          previousTrace,
-          {
-            reason: "superseded-by-turn",
-          },
-          "warn",
-        );
-        useSession.getState().patchTurn(interruptedTurnId, {
-          streaming: false,
-          interrupted: true,
-        });
-      }
-      await stopSpeech();
-
-      const assistantTurnId = retryAssistantTurnId ?? randomUUID();
-      const traceTurnId =
-        existingTraceTurnId ??
-        (retryAssistantTurnId
-          ? (failedReplyRef.current?.traceTurnId ?? randomUUID())
-          : randomUUID());
-      const responseRunId = randomUUID();
-      const trace: VoiceTraceContext = {
-        sessionId: id,
-        turnId: traceTurnId,
-        responseRunId,
-      };
-      useSession
-        .getState()
-        .setTraceContext({ turnId: traceTurnId, responseRunId });
-      voiceEvent("response_run_started", trace, {
-        retry: Boolean(retryAssistantTurnId),
-        capturedAudio: Boolean(audioUri),
-      });
-      let userTurnId: string | undefined;
-      if (retryAssistantTurnId) {
-        useSession.getState().patchTurn(assistantTurnId, {
-          textJa: "",
-          streaming: true,
-          interrupted: false,
-          corrections: undefined,
-          traceTurnId,
-          responseRunId,
-        });
-      } else {
-        userTurnId = traceTurnId;
-        const userTurn: ChatTurn = {
-          id: userTurnId,
-          role: "user",
-          textJa: trimmed,
-          audioUri,
-          attemptNumber: audioUri ? 1 : undefined,
-          createdAt: Date.now(),
-          traceTurnId,
-          responseRunId,
-        };
-        const assistantTurn: ChatTurn = {
-          id: assistantTurnId,
-          role: "assistant",
-          textJa: "",
-          streaming: true,
-          createdAt: Date.now(),
-          traceTurnId,
-          responseRunId,
-        };
-        useSession.getState().addTurn(userTurn);
-        useSession.getState().addTurn(assistantTurn);
-        if (audioUri) {
-          void analyzeUserPronunciation(userTurnId, trimmed, audioUri);
-        }
-        success();
-      }
-
-      const historyWithUser = useSession
-        .getState()
-        .turns.filter((turn) => turn.id !== assistantTurnId && turn.textJa)
-        .map((turn) => ({ role: turn.role, content: turn.textJa }));
-      const responseRun = responseRunsRef.current.start(assistantTurnId);
-      failedReplyRef.current = null;
-      useSession.getState().setStreaming(true);
-      useSession
-        .getState()
-        .setVoicePhase(
-          retryAssistantTurnId ? "responseRetry" : "understanding",
-          {
-            interimTranscript: "",
-          },
-        );
-      latencyTrackerRef.current.transcriptCommitted();
-
-      let receivedText = false;
-      let receivedAudio = false;
-      let playbackFailed = false;
-      let reply = "";
-      const handlePlaybackFailure = (error: Error) => {
-        if (playbackFailed) return;
-        playbackFailed = true;
-        voiceEvent(
-          "playback_failed",
-          trace,
-          {
-            failureKind: "callback",
-            errorName: errorName(error),
-          },
-          "error",
-        );
-        failedReplyRef.current = {
-          text: trimmed,
-          audioUri,
-          assistantTurnId,
-          traceTurnId,
-        };
-        responseRunsRef.current.interrupt();
-        setAudioEnergy(0);
-        failHaptic();
-        useSession.getState().setVoice(voiceError("playbackFailure"));
-      };
-      const audioQueue = new PCMPlaybackQueue({
-        captureKey: assistantTurnId,
-        trace,
-        onCaptured: (audioUri) => {
-          useSession.getState().patchTurn(assistantTurnId, { audioUri });
-        },
-        onStarted: () => {
-          if (!responseRunsRef.current.isCurrent(assistantTurnId)) return;
-          const latency = latencyTrackerRef.current.firstAudioPlayed();
-          updateLatency(latency, "firstTextToFirstAudioMs");
-          useSession.getState().setVoicePhase("speaking");
-        },
-        onFinished: () => {
-          if (!responseRunsRef.current.complete(assistantTurnId)) return;
-          settleReply(Boolean(retryAssistantTurnId));
-        },
-        onError: handlePlaybackFailure,
-        onEnergy: setAudioEnergy,
-      });
-
-      try {
-        const generator = streamConversation({
-          history: historyWithUser.slice(0, -1),
-          userTurn: trimmed,
-          signal: responseRun.signal,
-          trace,
-        });
-        while (true) {
-          const next = await generator.next();
-          if (next.done) {
-            const result = next.value;
-            const finalText = result.fullText || reply;
-            useSession.getState().patchTurn(assistantTurnId, {
-              textJa: finalText,
-              streaming: false,
-            });
-            if (userTurnId) {
-              const enrichment = result.feedback.then(async (feedback) => {
-                const store = useSession.getState();
-                store.patchTurn(userTurnId!, {
-                  corrections: feedback.corrections,
-                  textEn: feedback.translations.user,
-                });
-                store.patchTurn(assistantTurnId, {
-                  textEn: feedback.translations.tutor,
-                });
-                if (store.closeout) await store.prepareCloseout();
-              });
-              pendingEnrichmentRef.current.add(enrichment);
-              void enrichment.finally(() => {
-                pendingEnrichmentRef.current.delete(enrichment);
-              });
-            }
-            failedReplyRef.current = null;
-            if (receivedAudio) {
-              void audioQueue.finish().catch((error) => {
-                handlePlaybackFailure(
-                  error instanceof Error
-                    ? error
-                    : new Error("Streaming playback did not finish"),
-                );
-              });
-            } else {
-              await audioQueue.stop();
-              if (finalText) {
-                voiceEvent(
-                  "response_fallback",
-                  trace,
-                  {
-                    path: "standalone-tts",
-                    reason: "stream-contained-no-audio",
-                  },
-                  "warn",
-                );
-                const synthesized = await synthesize(finalText, { trace });
-                useSession.getState().patchTurn(assistantTurnId, {
-                  audioUri: synthesized.audioUri,
-                });
-                if (synthesized.audioUri) {
-                  await play(synthesized.audioUri, {
-                    trace,
-                    onStarted: () => {
-                      if (!responseRunsRef.current.isCurrent(assistantTurnId))
-                        return;
-                      const latency =
-                        latencyTrackerRef.current.firstAudioPlayed();
-                      updateLatency(latency, "firstTextToFirstAudioMs");
-                      useSession.getState().setVoicePhase("speaking");
-                    },
-                    onFinished: () => {
-                      if (!responseRunsRef.current.complete(assistantTurnId))
-                        return;
-                      settleReply(Boolean(retryAssistantTurnId));
-                    },
-                    onError: handlePlaybackFailure,
-                  });
-                } else {
-                  responseRunsRef.current.complete(assistantTurnId);
-                  settleReply(Boolean(retryAssistantTurnId));
-                }
-              } else {
-                responseRunsRef.current.complete(assistantTurnId);
-                settleReply(Boolean(retryAssistantTurnId));
-              }
-            }
-            break;
-          }
-
-          const chunk = next.value;
-          if (chunk.type === "text") {
-            reply += chunk.text;
-            useSession
-              .getState()
-              .appendAssistantText(assistantTurnId, chunk.text);
-            if (!receivedText) {
-              receivedText = true;
-              const latency = latencyTrackerRef.current.firstTextReceived();
-              updateLatency(latency, "transcriptToFirstTextMs");
-              useSession.getState().setVoicePhase("firstReply");
-            }
-          } else {
-            receivedAudio = true;
-            try {
-              await audioQueue.enqueue(
-                chunk.audioBase64,
-                chunk.sampleRate,
-                chunk.channels,
-              );
-            } catch (error) {
-              handlePlaybackFailure(
-                error instanceof Error
-                  ? error
-                  : new Error("Could not queue streamed audio"),
-              );
-              throw error;
-            }
-          }
-        }
-      } catch (error) {
-        await audioQueue.stop();
-        if (
-          responseRun.signal.aborted &&
-          !(error instanceof ProviderTimeoutError)
-        ) {
-          useSession.getState().patchTurn(assistantTurnId, {
-            streaming: false,
-            interrupted: !playbackFailed,
-          });
-          return;
-        }
-        voiceEvent(
-          "response_run_failed",
-          trace,
-          {
-            failureKind:
-              error instanceof AudioContractError
-                ? "decode"
-                : error instanceof ProviderTimeoutError
-                  ? "timeout"
-                  : "provider",
-            errorName: errorName(error),
-          },
-          "error",
-        );
-        responseRunsRef.current.complete(assistantTurnId);
-        failedReplyRef.current = {
-          text: trimmed,
-          audioUri,
-          assistantTurnId,
-          traceTurnId,
-        };
-        useSession.getState().patchTurn(assistantTurnId, {
-          textJa: reply || "Koe could not finish that reply.",
-          streaming: false,
-        });
-        useSession
-          .getState()
-          .setVoice(
-            error instanceof ProviderTimeoutError
-              ? voiceError("providerTimeout")
-              : voiceError("network"),
-          );
-      } finally {
-        if (responseRunsRef.current.isLatest(responseRun.token))
-          useSession.getState().setStreaming(false);
-      }
-    },
-    [analyzeUserPronunciation, id, settleReply, updateLatency],
-  );
+    });
+  }, [engine]);
 
   useEffect(() => {
     if (
       !__DEV__ ||
       process.env.EXPO_PUBLIC_KOE_AUTORUN_VOICE_TRACE !== "1" ||
-      !id ||
       diagnosticRunStartedRef.current
     ) {
       return;
     }
     diagnosticRunStartedRef.current = true;
-    const traceTurnId = randomUUID();
-    const trace = { sessionId: id, turnId: traceTurnId };
-    const run = async () => {
-      voiceEvent("simulator_diagnostic_started", trace, {
-        target: "iPhone Simulator",
-      });
-      useSession.getState().setTraceContext({ turnId: traceTurnId });
-      useSession.getState().setRecording(true);
-      useSession.getState().setVoicePhase("listening");
-      try {
-        const handle = await startStreaming({
-          languageHint: "ja,en",
-          onChunk: () => undefined,
-          trace,
-        });
-        await new Promise((resolve) => setTimeout(resolve, 700));
-        const result = await handle.stop();
-        if (!result.fullText) {
-          voiceEvent(
-            "stt_failed",
-            trace,
-            {
-              failureKind: "no-speech",
-              stage: "simulator-diagnostic",
-            },
-            "warn",
-          );
-        }
-      } catch (error) {
-        voiceEvent(
-          "stt_ui_failure",
-          trace,
-          {
-            stage: "simulator-diagnostic",
-            failureKind: error instanceof STTError ? error.kind : "unknown",
-            errorName: errorName(error),
-          },
-          "error",
-        );
-      } finally {
-        useSession.getState().setRecording(false);
-      }
-      voiceEvent("simulator_diagnostic_fallback", trace, {
-        path: "fixed-private-free-transcript",
-      });
-      await sendUser("こんにちは。", undefined, undefined, traceTurnId);
-    };
-    void run();
-  }, [id, sendUser]);
+    void engine.runSimulatorDiagnostic();
+  }, [engine]);
 
-  const onPressIn = useCallback(async () => {
-    if (useSession.getState().isRecording) return;
-    const wasResponding = Boolean(
-      responseRunsRef.current.hasActiveRun() ||
-      useSession.getState().isStreaming,
-    );
-    if (wasResponding) {
-      voiceEvent(
-        "response_cancelled",
-        useSession.getState().traceContext,
-        {
-          reason: "barge-in",
-        },
-        "warn",
-      );
-      useSession.getState().setVoicePhase("interrupted");
-      const interruptedTurnId = responseRunsRef.current.interrupt();
-      if (interruptedTurnId) {
-        useSession.getState().patchTurn(interruptedTurnId, {
-          streaming: false,
-          interrupted: true,
-        });
-      }
-      useSession.getState().setStreaming(false);
-      await stopSpeech();
-    }
-
-    pressStartRef.current = Date.now();
-    const traceTurnId = randomUUID();
-    activeTurnIdRef.current = traceTurnId;
-    useSession.getState().setTraceContext({ turnId: traceTurnId });
-    const sttTrace = { sessionId: id, turnId: traceTurnId };
-    latencyTrackerRef.current = new VoiceLatencyTracker();
-    latencyTrackerRef.current.listeningStarted();
-    useSession.getState().setLatency({});
-    setDraftTranscript("");
-    setDraftAudioUri(undefined);
-    setAudioEnergy(0);
-    useSession.getState().setRecording(true);
-    useSession
-      .getState()
-      .setVoicePhase(retryingTurnId ? "retryListening" : "listening", {
-        interimTranscript: "",
-      });
-
-    try {
-      sttHandleRef.current = await startStreaming({
-        languageHint: "ja,en",
-        onAudioEnergy: setAudioEnergy,
-        onChunk: (chunk) => {
-          const previous =
-            useSession.getState().latency.listeningToTranscriptMs;
-          const latency = latencyTrackerRef.current.transcriptReceived();
-          if (previous === undefined)
-            updateLatency(latency, "listeningToTranscriptMs");
-          setDraftTranscript(chunk.text);
-          useSession.getState().setInterimTranscript(chunk.text);
-        },
-        trace: sttTrace,
-      });
-    } catch (error) {
-      voiceEvent(
-        "stt_ui_failure",
-        sttTrace,
-        {
-          stage: "start",
-          failureKind: error instanceof STTError ? error.kind : "unknown",
-          errorName: errorName(error),
-        },
-        "error",
-      );
-      failHaptic();
-      setAudioEnergy(0);
-      useSession.getState().setRecording(false);
-      if (error instanceof STTError && error.kind === "permission-denied") {
-        useSession.getState().setVoice(voiceError("permissionDenied"));
-      } else if (error instanceof STTError && error.kind === "interrupted") {
-        useSession.getState().setVoice(voiceError("audioInterruption"));
-      } else {
-        useSession.getState().setVoice(voiceError("sttFailure"));
-      }
-    }
-  }, [id, retryingTurnId, updateLatency]);
-
-  const onPressOut = useCallback(async () => {
-    if (!useSession.getState().isRecording) return;
-    const duration = Date.now() - pressStartRef.current;
-    useSession.getState().setRecording(false);
-    setAudioEnergy(0);
-    const handle = sttHandleRef.current;
-    sttHandleRef.current = null;
-    if (!handle) return;
-
-    try {
-      if (duration < 400) {
-        await handle.cancel();
-        useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
-        return;
-      }
-      const result = await handle.stop();
-      if (!result.fullText.trim()) {
-        useSession.getState().setVoice(voiceError("silence"));
-        return;
-      }
-      setDraftTranscript(result.fullText);
-      setDraftAudioUri(result.audioUri || undefined);
-      if (
-        shouldAutoSendFirstTranscript({
-          intro,
-          existingTurnCount: useSession.getState().turns.length,
-          transcript: result.fullText,
-        })
-      ) {
-        setDraftTranscript("");
-        setDraftAudioUri(undefined);
-        useSession
-          .getState()
-          .setVoicePhase("understanding", { interimTranscript: "" });
-        const traceTurnId = activeTurnIdRef.current ?? undefined;
-        activeTurnIdRef.current = null;
-        void sendUser(
-          result.fullText,
-          result.audioUri || undefined,
-          undefined,
-          traceTurnId,
-        );
-        return;
-      }
-      useSession.getState().setVoicePhase("transcriptCheck", {
-        interimTranscript: result.fullText,
-      });
-    } catch (error) {
-      voiceEvent(
-        "stt_ui_failure",
-        useSession.getState().traceContext,
-        {
-          stage: "final",
-          failureKind: error instanceof STTError ? error.kind : "unknown",
-          errorName: errorName(error),
-        },
-        "error",
-      );
-      if (error instanceof STTError && error.kind === "network") {
-        useSession.getState().setVoice(voiceError("network"));
-      } else if (error instanceof STTError && error.kind === "interrupted") {
-        useSession.getState().setVoice(voiceError("audioInterruption"));
-      } else if (
-        error instanceof STTError &&
-        error.kind === "permission-denied"
-      ) {
-        useSession.getState().setVoice(voiceError("permissionDenied"));
-      } else if (error instanceof STTError && error.kind === "no-speech") {
-        useSession.getState().setVoice(voiceError("silence"));
-      } else {
-        useSession.getState().setVoice(voiceError("sttFailure"));
-      }
-    }
-  }, [intro, sendUser]);
-
-  const submitPronunciationRetry = useCallback(
-    async (previous: ChatTurn, transcript: string, audioUri: string) => {
-      const targetText = previous.pronunciation?.targetText ?? previous.textJa;
-      const turnId = activeTurnIdRef.current ?? randomUUID();
-      activeTurnIdRef.current = null;
-      const retryTurn: ChatTurn = {
-        id: turnId,
-        role: "user",
-        textJa: transcript,
-        audioUri,
-        referenceAudioUri: previous.referenceAudioUri,
-        retryOfTurnId: previous.id,
-        attemptNumber: (previous.attemptNumber ?? 1) + 1,
-        createdAt: Date.now(),
-        traceTurnId: turnId,
-      };
-      useSession.getState().addTurn(retryTurn);
-      setRetryingTurnId(null);
-      setDraftTranscript("");
-      setDraftAudioUri(undefined);
-      useSession.getState().setVoicePhase("comparing", {
-        interimTranscript: "",
-      });
-      const result = await analyzeUserPronunciation(
-        turnId,
-        targetText,
-        audioUri,
-        previous,
-      );
-      if (result) {
-        useSession.getState().setVoicePhase("success");
-        result.retry?.targetImproved ? success() : tap();
-      } else {
-        useSession.getState().setVoice(voiceError("sttFailure"));
-      }
-      if (voiceSettleTimerRef.current)
-        clearTimeout(voiceSettleTimerRef.current);
-      voiceSettleTimerRef.current = setTimeout(() => {
-        if (useSession.getState().voice.phase === "success") {
-          useSession.getState().setVoicePhase("idle");
-        }
-      }, 1_400);
-    },
-    [analyzeUserPronunciation],
-  );
-
-  const submitTranscript = useCallback(() => {
-    const text = draftTranscript.trim();
-    if (!text) {
-      useSession.getState().setVoice(voiceError("silence"));
-      return;
-    }
-    if (retryingTurnId) {
-      const previous = useSession
-        .getState()
-        .turns.find((turn) => turn.id === retryingTurnId);
-      if (previous && draftAudioUri) {
-        void submitPronunciationRetry(previous, text, draftAudioUri);
-        return;
-      }
-      setRetryingTurnId(null);
-      useSession.getState().setVoice(voiceError("sttFailure"));
-      return;
-    }
-    setDraftTranscript("");
-    useSession
-      .getState()
-      .setVoicePhase("understanding", { interimTranscript: "" });
-    const traceTurnId = activeTurnIdRef.current ?? undefined;
-    activeTurnIdRef.current = null;
-    void sendUser(text, draftAudioUri, undefined, traceTurnId);
-  }, [
-    draftAudioUri,
-    draftTranscript,
-    retryingTurnId,
-    sendUser,
-    submitPronunciationRetry,
-  ]);
-
-  const recoverVoice = useCallback(() => {
-    const recovery = useSession.getState().voice.recovery;
-    if (recovery === "openSettings") {
-      void Linking.openSettings();
-      return;
-    }
-    if (recovery === "retryResponse" && failedReplyRef.current) {
-      const failed = failedReplyRef.current;
-      voiceEvent(
-        "response_retry",
-        {
-          sessionId: id,
-          turnId: failed.traceTurnId,
-        },
-        { retry: true },
-        "warn",
-      );
-      useSession.getState().setVoicePhase("responseRetry");
-      void sendUser(
-        failed.text,
-        failed.audioUri,
-        failed.assistantTurnId,
-        failed.traceTurnId,
-      );
-      return;
-    }
-    useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
-  }, [id, sendUser]);
-
-  const discardTranscript = useCallback(() => {
-    setDraftTranscript("");
-    setDraftAudioUri(undefined);
-    setAudioEnergy(0);
-    setRetryingTurnId(null);
-    useSession.getState().setVoicePhase("idle", { interimTranscript: "" });
-  }, []);
-
-  const endSession = () => {
-    tap();
-    responseRunsRef.current.interrupt();
-    voiceEvent(
-      "session_cancelled",
-      useSession.getState().traceContext,
-      {
-        reason: "user-ended-session",
-      },
-      "warn",
-    );
-    setAudioEnergy(0);
-    setShowCoda(true);
-    closeoutPreparationRef.current = Promise.all([
-      sttHandleRef.current?.cancel() ?? Promise.resolve(),
-      stopSpeech(),
-    ]).then(() => useSession.getState().prepareCloseout());
+  const onPressIn = () => {
+    void engine.startListening();
   };
-
+  const onPressOut = () => {
+    void engine.stopListening();
+  };
+  const submitTranscript = () => {
+    void engine.submitTranscript();
+  };
+  const recoverVoice = () => {
+    void engine.recover();
+  };
+  const discardTranscript = () => engine.discardTranscript();
+  const setDraftTranscript = (text: string) => engine.editTranscript(text);
+  const startPronunciationRetry = (turn: ChatTurn) => {
+    void engine.startPronunciationRetry(turn.id);
+  };
+  const play = (audioUri: string) => engine.playAudio(audioUri);
+  const endSession = () => engine.requestEnd();
+  const setShowCoda = (visible: boolean) => {
+    if (!visible) engine.continueAfterCoda();
+  };
   const finishSession = async () => {
     try {
-      await closeoutPreparationRef.current;
-      await Promise.allSettled([...pendingEnrichmentRef.current]);
-      await useSession.getState().end();
-      setShowCoda(false);
+      await engine.finishEnd();
       router.back();
     } catch {
       Alert.alert(
@@ -923,32 +153,13 @@ export default function SessionScreen() {
       );
     }
   };
-
+  const leaveFirstExchange = async () => {
+    await engine.endImmediately();
+    router.replace("/");
+  };
   const canInterrupt = ["understanding", "firstReply", "speaking"].includes(
     session.voice.phase,
   );
-
-  const startPronunciationRetry = useCallback((turn: ChatTurn) => {
-    tap();
-    responseRunsRef.current.interrupt();
-    void stopSpeech();
-    setRetryingTurnId(turn.id);
-    setDraftTranscript("");
-    setDraftAudioUri(undefined);
-    useSession
-      .getState()
-      .setVoicePhase("retryListening", { interimTranscript: "" });
-  }, []);
-
-  const leaveFirstExchange = useCallback(async () => {
-    responseRunsRef.current.interrupt();
-    await Promise.allSettled([
-      sttHandleRef.current?.cancel() ?? Promise.resolve(),
-      stopSpeech(),
-    ]);
-    await useSession.getState().end();
-    router.replace("/");
-  }, [router]);
 
   const latestTurn = [...session.turns]
     .reverse()
@@ -985,22 +196,6 @@ export default function SessionScreen() {
     (session.id ? buildSessionCloseout(session.id, session.turns) : undefined);
   const isFirstExchange = intro === "1" && session.turns.length === 0;
   const isVoiceRecovery = session.voice.phase === "recoverableError";
-
-  useEffect(() => {
-    if (
-      session.voice.phase !== "idle" ||
-      !latestPronunciation?.pronunciation ||
-      presentedPronunciationRef.current === latestPronunciation.id
-    ) {
-      return;
-    }
-    presentedPronunciationRef.current = latestPronunciation.id;
-    useSession.getState().setVoicePhase("feedback");
-  }, [
-    latestPronunciation?.id,
-    latestPronunciation?.pronunciation,
-    session.voice.phase,
-  ]);
 
   return (
     <SafeAreaView
@@ -1661,7 +856,6 @@ function AcousticAtmosphere({ palette }: { palette: ConversationPalette }) {
     </View>
   );
 }
-
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   conversationScroll: { flex: 1 },
