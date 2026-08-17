@@ -63,6 +63,7 @@ export default function SessionScreen() {
   const diagnosticRunStartedRef = useRef(false);
   const autoStartAppliedRef = useRef(false);
   const reviewStateAppliedRef = useRef(false);
+  const returnHomeAfterCloseoutRef = useRef(false);
 
   useEffect(() => {
     void engine.start().then(() => {
@@ -199,14 +200,20 @@ export default function SessionScreen() {
   const continueConversation = () => engine.continueAfterCoda();
   const finishSession = async () => {
     try {
+      returnHomeAfterCloseoutRef.current = true;
       await engine.finishEnd();
-      router.replace("/");
     } catch {
+      returnHomeAfterCloseoutRef.current = false;
       Alert.alert(
         "Session not finished",
         "Koe kept this conversation open so none of its learning moments are lost. Try again.",
       );
     }
+  };
+  const finishCloseoutNavigation = () => {
+    if (!returnHomeAfterCloseoutRef.current) return;
+    returnHomeAfterCloseoutRef.current = false;
+    router.replace("/");
   };
   const leaveFirstExchange = async () => {
     await engine.endImmediately();
@@ -405,6 +412,7 @@ export default function SessionScreen() {
         onContinue={continueConversation}
         onShowCoda={() => setCloseoutStage("coda")}
         onFinish={() => void finishSession()}
+        onDismiss={finishCloseoutNavigation}
       />
     </SafeAreaScreen>
   );
@@ -757,6 +765,7 @@ function SessionCloseout({
   onContinue,
   onShowCoda,
   onFinish,
+  onDismiss,
 }: {
   visible: boolean;
   stage: CloseoutStage;
@@ -767,6 +776,7 @@ function SessionCloseout({
   onContinue: () => void;
   onShowCoda: () => void;
   onFinish: () => void;
+  onDismiss: () => void;
 }) {
   const moments = (closeout?.moments ?? [])
     .filter((moment) => moment.decision !== "discarded")
@@ -776,6 +786,7 @@ function SessionCloseout({
       visible={visible}
       animationType="none"
       onRequestClose={stage === "ending" ? onContinue : onFinish}
+      onDismiss={onDismiss}
     >
       <SafeAreaScreen
         accessibilityViewIsModal

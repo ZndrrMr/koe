@@ -40,10 +40,7 @@ test("only the four approved production states use generated artwork", async () 
   assert.match(session, /useKoeIllustration\("coda"\)/);
   assert.doesNotMatch(plate, /Image|useKoeIllustration|\.webp/);
   assert.match(plate, /kind=\{presentation\.plate\}/);
-  assert.match(
-    presentation,
-    /Record<VoicePhase, AcousticPresentation>/,
-  );
+  assert.match(presentation, /Record<VoicePhase, AcousticPresentation>/);
 });
 
 test("production UI stays calm and review state injection stays development-only", async () => {
@@ -65,4 +62,12 @@ test("production UI stays calm and review state injection stays development-only
   assert.match(session, /EXPO_PUBLIC_KOE_REVIEW_PHASE/);
   assert.match(session, /session\.voice\.phase/);
   assert.match(session, /CloseoutStage = "ending" \| "coda"/);
+});
+
+test("closeout returns home only after the native modal finishes dismissing", async () => {
+  const session = await source("app/session/[id].tsx");
+
+  assert.match(session, /returnHomeAfterCloseoutRef\.current = true/);
+  assert.match(session, /onDismiss=\{finishCloseoutNavigation\}/);
+  assert.match(session, /<Modal[\s\S]*onDismiss=\{onDismiss\}/);
 });
