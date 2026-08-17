@@ -11,9 +11,11 @@ import {
   QUALITY_EVALUATOR_PROMPT_VERSION,
   qualityEvaluatorPrompt,
 } from "../../shared/conversationQuality";
+import { INWORLD_ROUTER_AUDIO_CONTRACT } from "../../shared/inworld";
 import {
   deterministicChecks,
   loadQualityFixtures,
+  parseLiveConversationResponse,
   runLiveQualitySuite,
   runRecordedQualitySuite,
 } from "./regressionSuite";
@@ -206,6 +208,40 @@ test("live provider replay cannot start without the explicit spend guard", async
       }),
     /--allow-provider-spend/,
   );
+});
+
+test("live conversation parsing matches SSE PCM and deployed JSON MP3 contracts", async () => {
+  const sse = parseLiveConversationResponse(
+    `data: ${JSON.stringify({ choices: [{ delta: { audio: { transcript: "こんにちは" } } }] })}\n\n` +
+      `data: ${JSON.stringify({ choices: [{ delta: { audio: { data: "AAAAAA==" } } }] })}\n\n` +
+      "data: [DONE]\n\n",
+    new Headers({
+      "Content-Type": "text/event-stream",
+      "X-Koe-Audio-Encoding": "pcm_s16le",
+      "X-Koe-Audio-Sample-Rate": "48000",
+      "X-Koe-Audio-Channels": "1",
+    }),
+  );
+  assert.equal(sse.replyText, "こんにちは");
+  assert.equal(sse.encoding, INWORLD_ROUTER_AUDIO_CONTRACT.encoding);
+  assert.equal(sse.audio.byteLength, 4);
+
+  const contract = JSON.parse(
+    await readFile("shared/fixtures/inworldAudioContract.json", "utf8"),
+  ) as { standalone: { audioBase64: string } };
+  const json = parseLiveConversationResponse(
+    JSON.stringify({
+      text: "そうなんですね。",
+      audioBase64: contract.standalone.audioBase64,
+      audioFormat: "mp3",
+    }),
+    new Headers({ "Content-Type": "application/json" }),
+  );
+  assert.equal(json.replyText, "そうなんですね。");
+  assert.equal(json.encoding, "mp3");
+  assert.equal(json.sampleRate, 24_000);
+  assert.equal(json.channels, 1);
+  assert.equal(json.provenance, "live-provider-json-compat");
 });
 
 test("guarded live lane retains real response bytes, traces, feedback, and model grade", async () => {

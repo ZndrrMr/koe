@@ -18,6 +18,15 @@ import {
   type QualityDialogueTurn,
   type QualityEvaluationInput,
 } from "../../shared/conversationQuality";
+import {
+  INWORLD_ROUTER_AUDIO_CONTRACT,
+  INWORLD_STANDALONE_AUDIO_CONTRACT,
+} from "../../shared/inworld";
+import {
+  decodeBase64Audio,
+  validateInworldRouterChunk,
+  validateInworldStandaloneMP3,
+} from "../services/audioContract";
 
 const FIXTURE_ROOT = "shared/fixtures/conversation-quality";
 const SPOKEN_MANIFEST = "shared/fixtures/spoken/manifest.json";
@@ -889,6 +898,68 @@ function parseProviderSSE(body: string): {
   return { replyText: replyText.trim(), audio };
 }
 
+export function parseLiveConversationResponse(
+  body: string,
+  headers: Headers,
+): {
+  replyText: string;
+  audio: Uint8Array;
+  encoding: string;
+  sampleRate: number;
+  channels: number;
+  provenance: string;
+} {
+  const contentType = headers.get("Content-Type")?.toLowerCase() ?? "";
+  if (contentType.includes("application/json")) {
+    const payload = JSON.parse(body) as {
+      text?: string;
+      audioBase64?: string;
+      audioFormat?: string;
+      ttsError?: string;
+    };
+    invariant(
+      payload.audioBase64,
+      `live provider JSON response had no audio: ${payload.ttsError ?? "missing audio"}`,
+    );
+    invariant(
+      payload.audioFormat?.toLowerCase() ===
+        INWORLD_STANDALONE_AUDIO_CONTRACT.encoding,
+      `live provider JSON response declared ${payload.audioFormat ?? "no audio format"}`,
+    );
+    const audio = decodeBase64Audio(payload.audioBase64);
+    const observation = validateInworldStandaloneMP3(
+      audio,
+      INWORLD_STANDALONE_AUDIO_CONTRACT.contentType,
+    );
+    return {
+      replyText: payload.text?.trim() ?? "",
+      audio,
+      encoding: observation.observedEncoding,
+      sampleRate: observation.sampleRate,
+      channels: observation.channels,
+      provenance: "live-provider-json-compat",
+    };
+  }
+
+  const parsed = parseProviderSSE(body);
+  const declared = {
+    encoding: headers.get("X-Koe-Audio-Encoding") ?? "",
+    sampleRate: Number(headers.get("X-Koe-Audio-Sample-Rate")),
+    channels: Number(headers.get("X-Koe-Audio-Channels")),
+  };
+  const observation = validateInworldRouterChunk(
+    Buffer.from(parsed.audio).toString("base64"),
+    declared,
+  );
+  return {
+    ...parsed,
+    encoding: observation.observedEncoding,
+    sampleRate: observation.sampleRate,
+    channels: observation.channels,
+    provenance: "live-provider-sse",
+  };
+}
+
 /**
  * Explicit spend-bearing lane. It is impossible to enter accidentally: the
  * caller must supply both the Worker URL and allowProviderSpend=true.
@@ -1013,27 +1084,29 @@ export async function runLiveQualitySuite(options: {
         const chatBody = await chatResponse.text();
         if (!chatResponse.ok)
           throw providerError("live conversation", chatResponse, chatBody);
-        const parsed = parseProviderSSE(chatBody);
-        replyText = parsed.replyText;
-        const audioPath = join(
-          outputDirectory,
-          "audio",
-          `${scenario.id}-${index + 1}.pcm`,
+        const parsed = parseLiveConversationResponse(
+          chatBody,
+          chatResponse.headers,
         );
+        replyText = parsed.replyText;
+        const audioExtension =
+          parsed.encoding === INWORLD_STANDALONE_AUDIO_CONTRACT.encoding
+            ? "mp3"
+            : "pcm";
+        const relativeAudioPath = join(
+          "audio",
+          `${scenario.id}-${index + 1}.${audioExtension}`,
+        );
+        const audioPath = join(outputDirectory, relativeAudioPath);
         await writeFile(audioPath, parsed.audio);
         replyAudio = {
-          path: join("audio", `${scenario.id}-${index + 1}.pcm`),
+          path: relativeAudioPath,
           sha256: sha256(parsed.audio),
-          encoding:
-            chatResponse.headers.get("X-Koe-Audio-Encoding") ?? "unknown",
-          sampleRate: Number(
-            chatResponse.headers.get("X-Koe-Audio-Sample-Rate") ?? 0,
-          ),
-          channels: Number(
-            chatResponse.headers.get("X-Koe-Audio-Channels") ?? 0,
-          ),
+          encoding: parsed.encoding,
+          sampleRate: parsed.sampleRate,
+          channels: parsed.channels,
           byteCount: parsed.audio.byteLength,
-          provenance: "live-provider",
+          provenance: parsed.provenance,
         };
         providerTrace.push({
           stage: "conversation",
