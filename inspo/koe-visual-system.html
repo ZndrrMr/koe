@@ -1,0 +1,2046 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Koe — inspiration-led visual system</title>
+    <script>
+      const hashCapture = location.hash.startsWith("#capture-")
+        ? location.hash.replace("#capture-", "")
+        : "";
+      const capture =
+        new URLSearchParams(location.search).get("capture") || hashCapture;
+      if (capture) document.documentElement.dataset.capture = capture;
+    </script>
+    <style>
+      :root {
+        --board: #e8e1d4;
+        --paper: #f4efe4;
+        --paper-raised: #fbf8f0;
+        --ink: #191d20;
+        --muted: #5c5b55;
+        --blue: #2f5f8f;
+        --blue-strong: #1d4a6d;
+        --ochre: #d7ad4b;
+        --rule: #b7ab96;
+        --rule-strong: #6e6658;
+        --error: #8e3f34;
+        --sage: #789080;
+        --night: #111b25;
+        --night-paper: #eee7da;
+        --night-blue: #a9c6d5;
+        --phone-w: 390px;
+        --phone-h: 844px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        background: var(--board);
+        color: var(--ink);
+      }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", Avenir, system-ui, sans-serif;
+        line-height: 1.5;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .board {
+        width: min(1520px, calc(100% - 48px));
+        margin: 24px auto 80px;
+        background: var(--paper-raised);
+        border: 1px solid var(--rule);
+      }
+
+      .masthead,
+      .section {
+        padding: 56px 64px;
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .masthead {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 64px;
+        min-height: 460px;
+        align-items: end;
+      }
+
+      .eyebrow,
+      .phone-kicker,
+      .spec-label,
+      .source-number {
+        font-size: 11px;
+        line-height: 1.3;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        font-weight: 600;
+      }
+
+      .eyebrow {
+        color: var(--blue-strong);
+      }
+
+      h1,
+      h2,
+      h3,
+      .serif {
+        font-family: "Iowan Old Style", "Baskerville", Georgia, serif;
+        font-weight: 400;
+        letter-spacing: -0.025em;
+      }
+
+      h1 {
+        max-width: 760px;
+        margin: 20px 0 0;
+        font-size: clamp(60px, 7vw, 108px);
+        line-height: 0.92;
+      }
+
+      h2 {
+        margin: 10px 0 24px;
+        font-size: 48px;
+        line-height: 1.02;
+      }
+
+      h3 {
+        margin: 0 0 10px;
+        font-size: 28px;
+        line-height: 1.1;
+      }
+
+      p {
+        margin: 0 0 16px;
+      }
+
+      .lead {
+        font-size: 20px;
+        line-height: 1.55;
+        max-width: 600px;
+      }
+
+      .mark {
+        background: var(--ochre);
+        padding: 0 0.08em;
+        box-decoration-break: clone;
+      }
+
+      .thesis {
+        padding: 28px 0 0 30px;
+        border-left: 1px solid var(--rule-strong);
+      }
+
+      .thesis strong {
+        display: block;
+        margin-bottom: 10px;
+        color: var(--blue-strong);
+      }
+
+      .corpus-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 28px 18px;
+        margin-top: 36px;
+      }
+
+      .source {
+        margin: 0;
+        min-width: 0;
+      }
+
+      .source-image {
+        position: relative;
+        height: 178px;
+        overflow: hidden;
+        background: #ddd4c3;
+        border: 1px solid var(--rule);
+      }
+
+      .source-image img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .source-number {
+        display: block;
+        color: var(--blue-strong);
+        margin-top: 10px;
+      }
+
+      .source figcaption {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+
+      .corpus-reading,
+      .token-grid,
+      .screen-map,
+      .handoff-grid {
+        display: grid;
+        gap: 1px;
+        background: var(--rule);
+        border: 1px solid var(--rule);
+        margin-top: 36px;
+      }
+
+      .corpus-reading {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .token-grid {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .screen-map {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .handoff-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .reading,
+      .token,
+      .screen,
+      .handoff {
+        background: var(--paper-raised);
+        padding: 24px;
+      }
+
+      .reading strong,
+      .screen strong,
+      .handoff strong {
+        display: block;
+        margin-bottom: 8px;
+      }
+
+      .reading p,
+      .screen p,
+      .handoff p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .direction {
+        padding-top: 64px;
+        margin-top: 48px;
+        border-top: 1px solid var(--rule);
+      }
+
+      .direction:first-of-type {
+        margin-top: 24px;
+      }
+
+      .direction-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(320px, 0.7fr);
+        gap: 48px;
+        align-items: end;
+        margin-bottom: 36px;
+      }
+
+      .decision {
+        padding-left: 22px;
+        border-left: 4px solid var(--ochre);
+      }
+
+      .decision.reject {
+        border-left-color: var(--rule-strong);
+      }
+
+      .phone-row {
+        display: grid;
+        grid-template-columns: repeat(3, var(--phone-w));
+        justify-content: space-between;
+        gap: 24px;
+        overflow-x: auto;
+        padding-bottom: 8px;
+      }
+
+      .phone-study {
+        margin: 0;
+      }
+
+      .phone-study figcaption {
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .phone {
+        position: relative;
+        width: var(--phone-w);
+        height: var(--phone-h);
+        overflow: hidden;
+        border: 12px solid #111;
+        border-radius: 58px;
+        background: var(--paper);
+        box-shadow: 0 12px 28px rgb(25 29 32 / 0.18);
+      }
+
+      .phone::before {
+        content: "";
+        position: absolute;
+        z-index: 20;
+        width: 112px;
+        height: 30px;
+        top: 10px;
+        left: calc(50% - 56px);
+        border-radius: 20px;
+        background: #080808;
+      }
+
+      .phone-ref {
+        background: #ddd2c3;
+      }
+
+      .phone-ref img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: 71% 50%;
+        display: block;
+      }
+
+      .phone-ui {
+        position: absolute;
+        inset: 0;
+        padding: 60px 24px 26px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .phone-top {
+        min-height: 50px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .koe-lockup {
+        display: flex;
+        align-items: baseline;
+        gap: 9px;
+      }
+
+      .koe-lockup .kanji {
+        font-family: "Hiragino Mincho ProN", "YuMincho", serif;
+        font-size: 28px;
+        line-height: 1;
+      }
+
+      .koe-lockup .latin {
+        font-size: 9px;
+        letter-spacing: 0.2em;
+        font-weight: 600;
+      }
+
+      .text-control {
+        display: flex;
+        min-width: 44px;
+        min-height: 44px;
+        align-items: center;
+        justify-content: flex-end;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .engraving {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 100%;
+        height: 270px;
+        margin: 24px 0 14px;
+        color: var(--blue);
+      }
+
+      .engraving::before,
+      .engraving::after {
+        display: none;
+      }
+
+      .engraving .rays {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .phone-title {
+        margin: 0;
+        font-family: "Iowan Old Style", "Baskerville", Georgia, serif;
+        font-weight: 400;
+        font-size: 43px;
+        line-height: 1.02;
+        letter-spacing: -0.035em;
+      }
+
+      .phone-jp {
+        font-family: "Hiragino Mincho ProN", "YuMincho", serif;
+        font-size: 18px;
+        letter-spacing: 0.04em;
+        margin-top: 10px;
+      }
+
+      .phone-copy {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.5;
+        margin-top: 10px;
+      }
+
+      .line-action {
+        min-height: 64px;
+        width: 100%;
+        margin-top: auto;
+        border-top: 1px solid var(--rule-strong);
+        border-bottom: 1px solid var(--rule-strong);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-family: "Iowan Old Style", "Baskerville", Georgia, serif;
+        font-size: 22px;
+      }
+
+      .line-action b {
+        font-family: "Avenir Next", Avenir, sans-serif;
+        font-size: 17px;
+        font-weight: 500;
+      }
+
+      .selected-live .phone-ui {
+        padding-left: 28px;
+        padding-right: 28px;
+      }
+
+      .live-stage {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 410px;
+        text-align: center;
+      }
+
+      .state-plate {
+        width: 204px;
+        height: 204px;
+        color: var(--blue);
+        margin-bottom: 18px;
+      }
+
+      .state-plate svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      .live-state {
+        color: var(--blue-strong);
+        font-size: 10px;
+        letter-spacing: 0.15em;
+        font-weight: 600;
+      }
+
+      .live-title {
+        font-family: "Hiragino Mincho ProN", "YuMincho", serif;
+        font-size: 34px;
+        line-height: 1.25;
+        margin: 9px 0 0;
+      }
+
+      .live-utterance {
+        font-family: "Iowan Old Style", "Baskerville", Georgia, serif;
+        font-size: 22px;
+        line-height: 1.25;
+        padding: 18px 0;
+        border-top: 1px solid var(--rule);
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .listen-control {
+        min-height: 76px;
+        margin-top: auto;
+        background: var(--blue-strong);
+        color: var(--paper-raised);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 14px 18px;
+      }
+
+      .listen-seal {
+        width: 44px;
+        height: 44px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgb(251 248 240 / 0.5);
+        font-family: "Hiragino Mincho ProN", serif;
+        font-size: 20px;
+      }
+
+      .listen-control b {
+        display: block;
+        font-size: 16px;
+      }
+      .listen-control span {
+        display: block;
+        font-size: 12px;
+        opacity: 0.78;
+      }
+
+      .ticket-phone {
+        background: #f0eadf;
+      }
+
+      .ticket-phone .phone-ui {
+        padding-left: 20px;
+        padding-right: 20px;
+      }
+
+      .ticket-hero {
+        margin-top: 24px;
+        border: 1px solid #44584e;
+      }
+
+      .ticket-hero-top {
+        height: 265px;
+        display: grid;
+        place-items: center;
+        background: var(--sage);
+        color: #f6f0e5;
+        font-family: "Hiragino Mincho ProN", serif;
+        font-size: 104px;
+      }
+
+      .ticket-row {
+        min-height: 48px;
+        border-top: 1px solid #44584e;
+        padding: 11px 12px;
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        font-size: 12px;
+      }
+
+      .ticket-row b {
+        font-size: 10px;
+        letter-spacing: 0.1em;
+      }
+
+      .ticket-state-grid {
+        margin-top: 44px;
+        border: 1px solid #44584e;
+      }
+
+      .ticket-state-grid .status {
+        min-height: 260px;
+        display: grid;
+        place-items: center;
+        background: #d6bf71;
+        border-bottom: 1px solid #44584e;
+        text-align: center;
+      }
+
+      .ticket-state-grid .status span {
+        display: block;
+        font-family: "Hiragino Mincho ProN", serif;
+        font-size: 38px;
+      }
+
+      .ticket-footer {
+        margin-top: auto;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        border: 1px solid #44584e;
+      }
+
+      .ticket-footer > div {
+        min-height: 68px;
+        display: grid;
+        place-items: center;
+        font-weight: 600;
+      }
+
+      .ticket-footer > div + div {
+        border-left: 1px solid #44584e;
+        background: #44584e;
+        color: #f6f0e5;
+      }
+
+      .night-phone {
+        background: var(--night);
+        color: var(--night-paper);
+      }
+
+      .night-phone .phone-ui {
+        padding-left: 24px;
+        padding-right: 24px;
+      }
+
+      .night-image {
+        position: relative;
+        height: 360px;
+        margin: 34px -24px 24px;
+        border-top: 1px solid #718698;
+        border-bottom: 1px solid #718698;
+        overflow: hidden;
+      }
+
+      .night-moon {
+        position: absolute;
+        width: 164px;
+        height: 164px;
+        border-radius: 50%;
+        background: #d4b151;
+        left: 105px;
+        top: 72px;
+      }
+
+      .night-voice {
+        position: absolute;
+        z-index: 2;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        font-family: "Hiragino Mincho ProN", serif;
+        font-size: 112px;
+        color: var(--night);
+      }
+
+      .night-rule {
+        position: absolute;
+        width: 1px;
+        height: 100%;
+        background: var(--night-blue);
+        opacity: 0.52;
+        left: 50%;
+      }
+
+      .night-copy {
+        color: #c8c2b7;
+      }
+
+      .night-action {
+        color: var(--night-paper);
+        border-color: #718698;
+      }
+
+      .swatches {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 1px;
+        background: var(--rule);
+        border: 1px solid var(--rule);
+        margin: 24px 0 0;
+      }
+
+      .swatch {
+        min-height: 120px;
+        padding: 70px 12px 12px;
+        font-size: 11px;
+        line-height: 1.3;
+      }
+
+      .swatch.dark {
+        color: white;
+      }
+
+      .token code {
+        display: block;
+        font:
+          12px/1.5 "SFMono-Regular",
+          ui-monospace,
+          monospace;
+        color: var(--blue-strong);
+        white-space: normal;
+      }
+
+      .spacing-demo {
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        margin-top: 22px;
+      }
+
+      .space {
+        width: 34px;
+        background: var(--blue);
+        color: white;
+        font-size: 9px;
+        text-align: center;
+        padding-top: 4px;
+      }
+
+      .state-strip {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 1px;
+        background: var(--rule);
+        border: 1px solid var(--rule);
+        margin-top: 24px;
+      }
+
+      .state {
+        min-height: 230px;
+        padding: 20px 16px;
+        background: var(--paper);
+        display: flex;
+        flex-direction: column;
+      }
+
+      .state b {
+        font-size: 13px;
+      }
+      .state small {
+        color: var(--muted);
+        margin-top: 4px;
+      }
+
+      .state-glyph {
+        width: 92px;
+        height: 92px;
+        margin: auto;
+        color: var(--blue);
+      }
+
+      .state-glyph svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      .prompt {
+        margin-top: 28px;
+        padding: 24px;
+        background: #ebe3d5;
+        border-left: 4px solid var(--blue-strong);
+        font:
+          13px/1.65 "SFMono-Regular",
+          ui-monospace,
+          monospace;
+        white-space: pre-wrap;
+      }
+
+      .exclusions {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 18px 54px;
+        margin-top: 30px;
+        padding: 0;
+        list-style: none;
+      }
+
+      .exclusions li {
+        padding: 18px 0;
+        border-top: 1px solid var(--rule);
+      }
+
+      .exclusions strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .footnote {
+        font-size: 13px;
+        color: var(--muted);
+        margin-top: 24px;
+      }
+
+      @media (max-width: 1100px) {
+        .board {
+          width: calc(100% - 24px);
+          margin-top: 12px;
+        }
+        .masthead,
+        .section {
+          padding: 40px 32px;
+        }
+        .masthead,
+        .direction-head {
+          grid-template-columns: 1fr;
+        }
+        .corpus-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .corpus-reading,
+        .token-grid,
+        .screen-map,
+        .handoff-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .phone-row {
+          justify-content: start;
+        }
+        .state-strip {
+          grid-template-columns: repeat(3, 1fr);
+        }
+      }
+
+      @media (max-width: 620px) {
+        .board {
+          width: 100%;
+          margin: 0;
+          border: 0;
+        }
+        .masthead,
+        .section {
+          padding: 36px 20px;
+        }
+        .corpus-grid,
+        .corpus-reading,
+        .token-grid,
+        .screen-map,
+        .handoff-grid {
+          grid-template-columns: 1fr;
+        }
+        .swatches,
+        .state-strip {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .exclusions {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+        }
+      }
+
+      @media print {
+        html {
+          background: white;
+        }
+        .board {
+          width: 100%;
+          margin: 0;
+          border: 0;
+        }
+      }
+
+      html[data-capture^="direction-"] .masthead,
+      html[data-capture^="direction-"] .section {
+        display: none;
+      }
+      html[data-capture^="direction-"] #directions {
+        display: block;
+      }
+      html[data-capture^="direction-"] #directions > :not(.direction) {
+        display: none;
+      }
+      html[data-capture^="direction-"] #directions .direction {
+        display: none;
+      }
+      html[data-capture="direction-a"] #directions #direction-a,
+      html[data-capture="direction-b"] #directions #direction-b,
+      html[data-capture="direction-c"] #directions #direction-c {
+        display: block;
+        margin-top: 0;
+        padding-top: 0;
+        border-top: 0;
+      }
+      html[data-capture^="direction-"] .board {
+        margin-top: 0;
+        margin-bottom: 0;
+      }
+
+      html[data-capture="selected-system"] .masthead,
+      html[data-capture="selected-system"] .section {
+        display: none;
+      }
+      html[data-capture="selected-system"] #selected-system {
+        display: block;
+      }
+      html[data-capture="selected-system"] .board {
+        margin-top: 0;
+        margin-bottom: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="board">
+      <header class="masthead">
+        <div>
+          <span class="eyebrow">Koe / 声 · visual system study · ZAN-909</span>
+          <h1>The voice belongs in the <span class="mark">margin.</span></h1>
+        </div>
+        <div class="thesis">
+          <strong>Product subject</strong>
+          <p class="lead">
+            A calm, immediate place for a learner to speak Japanese, hear Koe
+            answer, notice one useful improvement, and keep talking.
+          </p>
+          <p>
+            The system borrows the primary book reference’s editorial paper,
+            blue engraving, fine rules, high-contrast serif, and singular ochre
+            emphasis. It does not borrow its library navigation or turn Koe into
+            a reading app.
+          </p>
+        </div>
+      </header>
+
+      <section class="section" id="corpus">
+        <span class="eyebrow">01 · source reading</span>
+        <h2>What the full corpus permits</h2>
+        <p class="lead">
+          All sixteen saved references were reviewed. The first ten define
+          editorial structure and phone-scale craft; the final six prove that a
+          single image with confident negative space can carry a composition.
+          Reference 008 remains the authority whenever the corpus disagrees.
+        </p>
+
+        <div class="corpus-grid">
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/001-copenhagen-garden.jpg"
+                alt="Copenhagen Garden editorial cover"
+              />
+            </div>
+            <span class="source-number">001</span>
+            <figcaption>
+              Quiet cover grid; title and image share authority.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/002-art-landscape-phone-screens.jpg"
+                alt="Dark art and landscape phone screens"
+              />
+            </div>
+            <span class="source-number">002</span>
+            <figcaption>
+              Image-forward phone composition; dark edition cue.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/003-insect-identification-app.jpg"
+                alt="Insect identification phone screens"
+              />
+            </div>
+            <span class="source-number">003</span>
+            <figcaption>
+              One specimen as the focal plate; avoid its pill density.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/004-water-lily-tickets.jpg"
+                alt="Blue and green water lily ticket designs"
+              />
+            </div>
+            <span class="source-number">004</span>
+            <figcaption>
+              Blue/green editions, rule structure, restrained metadata.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/005-phone-covers.jpg"
+                alt="Editorial phone cover designs"
+              />
+            </div>
+            <span class="source-number">005</span>
+            <figcaption>
+              Archival typography, square images, near-flat hierarchy.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/006-adventure-travel-tags.jpg"
+                alt="Adventure travel tags and editorial cards"
+              />
+            </div>
+            <span class="source-number">006</span>
+            <figcaption>
+              Ochre works as one decisive signal, not a theme color.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/007-image-text-phone-screens.jpg"
+                alt="Image and text phone screens"
+              />
+            </div>
+            <span class="source-number">007</span>
+            <figcaption>
+              Large crop plus sparse copy; one action per screen.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/008-book-app-phone-screens.jpg"
+                alt="Primary book app phone screens with blue engraving and highlighted quote"
+              />
+            </div>
+            <span class="source-number">008 · primary</span>
+            <figcaption>
+              Paper, serif proposition, blue engraving, ochre word, hairlines.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/009-webpage-color-layout.jpg"
+                alt="Editorial webpage color layout study"
+              />
+            </div>
+            <span class="source-number">009</span>
+            <figcaption>
+              Color changes by chapter; photography holds atmosphere.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/010-floral-field-cover.jpg"
+                alt="Floral field editorial cover"
+              />
+            </div>
+            <span class="source-number">010</span>
+            <figcaption>
+              Monumental serif over restrained photographic field.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/011-orbitx-video-poster.jpg"
+                alt="Dark floral landscape website poster"
+              />
+            </div>
+            <span class="source-number">011</span>
+            <figcaption>
+              A single cinematic field can replace interface ornament.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/012-planto-forest-plants.jpg"
+                alt="Forest plant website"
+              />
+            </div>
+            <span class="source-number">012</span>
+            <figcaption>
+              Depth and light as image craft, not an app effect.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/013-faster-path-software.jpg"
+                alt="Text over a quiet landscape"
+              />
+            </div>
+            <span class="source-number">013</span>
+            <figcaption>Negative space reserved for live type.</figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/014-earth-habitable-clouds.jpg"
+                alt="Cloud-led Making Earth Habitable website"
+              />
+            </div>
+            <span class="source-number">014</span>
+            <figcaption>
+              One atmospheric image carries the page thesis.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/015-sukoya-mountains.jpg"
+                alt="Dark mountain and cloud website"
+              />
+            </div>
+            <span class="source-number">015</span>
+            <figcaption>
+              Night palette and large display type remain secondary.
+            </figcaption>
+          </figure>
+          <figure class="source">
+            <div class="source-image">
+              <img
+                src="pinterest/016-forty4-clouds.jpg"
+                alt="Editorial cloud and mountain website"
+              />
+            </div>
+            <span class="source-number">016</span>
+            <figcaption>
+              Framed image, cream surround, deliberate crop.
+            </figcaption>
+          </figure>
+        </div>
+
+        <div class="corpus-reading">
+          <div class="reading">
+            <strong>Keep</strong>
+            <p>
+              Paper warmth, a single illustration or photograph, asymmetrical
+              editorial hierarchy, fine rules, quiet blue, one ochre mark.
+            </p>
+          </div>
+          <div class="reading">
+            <strong>Translate</strong>
+            <p>
+              Book plate → voice plate. Quote → current conversational
+              proposition. Chapter metadata → truthful voice-state label.
+            </p>
+          </div>
+          <div class="reading">
+            <strong>Limit</strong>
+            <p>
+              Japanese lettering appears only where it names Koe, a state, or
+              spoken content. It is language, never pattern.
+            </p>
+          </div>
+          <div class="reading">
+            <strong>Reject</strong>
+            <p>
+              Dashboard tiles, generic AI glow, stacked chat bubbles, capsule
+              fields, ornamental seals, scenic spectacle, and decorative motion.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="directions">
+        <span class="eyebrow">02 · directions at 390 × 844 pt</span>
+        <h2>Three coherent readings</h2>
+        <p class="lead">
+          Each direction uses the same product truth and the same exact iPhone
+          canvas. The primary reference is shown at the same width beside each
+          pair so hierarchy, image share, type scale, and density can be judged
+          directly.
+        </p>
+
+        <article class="direction" id="direction-a">
+          <div class="direction-head">
+            <div>
+              <span class="eyebrow">Direction A · selected</span>
+              <h2>Blue Marginalia / 声の余白</h2>
+              <p class="lead">
+                Koe behaves like an annotated folio: a small blue voice plate,
+                generous cream paper, a large serif proposition, and one useful
+                ochre emphasis. The live conversation replaces a decorative
+                waveform with six static, legible engraving states.
+              </p>
+            </div>
+            <div class="decision">
+              <strong>Why this wins</strong>
+              <p>
+                It is closest to 008 without imitating its book UI. It gives Koe
+                an ownable subject-specific signature—the voice plate—while
+                leaving spoken Japanese, state truth, and the next action
+                unmistakable.
+              </p>
+            </div>
+          </div>
+
+          <div class="phone-row">
+            <figure class="phone-study">
+              <div class="phone phone-ref">
+                <img
+                  src="pinterest/008-book-app-phone-screens.jpg"
+                  alt="Primary reference cropped to the quote phone at iPhone scale"
+                />
+              </div>
+              <figcaption>
+                008 authority · small blue plate, serif proposition, one ochre
+                word, open lower field.
+              </figcaption>
+            </figure>
+
+            <figure class="phone-study">
+              <div class="phone selected-home">
+                <div class="phone-ui">
+                  <div class="phone-top">
+                    <div class="koe-lockup">
+                      <span class="kanji">声</span
+                      ><span class="latin">KOE</span>
+                    </div>
+                    <span class="text-control" aria-hidden="true">•••</span>
+                  </div>
+                  <div class="engraving" aria-label="Concept voice plate">
+                    <svg class="rays" viewBox="0 0 340 270" aria-hidden="true">
+                      <g
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-linecap="round"
+                      >
+                        <path d="M170 48v174" opacity=".38" />
+                        <path
+                          d="M49 202c43-4 72-25 89-60 13-27 21-58 32-94"
+                          stroke-width="1.8"
+                        />
+                        <path
+                          d="M291 202c-43-4-72-25-89-60-13-27-21-58-32-94"
+                          stroke-width="1.8"
+                        />
+                        <path d="M63 214c45-7 76-27 94-62" opacity=".7" />
+                        <path d="M277 214c-45-7-76-27-94-62" opacity=".7" />
+                        <path d="M77 225c37-8 64-23 83-46" opacity=".38" />
+                        <path d="M263 225c-37-8-64-23-83-46" opacity=".38" />
+                        <path
+                          d="M124 86h23M193 86h23M113 109h31M196 109h31M102 134h34M204 134h34M88 160h40M212 160h40"
+                          opacity=".62"
+                        />
+                        <path
+                          d="M164 58h12M164 76h12M164 94h12M164 112h12M164 130h12M164 148h12M164 166h12M164 184h12"
+                          stroke-width="2"
+                        />
+                      </g>
+                    </svg>
+                  </div>
+                  <p class="phone-title">
+                    Speak, and let the
+                    <span class="mark">conversation</span> follow.
+                  </p>
+                  <p class="phone-jp">声を出す。会話になる。</p>
+                  <p class="phone-copy">
+                    Japanese or English. Koe listens, answers aloud, and keeps
+                    the exchange open.
+                  </p>
+                  <div class="line-action">
+                    <b>Start speaking</b><span>→</span>
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                Home/start · image 31% of safe canvas; proposition 23%; action
+                is one full-width ruled region.
+              </figcaption>
+            </figure>
+
+            <figure class="phone-study">
+              <div class="phone selected-live">
+                <div class="phone-ui">
+                  <div class="phone-top">
+                    <span class="text-control">End</span>
+                    <div class="koe-lockup">
+                      <span class="kanji">声</span
+                      ><span class="latin">KOE</span>
+                    </div>
+                    <span class="text-control" aria-hidden="true"></span>
+                  </div>
+                  <div class="live-stage">
+                    <div class="state-plate">
+                      <svg viewBox="0 0 204 204" aria-hidden="true">
+                        <g fill="none" stroke="currentColor">
+                          <circle cx="102" cy="102" r="82" opacity=".24" />
+                          <circle cx="102" cy="102" r="58" opacity=".48" />
+                          <path
+                            d="M74 128c14-48 42-48 56 0M80 105c12-34 32-34 44 0M91 82c7-17 15-17 22 0"
+                            stroke-width="2"
+                          />
+                          <path
+                            d="M102 20v24M102 160v24M20 102h24M160 102h24"
+                            opacity=".55"
+                          />
+                        </g>
+                      </svg>
+                    </div>
+                    <span class="live-state">LISTENING / 聞いています</span>
+                    <p class="live-title">どうぞ、続けて。</p>
+                    <p class="phone-copy">
+                      Koe is listening. Pause naturally when you are finished.
+                    </p>
+                  </div>
+                  <div class="live-utterance">
+                    “週末は友達と京都へ行きます。”
+                  </div>
+                  <div class="listen-control">
+                    <span class="listen-seal">声</span>
+                    <div>
+                      <b>Listening</b
+                      ><span>Tap to pause · interrupt Koe anytime</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                Live conversation · the plate names state without constant
+                motion; the current utterance gets one quiet ruled line.
+              </figcaption>
+            </figure>
+          </div>
+        </article>
+
+        <article class="direction" id="direction-b">
+          <div class="direction-head">
+            <div>
+              <span class="eyebrow">Direction B · credible, not selected</span>
+              <h2>Conversation Ticket / ことばの札</h2>
+              <p class="lead">
+                A structured ticket system drawn from 004, 005, and 006: sage
+                and ochre fields, indexed metadata, and a framed specimen-like
+                voice plate.
+              </p>
+            </div>
+            <div class="decision reject">
+              <strong>Why it loses</strong>
+              <p>
+                It is useful and legible, but its labeled compartments make a
+                fluid conversation feel administered. At live scale, Koe starts
+                to resemble an instrument panel and drifts away from 008’s open,
+                quote-led calm.
+              </p>
+            </div>
+          </div>
+
+          <div class="phone-row">
+            <figure class="phone-study">
+              <div class="phone phone-ref">
+                <img
+                  src="pinterest/008-book-app-phone-screens.jpg"
+                  alt="Primary reference cropped at iPhone scale"
+                />
+              </div>
+              <figcaption>
+                008 authority · hierarchy comes from whitespace and type, not a
+                complete grid.
+              </figcaption>
+            </figure>
+            <figure class="phone-study">
+              <div class="phone ticket-phone">
+                <div class="phone-ui">
+                  <div class="phone-top">
+                    <div class="koe-lockup">
+                      <span class="kanji">声</span
+                      ><span class="latin">KOE / 01</span>
+                    </div>
+                    <span class="text-control">About</span>
+                  </div>
+                  <div class="ticket-hero">
+                    <div class="ticket-hero-top">声</div>
+                    <div class="ticket-row">
+                      <b>MODE</b><span>Open conversation</span>
+                    </div>
+                    <div class="ticket-row">
+                      <b>LANGUAGE</b><span>Japanese · English help</span>
+                    </div>
+                    <div class="ticket-row">
+                      <b>START</b><span>Speak when ready</span>
+                    </div>
+                  </div>
+                  <p
+                    class="phone-title"
+                    style="font-size: 36px; margin-top: 24px"
+                  >
+                    A place for today’s Japanese.
+                  </p>
+                  <div class="ticket-footer">
+                    <div>Not now</div>
+                    <div>Begin →</div>
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                Home · strong ticket identity, but metadata competes with the
+                single action.
+              </figcaption>
+            </figure>
+            <figure class="phone-study">
+              <div class="phone ticket-phone">
+                <div class="phone-ui">
+                  <div class="phone-top">
+                    <span class="text-control">End</span>
+                    <div class="koe-lockup">
+                      <span class="kanji">声</span
+                      ><span class="latin">LIVE / 02</span>
+                    </div>
+                    <span class="text-control"></span>
+                  </div>
+                  <div class="ticket-state-grid">
+                    <div class="status">
+                      <div><span>聞く</span>LISTENING</div>
+                    </div>
+                    <div class="ticket-row">
+                      <b>HEARD</b><span>週末は友達と京都へ行きます。</span>
+                    </div>
+                    <div class="ticket-row">
+                      <b>NEXT</b><span>Pause to send your turn</span>
+                    </div>
+                  </div>
+                  <p class="phone-copy" style="margin-top: 24px">
+                    One useful note will appear only when it helps.
+                  </p>
+                  <div class="ticket-footer">
+                    <div>Pause</div>
+                    <div>Listening</div>
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                Live · state is explicit; the grid is too administrative for an
+                open conversation.
+              </figcaption>
+            </figure>
+          </div>
+        </article>
+
+        <article class="direction" id="direction-c">
+          <div class="direction-head">
+            <div>
+              <span class="eyebrow">Direction C · credible, not selected</span>
+              <h2>Night Reading / 夜の声</h2>
+              <p class="lead">
+                An intimate indigo edition drawn from 002, 011, and 015. Pale
+                type and a single ochre voice disc turn conversation into a
+                focused nighttime encounter.
+              </p>
+            </div>
+            <div class="decision reject">
+              <strong>Why it loses</strong>
+              <p>
+                It gives Koe atmosphere, but dark spectacle becomes the first
+                impression and weakens the paper/engraving fidelity Zander
+                chose. Keep this only as the selected system’s dark appearance,
+                with the same layout and no new scenic metaphor.
+              </p>
+            </div>
+          </div>
+
+          <div class="phone-row">
+            <figure class="phone-study">
+              <div class="phone phone-ref">
+                <img
+                  src="pinterest/008-book-app-phone-screens.jpg"
+                  alt="Primary reference cropped at iPhone scale"
+                />
+              </div>
+              <figcaption>
+                008 authority · warm paper is the defining surface, not an
+                optional accent.
+              </figcaption>
+            </figure>
+            <figure class="phone-study">
+              <div class="phone night-phone">
+                <div class="phone-ui">
+                  <div class="phone-top">
+                    <div class="koe-lockup">
+                      <span class="kanji">声</span
+                      ><span class="latin">KOE</span>
+                    </div>
+                    <span class="text-control">•••</span>
+                  </div>
+                  <div class="night-image">
+                    <div class="night-moon"></div>
+                    <div class="night-rule"></div>
+                    <div class="night-voice">声</div>
+                  </div>
+                  <p class="phone-title">Your Japanese, heard in full.</p>
+                  <p class="phone-jp">声を聞かせて。</p>
+                  <p class="phone-copy night-copy">
+                    Begin one open conversation.
+                  </p>
+                  <div class="line-action night-action">
+                    <b>Start speaking</b><span>→</span>
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                Home · intimate and coherent, but atmosphere dominates product
+                truth.
+              </figcaption>
+            </figure>
+            <figure class="phone-study">
+              <div class="phone night-phone">
+                <div class="phone-ui">
+                  <div class="phone-top">
+                    <span class="text-control">End</span>
+                    <div class="koe-lockup">
+                      <span class="kanji">声</span
+                      ><span class="latin">LIVE</span>
+                    </div>
+                    <span class="text-control"></span>
+                  </div>
+                  <div class="live-stage">
+                    <div
+                      class="night-moon"
+                      style="
+                        position: relative;
+                        left: auto;
+                        top: auto;
+                        display: grid;
+                        place-items: center;
+                        color: #111b25;
+                        font-family: &quot;Hiragino Mincho ProN&quot;;
+                        font-size: 60px;
+                        margin-bottom: 36px;
+                      "
+                    >
+                      聞
+                    </div>
+                    <span class="live-state" style="color: var(--night-blue)"
+                      >LISTENING / 聞いています</span
+                    >
+                    <p class="live-title">どうぞ、続けて。</p>
+                    <p class="phone-copy night-copy">Koe is listening.</p>
+                  </div>
+                  <div class="live-utterance" style="border-color: #718698">
+                    “週末は友達と京都へ行きます。”
+                  </div>
+                  <div
+                    class="listen-control"
+                    style="background: var(--night-paper); color: var(--night)"
+                  >
+                    <span class="listen-seal" style="border-color: #718698"
+                      >声</span
+                    >
+                    <div><b>Listening</b><span>Tap to pause</span></div>
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                Live · clear state, but the luminous disc is too close to a
+                generic AI focal object.
+              </figcaption>
+            </figure>
+          </div>
+        </article>
+      </section>
+
+      <section class="section" id="selected-system">
+        <span class="eyebrow">03 · selected system contract</span>
+        <h2>Blue Marginalia / 声の余白</h2>
+        <p class="lead">
+          The memorable element is a <span class="mark">voice plate</span>: a
+          small, single-ink editorial illustration whose form changes discretely
+          with the real conversation state. Everything else is quiet paper,
+          precise typography, and a truthful next action.
+        </p>
+
+        <h3 style="margin-top: 40px">Palette</h3>
+        <div class="swatches">
+          <div class="swatch" style="background: #f4efe4">
+            Paper<br />#F4EFE4
+          </div>
+          <div class="swatch" style="background: #fbf8f0">
+            Raised paper<br />#FBF8F0
+          </div>
+          <div class="swatch dark" style="background: #191d20">
+            Ink<br />#191D20
+          </div>
+          <div class="swatch dark" style="background: #2f5f8f">
+            Engraving blue<br />#2F5F8F
+          </div>
+          <div class="swatch" style="background: #d7ad4b">
+            Ochre mark<br />#D7AD4B
+          </div>
+          <div class="swatch" style="background: #b7ab96">
+            Hairline<br />#B7AB96
+          </div>
+        </div>
+        <p class="footnote">
+          Text: Ink/Paper 14.8:1; Muted #5C5B55/Paper 5.9:1; Engraving
+          Blue/Paper 5.8:1; Blue Strong #1D4A6D/Raised Paper 8.8:1. Ochre is a
+          background mark behind Ink, never text and never the only state cue.
+          Error #8E3F34 on Paper is 6.3:1 and reserved for recovery copy and
+          focus.
+        </p>
+
+        <div class="token-grid">
+          <div class="token">
+            <span class="spec-label">Type · display Latin</span>
+            <h3>Iowan Old Style</h3>
+            <code
+              >displayXL 44/46 regular<br />displayL 36/40 regular<br />displayM
+              28/34 regular</code
+            >
+            <p class="footnote">
+              Built into iOS; use for propositions and English utterance
+              emphasis only.
+            </p>
+          </div>
+          <div class="token">
+            <span class="spec-label">Type · Japanese</span>
+            <h3 style="font-family: &quot;Hiragino Mincho ProN&quot;">
+              Hiragino Mincho
+            </h3>
+            <code
+              >jpDisplay 34/44 W3<br />jpTitle 24/32 W6<br />jpBody 17/26
+              W3</code
+            >
+            <p class="footnote">
+              Japanese is semantic content or identity. Avoid faux vertical
+              setting and decorative repetition.
+            </p>
+          </div>
+          <div class="token">
+            <span class="spec-label">Type · body / utility</span>
+            <h3 style="font-family: &quot;Avenir Next&quot;">Avenir Next</h3>
+            <code
+              >body 16/24 regular<br />action 17/22 demi<br />caption 12/17
+              medium + 0.06em<br />state 11/15 demi + 0.14em</code
+            >
+            <p class="footnote">
+              Uppercase only for short truthful state labels; never for
+              instructions or paragraphs.
+            </p>
+          </div>
+          <div class="token">
+            <span class="spec-label">Dynamic Type</span>
+            <h3>Text remains live</h3>
+            <code
+              >display: max 1.35×<br />body/action: unbounded system scale<br />min
+              body: 16 pt<br />min action: 17 pt</code
+            >
+            <p class="footnote">
+              At accessibility sizes, plates shrink before text; content
+              scrolls, actions remain after content in reading order.
+            </p>
+          </div>
+
+          <div class="token">
+            <span class="spec-label">Space</span>
+            <h3>4-point rhythm</h3>
+            <div class="spacing-demo">
+              <span class="space" style="height: 8px">8</span
+              ><span class="space" style="height: 12px">12</span
+              ><span class="space" style="height: 16px">16</span
+              ><span class="space" style="height: 24px">24</span
+              ><span class="space" style="height: 32px">32</span
+              ><span class="space" style="height: 48px">48</span>
+            </div>
+            <p class="footnote">
+              Phone gutter 24 pt; compact gutter 20 pt. Major section gap 40–48
+              pt. No arbitrary 5/7/13 values.
+            </p>
+          </div>
+          <div class="token">
+            <span class="spec-label">Rules / borders</span>
+            <h3>Structure, not containers</h3>
+            <code
+              >hairline: 1 physical pixel / Hairline<br />interactive rule: 1 pt
+              / Rule Strong<br />corner: 0 pt default<br />corner: 4 pt max for
+              filled controls<br />shadow: none</code
+            >
+            <p class="footnote">
+              Use a rule to separate meaning or mark the full action region. Do
+              not draw cards around ordinary text.
+            </p>
+          </div>
+          <div class="token">
+            <span class="spec-label">Controls</span>
+            <h3>Whole region owns the action</h3>
+            <code
+              >primary: min 64 pt high<br />secondary: min 52 pt high<br />icon/text
+              target: min 44×44 pt<br />safe inset: ≥ 12 pt beyond system
+              inset</code
+            >
+            <p class="footnote">
+              Final padding, background, and full-width frame belong to the
+              control before its hit shape.
+            </p>
+          </div>
+          <div class="token">
+            <span class="spec-label">Icons</span>
+            <h3>Fine, literal, scarce</h3>
+            <code
+              >stroke: 1.25–1.5 pt<br />size: 18–22 pt<br />color: Ink or Blue
+              Strong<br />container: none</code
+            >
+            <p class="footnote">
+              Prefer text for End, Try again, Keep talking. Use microphone,
+              speaker, close, and arrow only when they clarify an action.
+            </p>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 48px">Conversation state grammar</h3>
+        <p>
+          State is encoded three ways: a distinct static plate form, a
+          plain-language label, and the primary action’s label. Color is
+          supplemental. Transitions may crossfade for 120–180 ms; Reduce Motion
+          switches instantly. No plate runs an idle loop.
+        </p>
+        <div class="state-strip">
+          <div class="state">
+            <b>Ready / どうぞ</b
+            ><small>Single centered voice mark · Start speaking</small>
+            <div class="state-glyph">
+              <svg viewBox="0 0 100 100">
+                <g fill="none" stroke="currentColor">
+                  <circle cx="50" cy="50" r="32" opacity=".35" />
+                  <path d="M50 27v46M44 34v32M56 34v32" stroke-width="2" />
+                </g>
+              </svg>
+            </div>
+          </div>
+          <div class="state">
+            <b>Listening / 聞く</b
+            ><small>Open receiving arcs · Listening / Pause</small>
+            <div class="state-glyph">
+              <svg viewBox="0 0 100 100">
+                <g fill="none" stroke="currentColor">
+                  <circle cx="50" cy="50" r="38" opacity=".2" />
+                  <path
+                    d="M26 70c12-42 36-42 48 0M34 60c8-26 24-26 32 0M42 49c5-12 11-12 16 0"
+                    stroke-width="2"
+                  />
+                </g>
+              </svg>
+            </div>
+          </div>
+          <div class="state">
+            <b>Understanding / 考える</b
+            ><small>Closed nested contours · Thinking</small>
+            <div class="state-glyph">
+              <svg viewBox="0 0 100 100">
+                <g fill="none" stroke="currentColor">
+                  <path d="M22 50c12-29 44-29 56 0-12 29-44 29-56 0Z" />
+                  <path d="M31 50c8-18 30-18 38 0-8 18-30 18-38 0Z" />
+                  <path
+                    d="M42 50c3-7 13-7 16 0-3 7-13 7-16 0Z"
+                    stroke-width="2"
+                  />
+                </g>
+              </svg>
+            </div>
+          </div>
+          <div class="state">
+            <b>Koe speaking / 話す</b
+            ><small>Outward voice rays · Interrupt</small>
+            <div class="state-glyph">
+              <svg viewBox="0 0 100 100">
+                <g fill="none" stroke="currentColor">
+                  <path d="M50 31v38M43 38v24M57 38v24" stroke-width="2" />
+                  <path
+                    d="M22 50h12M66 50h12M28 30l9 9M63 61l9 9M28 70l9-9M63 39l9-9"
+                  />
+                </g>
+              </svg>
+            </div>
+          </div>
+          <div class="state">
+            <b>Useful note / 気づき</b
+            ><small>Ochre underline joins two attempts · Try once</small>
+            <div class="state-glyph">
+              <svg viewBox="0 0 100 100">
+                <g fill="none" stroke="currentColor">
+                  <path d="M20 33h60M20 50h44M20 67h60" />
+                  <path d="M48 76h32" stroke="#d7ad4b" stroke-width="7" />
+                </g>
+              </svg>
+            </div>
+          </div>
+          <div class="state">
+            <b>Recovery / もう一度</b
+            ><small>Broken plate + cause · Try again</small>
+            <div class="state-glyph" style="color: var(--error)">
+              <svg viewBox="0 0 100 100">
+                <g fill="none" stroke="currentColor">
+                  <path
+                    d="M50 17a33 33 0 0 1 27 14M83 50a33 33 0 0 1-14 27M50 83a33 33 0 0 1-27-14M17 50a33 33 0 0 1 14-27"
+                    stroke-width="2"
+                  />
+                  <path d="M36 50h28M50 36v28" />
+                </g>
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 48px">Image and plate placement</h3>
+        <div class="screen-map">
+          <div class="screen">
+            <strong>Fresh microphone education</strong>
+            <p>
+              310×240 pt blue engraving at top of content: two offset voice
+              contours meeting, with generous negative space. One screen only if
+              permission is not yet resolved. Live copy and button beneath.
+            </p>
+          </div>
+          <div class="screen">
+            <strong>Home / start</strong>
+            <p>
+              310×248 pt plate, centered, 24 pt after header; 28–33% of safe
+              canvas. The bottom 35% of the art must remain quiet so the title
+              never overlaps detail.
+            </p>
+          </div>
+          <div class="screen">
+            <strong>Listening</strong>
+            <p>
+              204×204 pt code-native state plate centered in a 300×300 pt stage.
+              Generated art is absent; state must react instantly and remain
+              legible without image loading.
+            </p>
+          </div>
+          <div class="screen">
+            <strong>Understanding / tutor speaking</strong>
+            <p>
+              Same 204×204 pt stage and anchor. Swap only the static plate form
+              and label. Speaking may respond to measured energy at ≤10 Hz only
+              if ZAN-912 proves the cost; otherwise static.
+            </p>
+          </div>
+          <div class="screen">
+            <strong>Compact feedback</strong>
+            <p>
+              No hero art. One ruled note beneath the current exchange; ochre
+              underlines only the changed mora/word. Reference playback and
+              Retry remain code-native.
+            </p>
+          </div>
+          <div class="screen">
+            <strong>Recoverable error</strong>
+            <p>
+              No sentimental image. Broken blue/error plate at 144×144 pt,
+              explicit cause, one recovery action, one safe exit. Never
+              communicate failure by color alone.
+            </p>
+          </div>
+          <div class="screen">
+            <strong>Ending</strong>
+            <p>
+              Reuse the home plate at 120×96 pt above a plain confirmation. Keep
+              talking and Finish session are separate full-width rule regions
+              with ≥52 pt height.
+            </p>
+          </div>
+          <div class="screen">
+            <strong>Ended / coda</strong>
+            <p>
+              280×180 pt blue engraving with up to three abstract voice
+              fragments arranged like marginal notes. If there are no saved
+              moments, use only type and rules.
+            </p>
+          </div>
+          <div class="screen">
+            <strong>Dark appearance</strong>
+            <p>
+              Same crops and layout. Recolor line art to #A9C6D5 on #111B25;
+              ochre becomes #D8B75C. Do not generate a second scenic family or
+              invert raster photographs automatically.
+            </p>
+          </div>
+        </div>
+
+        <h3 style="margin-top: 48px">Production art rules for ZAN-910</h3>
+        <div class="handoff-grid">
+          <div class="handoff">
+            <strong>Family</strong>
+            <p>
+              Single-color cobalt intaglio/wood-engraving linework on warm
+              uncoated paper. Visible hatch irregularity, 1–2 pt apparent line
+              weight at 390 pt screen width, no photorealism, no faux antique
+              damage.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>Subject</strong>
+            <p>
+              Voice as exchange: two contours, folded speech, open page-like
+              planes, or a thread passing between marks. Japanese speech rhythm
+              may inform spacing; avoid torii, waves, red sun, cherry blossoms,
+              seals, geisha, samurai, and calligraphy props.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>Export</strong>
+            <p>
+              Transparent WebP/PNG where possible, 3× source, Display-P3
+              reviewed then exported sRGB. Home/onboarding/coda master 1200×960
+              px (5:4); recovery 600×600 px. No baked copy, device frames,
+              shadows, gradients, or UI.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>Crop</strong>
+            <p>
+              Keep the focal form within the central 62% width. Preserve 18%
+              clear space on every edge and 35% calm lower field for
+              home/onboarding. Cropping may remove peripheral hatch, never the
+              voice exchange.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>Accessibility role</strong>
+            <p>
+              Home/onboarding images are meaningful and receive concise labels.
+              Live state plates receive the current state as value. Coda art is
+              decorative if its saved moments are already live text. Recovery
+              art never substitutes for error text.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>Acceptance</strong>
+            <p>
+              Composite every candidate into the exact 390×844 and smallest
+              supported iPhone canvases. Reject illegible hatching, accidental
+              letterforms, embedded text, inconsistent ink, crowded crops, or
+              imagery that becomes the action.
+            </p>
+          </div>
+        </div>
+
+        <div class="prompt">
+          <strong>Base generation prompt</strong> Editorial book-plate
+          illustration for Koe, a minimal voice-first Japanese conversation app.
+          One restrained cobalt-blue intaglio engraving on uncoated warm cream
+          paper: [PLACEMENT-SPECIFIC SUBJECT]. Fine hand-printed linework and
+          controlled crosshatching, calm central composition, large intentional
+          negative space, quiet literary warmth, subtle Japanese speech rhythm
+          expressed through spacing rather than cultural symbols. Single blue
+          ink only. No words, letters, interface, device, border, frame, logo,
+          gradient, glow, 3D render, photorealism, red sun, torii, wave, cherry
+          blossom, seal stamp, calligraphy brush, geisha, or samurai. 5:4
+          composition, focal subject within central 62%, 18% safe space on all
+          edges, lower 35% visually calm.
+        </div>
+      </section>
+
+      <section class="section" id="accessibility">
+        <span class="eyebrow">04 · accessibility and exclusions</span>
+        <h2>Calm cannot depend on smallness</h2>
+        <div class="handoff-grid">
+          <div class="handoff">
+            <strong>Contrast and color</strong>
+            <p>
+              All normal text pairs meet 4.5:1; primary text and actions target
+              7:1. Ochre is only an emphasis ground. Interactive boundaries use
+              Rule Strong, not Hairline.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>Reading order</strong>
+            <p>
+              State label → state explanation → current utterance → optional
+              note → primary action. The plate is adjacent to its state and
+              never interrupts VoiceOver order.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>Targets and safe areas</strong>
+            <p>
+              All controls own their final visible region and are at least 44×44
+              pt. Major actions are ≥52 pt; primary listening action is 64–76
+              pt. Keep 12 pt beyond resolved top/bottom insets.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>Motion and sound</strong>
+            <p>
+              Every phase is understandable muted and static. Announce actual
+              phase changes politely; do not announce energy updates. Haptics
+              and audio support state but never carry it alone.
+            </p>
+          </div>
+        </div>
+
+        <ul class="exclusions">
+          <li>
+            <strong>No generic AI object.</strong>The voice plate is editorial
+            linework tied to a named real phase, not a luminous orb, soft
+            gradient blob, or ambient decorative waveform.
+          </li>
+          <li>
+            <strong>No dashboard cards.</strong>Rules divide semantic regions;
+            they do not wrap every paragraph, metric, history item, or setting
+            into containers.
+          </li>
+          <li>
+            <strong>No ornamental Japan.</strong>声 names Koe. Japanese labels
+            name real states. Cultural motifs do not substitute for product
+            meaning.
+          </li>
+          <li>
+            <strong>No motion-led spectacle.</strong>No perpetual breathing,
+            rotating, shimmering, floating, or particle fields. State
+            transitions are brief and optional.
+          </li>
+          <li>
+            <strong>No chat transcript as the stage.</strong>Show the current
+            exchange and at most one useful note. Full transcript/history
+            remains out of the minimal core.
+          </li>
+          <li>
+            <strong>No theme sprawl.</strong>One light paper system and its
+            faithful dark appearance. No per-state palette, persona skins, or
+            scenic environments.
+          </li>
+          <li>
+            <strong>No tiny editorial affectation.</strong>Captions may be small
+            only when supplemental. Instructions, actions, transcript, and
+            errors use accessible body sizes.
+          </li>
+          <li>
+            <strong>No generated UI copy.</strong>Artwork contains no text,
+            button, label, device chrome, or false acoustic data. All meaning
+            remains code-native and localizable.
+          </li>
+        </ul>
+      </section>
+
+      <section class="section" id="handoff">
+        <span class="eyebrow">05 · downstream handoff</span>
+        <h2>Exact implementation boundary</h2>
+        <div class="handoff-grid">
+          <div class="handoff">
+            <strong>ZAN-910 · image family</strong>
+            <p>
+              Generate only onboarding, home, recovery, and coda art from the
+              placement rules above. Do not generate live phase plates; those
+              are deterministic vectors. Attach in-device composites before
+              accepting exports.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>ZAN-911 · core screens</strong>
+            <p>
+              Implement Blue Marginalia across fresh permission education, home,
+              live phases, compact feedback, recovery, ending, and coda.
+              Preserve the screen map and remove unlisted surfaces.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>ZAN-912 · state motion</strong>
+            <p>
+              Begin with the six static plate forms. Only add a 120–180 ms
+              crossfade or measured-energy response after proving it does not
+              delay voice, navigation, transcript, or playback work.
+            </p>
+          </div>
+          <div class="handoff">
+            <strong>ZAN-913–915 · verification</strong>
+            <p>
+              Treat type scale, image share/crop, state triple-coding,
+              whole-region actions, safe-area spacing, Dynamic Type, VoiceOver
+              order, Reduce Motion, and light/dark equivalence as
+              screenshot/runtime gates.
+            </p>
+          </div>
+        </div>
+        <p class="footnote">
+          Deliberately excluded from this design contract: preferences unless
+          product scope later proves one is required; conversation history;
+          personas, lessons, goals, streaks, and modes; marketing hero imagery;
+          handwriting and music surfaces; illustration embedded in feedback; and
+          any redesign implementation inside ZAN-909.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
