@@ -97,6 +97,7 @@ npm run test:voice
 npm run test:sessions
 npm run test:spoken-fixtures
 npm run test:quality
+npm run test:soak
 npm run test:acceptance
 npm run ios
 npm run worker:dev
@@ -109,3 +110,12 @@ ambiguity, tactful correction, off-topic conversation, silence, and recovery.
 Its recorded lane is the default zero-network gate; the guarded live-provider
 lane and complete artifact contract are documented in
 `shared/fixtures/conversation-quality/README.md`.
+
+The voice soak lane drives 240 varied-length turns through the production
+conversation engine, then exercises provider errors and timeouts, rate limits,
+network loss/recovery, empty or invalid audio, playback failure, storage
+pressure, repeated barge-in, background/foreground cycles, session end during
+capture/playback, route disposal, and late callbacks. It asserts resource
+ownership after every boundary and writes a transcript-free summary with heap,
+queue, retry, ordering, and cleanup evidence to
+`.artifacts/voice-soak/engine-summary.json`.

@@ -545,12 +545,15 @@ test("quality evaluation rejects malformed input before provider spend", async (
   }
 });
 
-test("stream inspection rejects empty audio and a missing DONE event", async () => {
+test("stream inspection rejects malformed, truncated, empty, and invalidly encoded SSE", async () => {
   const originalFetch = globalThis.fetch;
   try {
     for (const upstreamSSE of [
       'data: {"choices":[{"delta":{"audio":{"data":"","transcript":""}}}]}\n\ndata: [DONE]\n\n',
       'data: {"choices":[{"delta":{"audio":{"data":"AAE=","transcript":""}}}]}\n\n',
+      'data: {"choices":[{"delta":{"audio":{"data":"not-base64","transcript":""}}}]}\n\ndata: [DONE]\n\n',
+      'data: {"choices":[{"delta":{"audio":{"data":"UklGRi4uLi5XQVZF","transcript":""}}}]}\n\ndata: [DONE]\n\n',
+      'data: {"choices":[{"delta":BROKEN}]}\n\ndata: [DONE]\n\n',
     ]) {
       globalThis.fetch = async () =>
         new Response(upstreamSSE, {
@@ -572,6 +575,44 @@ test("stream inspection rejects empty audio and a missing DONE event", async () 
       assert.equal(response.status, 200);
       await assert.rejects(() => response.text());
     }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("stream inspection accepts provider SSE fragmented at every byte boundary", async () => {
+  const originalFetch = globalThis.fetch;
+  const upstreamSSE =
+    'data: {"choices":[{"delta":{"content":"こんにちは"}}]}\r\n\r\n' +
+    'data: {"choices":[{"delta":{"audio":{"data":"AAE=","transcript":"。"}}}]}\r\n\r\n' +
+    "data: [DONE]\r\n\r\n";
+  const bytes = new TextEncoder().encode(upstreamSSE);
+  globalThis.fetch = async () =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+          controller.close();
+        },
+      }),
+      { headers: { "Content-Type": "text/event-stream" } },
+    );
+
+  try {
+    const response = await app.request(
+      "/llm/chat",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: "Be concise.",
+          messages: [{ role: "user", content: "こんにちは" }],
+          stream: true,
+        }),
+      },
+      testEnv(),
+    );
+    assert.equal(await response.text(), upstreamSSE);
   } finally {
     globalThis.fetch = originalFetch;
   }

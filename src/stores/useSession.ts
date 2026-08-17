@@ -97,6 +97,7 @@ export const useSession = create<SessionState>((set, get) => ({
     voiceEvent("session_started", { sessionId: id });
     const ready = persistSession({ id });
     sessionPersistence.set(id, ready);
+    reportPersistenceQueueDepth({ sessionId: id });
     try {
       await ready;
       const restored = await loadSession(id);
@@ -109,6 +110,11 @@ export const useSession = create<SessionState>((set, get) => ({
     } catch (error) {
       log.warn("Could not restore session", error);
       if (get().id === id) set({ hydration: "ready" });
+    } finally {
+      if (sessionPersistence.get(id) === ready) {
+        sessionPersistence.delete(id);
+        reportPersistenceQueueDepth({ sessionId: id });
+      }
     }
   },
   addTurn: (turn) => {
@@ -330,4 +336,26 @@ function persistChatTurn(sessionId: string | null, turn: ChatTurn) {
       );
     });
   turnPersistence.set(key, ready);
+  reportPersistenceQueueDepth({
+    sessionId,
+    turnId: turn.traceTurnId ?? turn.id,
+    responseRunId: turn.responseRunId,
+  });
+  void ready.finally(() => {
+    if (turnPersistence.get(key) === ready) {
+      turnPersistence.delete(key);
+      reportPersistenceQueueDepth({
+        sessionId,
+        turnId: turn.traceTurnId ?? turn.id,
+        responseRunId: turn.responseRunId,
+      });
+    }
+  });
+}
+
+function reportPersistenceQueueDepth(trace: VoiceTraceContext): void {
+  voiceEvent("persistence_queue_depth", trace, {
+    sessionQueueDepth: sessionPersistence.size,
+    turnQueueDepth: turnPersistence.size,
+  });
 }

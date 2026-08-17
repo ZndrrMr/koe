@@ -43,6 +43,16 @@ export type ConversationEngineState = {
   showCoda: boolean;
 };
 
+export type ConversationEngineDiagnostics = {
+  disposed: boolean;
+  listenerCount: number;
+  activeResponseRunCount: number;
+  activeCaptureCount: number;
+  activePlaybackQueueCount: number;
+  pendingTimerCount: number;
+  pendingEnrichmentCount: number;
+};
+
 export type TranscriptInputEvent =
   | {
       type: "interim" | "final";
@@ -239,6 +249,11 @@ type FailedReply = {
   traceTurnId: string;
 };
 
+type PendingEnrichment = {
+  completion: Promise<void>;
+  cancel: () => void;
+};
+
 type ActiveCapture = {
   token: number;
   traceTurnId: string;
@@ -308,7 +323,7 @@ export class ConversationEngine {
   private startPromise?: Promise<void>;
   private closeoutPreparation: Promise<unknown> = Promise.resolve();
   private interruptionCleanup: Promise<unknown> = Promise.resolve();
-  private readonly pendingEnrichment = new Set<Promise<void>>();
+  private readonly pendingEnrichment = new Set<PendingEnrichment>();
   private pendingPronunciationTurnId?: string;
   private resumeListening = false;
   private disposed = false;
@@ -322,6 +337,21 @@ export class ConversationEngine {
   }
 
   readonly getState = (): ConversationEngineState => this.state;
+
+  /** Resource-only snapshot for soak/runtime diagnostics. Never includes text,
+   * audio, IDs, request bodies, or credentials. */
+  readonly getDiagnostics = (): ConversationEngineDiagnostics => ({
+    disposed: this.disposed,
+    listenerCount: this.listeners.size,
+    activeResponseRunCount: this.responseRuns.hasActiveRun() ? 1 : 0,
+    activeCaptureCount: this.capture ? 1 : 0,
+    activePlaybackQueueCount: this.responseQueue ? 1 : 0,
+    pendingTimerCount:
+      Number(this.endpointTimer !== undefined) +
+      Number(this.utteranceLimitTimer !== undefined) +
+      Number(this.settleTimer !== undefined),
+    pendingEnrichmentCount: this.pendingEnrichment.size,
+  });
 
   readonly subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -810,6 +840,9 @@ export class ConversationEngine {
     }
     const queue = this.responseQueue;
     this.responseQueue = undefined;
+    this.cancelPendingEnrichment(
+      kind === "app" ? "app-interruption" : "audio-interruption",
+    );
     this.clearCaptureTimers();
     this.dependencies.session.setRecording(false);
     this.dependencies.session.setStreaming(false);
@@ -899,6 +932,7 @@ export class ConversationEngine {
     this.capture = undefined;
     const queue = this.responseQueue;
     this.responseQueue = undefined;
+    this.cancelPendingEnrichment("session-end");
     this.clearCaptureTimers();
     this.clearSettleTimer();
     this.dependencies.telemetry(
@@ -926,7 +960,6 @@ export class ConversationEngine {
   async finishEnd(): Promise<void> {
     if (this.state.phase !== "ending") return;
     await this.closeoutPreparation;
-    await Promise.allSettled([...this.pendingEnrichment]);
     await this.dependencies.session.end();
     this.transition("ended");
     this.publish({ showCoda: false, ownership: EMPTY_OWNERSHIP });
@@ -978,6 +1011,7 @@ export class ConversationEngine {
     this.dependencies.session.setStreaming(false);
     this.clearSettleTimer();
     this.clearCaptureTimers();
+    this.cancelPendingEnrichment("dispose");
     const capture = this.capture;
     this.capture = undefined;
     void capture?.ready.then((handle) => handle.cancel()).catch(() => {});
@@ -1070,6 +1104,7 @@ export class ConversationEngine {
     }
 
     const epoch = ++this.eventGeneration;
+    this.cancelPendingEnrichment("superseded-by-turn");
     const previousTrace = this.dependencies.session.snapshot().traceContext;
     const interruptedTurnId = this.responseRuns.interrupt();
     if (interruptedTurnId && interruptedTurnId !== retryAssistantTurnId) {
@@ -1333,21 +1368,42 @@ export class ConversationEngine {
             streaming: false,
           });
           if (input.userTurnId) {
-            const enrichment = result.feedback.then(async (feedback) => {
-              if (!this.isEpochCurrent(input.epoch)) return;
+            let cancelRace = () => {};
+            const cancelled = new Promise<{ kind: "cancelled" }>((resolve) => {
+              cancelRace = () => resolve({ kind: "cancelled" });
+            });
+            const completion = Promise.race([
+              result.feedback.then((feedback) => ({
+                kind: "feedback" as const,
+                feedback,
+              })),
+              cancelled,
+            ]).then(async (outcome) => {
+              if (
+                outcome.kind === "cancelled" ||
+                !this.isEpochCurrent(input.epoch)
+              )
+                return;
               this.dependencies.session.patchTurn(input.userTurnId!, {
-                corrections: feedback.corrections,
-                textEn: feedback.translations.user,
+                corrections: outcome.feedback.corrections,
+                textEn: outcome.feedback.translations.user,
               });
               this.dependencies.session.patchTurn(input.assistantTurnId, {
-                textEn: feedback.translations.tutor,
+                textEn: outcome.feedback.translations.tutor,
               });
               if (this.dependencies.session.snapshot().closeout) {
                 await this.dependencies.session.prepareCloseout();
               }
             });
+            const enrichment: PendingEnrichment = {
+              completion,
+              cancel: () => {
+                input.responseRun.cancel();
+                cancelRace();
+              },
+            };
             this.pendingEnrichment.add(enrichment);
-            void enrichment.finally(() =>
+            void completion.finally(() =>
               this.pendingEnrichment.delete(enrichment),
             );
           }
@@ -1548,6 +1604,7 @@ export class ConversationEngine {
       this.transition("resuming");
       this.clearSettleTimer();
       this.settleTimer = this.dependencies.clock.setTimer(() => {
+        this.settleTimer = undefined;
         if (!this.isEpochCurrent(epoch) || this.state.phase !== "resuming")
           return;
         if (this.dependencies.session.snapshot().voice.phase === "success") {
@@ -1607,6 +1664,7 @@ export class ConversationEngine {
       const epoch = this.eventGeneration;
       this.clearSettleTimer();
       this.settleTimer = this.dependencies.clock.setTimer(() => {
+        this.settleTimer = undefined;
         if (!this.isEpochCurrent(epoch) || this.state.phase !== "resuming")
           return;
         if (this.dependencies.session.snapshot().voice.phase === "success") {
@@ -1908,5 +1966,18 @@ export class ConversationEngine {
     if (this.settleTimer === undefined) return;
     this.dependencies.clock.clearTimer(this.settleTimer);
     this.settleTimer = undefined;
+  }
+
+  private cancelPendingEnrichment(reason: string): void {
+    if (!this.pendingEnrichment.size) return;
+    const pendingCount = this.pendingEnrichment.size;
+    for (const enrichment of this.pendingEnrichment) enrichment.cancel();
+    this.pendingEnrichment.clear();
+    this.dependencies.telemetry(
+      "conversation_enrichment_cancelled",
+      this.dependencies.session.snapshot().traceContext,
+      { reason, pendingCount },
+      "warn",
+    );
   }
 }

@@ -47,3 +47,14 @@ test("invalidation rejects late work after a completed response", () => {
   controller.invalidate();
   assert.equal(controller.isLatest(run.token), false);
 });
+
+test("optional enrichment can be cancelled after the response run completes", () => {
+  const controller = new ResponseRunController();
+  const run = controller.start("assistant-1");
+  assert.equal(controller.complete(run.turnId, run.token), true);
+  assert.equal(run.signal.aborted, false);
+
+  run.cancel();
+  assert.equal(run.signal.aborted, true);
+  assert.equal(controller.hasActiveRun(), false);
+});

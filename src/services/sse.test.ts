@@ -37,3 +37,28 @@ test("a stream without a provider DONE event is contractually truncated", () => 
     (error: unknown) => error instanceof TruncatedSSEError,
   );
 });
+
+test("every byte boundary preserves fragmented CRLF events in order", () => {
+  const stream =
+    'data: {"choices":[{"delta":{"content":"こ"}}]}\r\n\r\n' +
+    'data: {"choices":[{"delta":{"audio":{"transcript":"ん"}}}]}\n\n' +
+    "data: [DONE]\r\n\r\n";
+  let remainder = "";
+  const events: string[] = [];
+
+  for (const character of stream) {
+    const next = extractSSEEvents(`${remainder}${character}`);
+    events.push(...next.events);
+    remainder = next.remainder;
+  }
+  const final = extractSSEEvents(remainder, true);
+  events.push(...final.events);
+
+  assert.deepEqual(events, [
+    '{"choices":[{"delta":{"content":"こ"}}]}',
+    '{"choices":[{"delta":{"audio":{"transcript":"ん"}}}]}',
+    "[DONE]",
+  ]);
+  assert.equal(final.remainder, "");
+  assert.doesNotThrow(() => assertCompleteSSE(events.at(-1) === "[DONE]", ""));
+});

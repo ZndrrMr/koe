@@ -63,6 +63,8 @@ async function ensureCacheDir() {
 
 let currentPlayer: AudioPlayer | null = null;
 let currentStream: PCMPlaybackQueue | null = null;
+let settleCurrentPlayer: (() => void) | null = null;
+const STANDALONE_PLAYBACK_WATCHDOG_MS = 180_000;
 
 async function configurePlaybackAudioSession(): Promise<void> {
   await setAudioModeAsync({
@@ -284,37 +286,76 @@ export async function play(
     currentPlayer = player;
     let started = false;
     let settled = false;
-    const listener = player.addListener("playbackStatusUpdate", (status) => {
-      if (status.playing && !started) {
-        started = true;
-        voiceEvent("playback_started", opts?.trace, { path: "standalone" });
-        opts?.onStarted?.();
-      }
-      if (status.playbackState === "failed" && !settled) {
+    let listener: { remove: () => void } | undefined;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    await new Promise<void>((resolve) => {
+      const settle = () => {
+        if (settled) return;
         settled = true;
-        listener.remove();
+        if (watchdog) clearTimeout(watchdog);
+        listener?.remove();
         if (currentPlayer === player) currentPlayer = null;
-        player.remove();
+        if (settleCurrentPlayer === settle) settleCurrentPlayer = null;
+        try {
+          player.remove();
+        } catch (error) {
+          log.warn("TTS player removal noop", error);
+        }
+        resolve();
+      };
+      const failPlayback = (error: AudioPlaybackError) => {
+        if (settled) return;
         voiceEvent(
           "playback_failed",
           opts?.trace,
           {
             path: "standalone",
-            failureKind: "player-status",
+            failureKind: error.kind,
           },
           "error",
         );
-        opts?.onError?.(new Error("Audio playback failed"));
-      } else if (status.didJustFinish && !settled) {
-        settled = true;
-        listener.remove();
-        if (currentPlayer === player) currentPlayer = null;
-        player.remove();
-        voiceEvent("playback_ended", opts?.trace, { path: "standalone" });
-        opts?.onFinished?.();
+        settle();
+        opts?.onError?.(error);
+      };
+      settleCurrentPlayer = settle;
+      try {
+        listener = player.addListener("playbackStatusUpdate", (status) => {
+          if (status.playing && !started) {
+            started = true;
+            voiceEvent("playback_started", opts?.trace, {
+              path: "standalone",
+            });
+            opts?.onStarted?.();
+          }
+          if (status.playbackState === "failed") {
+            failPlayback(
+              new AudioPlaybackError("player-status", "Audio playback failed"),
+            );
+          } else if (status.didJustFinish && !settled) {
+            voiceEvent("playback_ended", opts?.trace, { path: "standalone" });
+            settle();
+            opts?.onFinished?.();
+          }
+        });
+        watchdog = setTimeout(() => {
+          failPlayback(
+            new AudioPlaybackError(
+              "player-status",
+              "Audio playback did not finish before its watchdog",
+            ),
+          );
+        }, STANDALONE_PLAYBACK_WATCHDOG_MS);
+        player.play();
+      } catch (error) {
+        failPlayback(
+          new AudioPlaybackError(
+            "audio-session",
+            "Audio playback could not start",
+            { cause: error },
+          ),
+        );
       }
     });
-    player.play();
   } catch (e) {
     voiceEvent(
       "audio_session_failed",
@@ -326,7 +367,13 @@ export async function play(
       "error",
     );
     opts?.onError?.(
-      e instanceof Error ? e : new Error("Audio playback could not start"),
+      e instanceof AudioPlaybackError
+        ? e
+        : new AudioPlaybackError(
+            "audio-session",
+            "Audio playback could not start",
+            { cause: e },
+          ),
     );
   }
 }
@@ -337,14 +384,22 @@ export async function stop(): Promise<void> {
     currentStream = null;
     await stream.stop();
   }
+  const player = currentPlayer;
+  if (!player) return;
   try {
-    if (currentPlayer) {
-      currentPlayer.pause();
-      currentPlayer.remove();
-      currentPlayer = null;
-    }
-  } catch (e) {
-    log.warn("TTS stop noop", e);
+    player.pause();
+  } catch (error) {
+    log.warn("TTS player pause noop", error);
+  }
+  if (settleCurrentPlayer) {
+    settleCurrentPlayer();
+    return;
+  }
+  currentPlayer = null;
+  try {
+    player.remove();
+  } catch (error) {
+    log.warn("TTS player removal noop", error);
   }
 }
 

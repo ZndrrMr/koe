@@ -2,6 +2,8 @@ export type ResponseRun = {
   turnId: string;
   token: number;
   signal: AbortSignal;
+  /** Cancels optional work that may remain after the response itself settles. */
+  cancel: () => void;
 };
 
 /** Owns exactly one response generation/playback run at a time. */
@@ -16,6 +18,7 @@ export class ResponseRunController {
       turnId,
       token: ++this.generation,
       signal: controller.signal,
+      cancel: () => controller.abort(),
       controller,
     };
     this.current = run;

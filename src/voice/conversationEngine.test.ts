@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import test from "node:test";
 
 import type { ConversationResult } from "../services/llm";
@@ -117,6 +119,10 @@ class FakeClock {
     this.timers.delete(handle as number);
   };
 
+  get pendingTimerCount(): number {
+    return this.timers.size;
+  }
+
   advance(ms: number): void {
     this.nowMs += ms;
     while (true) {
@@ -133,7 +139,11 @@ class FakeClock {
 type Harness = ReturnType<typeof createHarness>;
 
 function createHarness(
-  options: { intro?: string; recordedInput?: boolean } = {},
+  options: {
+    intro?: string;
+    recordedInput?: boolean;
+    retainReplyRequests?: boolean;
+  } = {},
 ) {
   const clock = new FakeClock();
   let idCounter = 0;
@@ -142,6 +152,7 @@ function createHarness(
   const replyRequests: Parameters<
     ConversationDependencies["replyStream"]
   >[0][] = [];
+  let replyRequestCount = 0;
   const transcriptInputs: Array<{
     onEvent: (event: TranscriptInputEvent) => void;
     onAudioEnergy: (energy: number) => void;
@@ -154,7 +165,10 @@ function createHarness(
   let speechStartError: Error | undefined;
   let speechStopError: Error | undefined;
   let speechCancelled = 0;
+  let speechStopped = 0;
+  let activeSpeechHandles = 0;
   let recordedText = "injected turn";
+  let recordedError: Error | undefined;
   const recordedRequests: Array<{
     uri: string;
     filename?: string;
@@ -162,6 +176,16 @@ function createHarness(
   }> = [];
   let audioStopped = 0;
   let queueCreated = 0;
+  let queueFinished = 0;
+  let queueStopped = 0;
+  let activeQueues = 0;
+  let maximumActiveQueues = 0;
+  let playbackBehavior:
+    | "complete"
+    | "fail-enqueue"
+    | "fail-finish"
+    | "callback-failure"
+    | "hang" = "complete";
   let ended = 0;
   let closeoutPrepared = 0;
   const writes: Array<{ kind: "add" | "patch"; turnId: string }> = [];
@@ -201,13 +225,23 @@ function createHarness(
       start: async ({ onEvent, onAudioEnergy }) => {
         if (speechStartError) throw speechStartError;
         transcriptInputs.push({ onEvent, onAudioEnergy });
+        activeSpeechHandles += 1;
+        let active = true;
+        const release = () => {
+          if (!active) return;
+          active = false;
+          activeSpeechHandles -= 1;
+        };
         return {
           stop: async () => {
+            speechStopped += 1;
+            release();
             if (speechStopError) throw speechStopError;
             return speechResult;
           },
           cancel: async () => {
             speechCancelled += 1;
+            release();
           },
         };
       },
@@ -218,6 +252,7 @@ function createHarness(
         : {
             transcribe: async (input) => {
               recordedRequests.push(input);
+              if (recordedError) throw recordedError;
               const format = input.filename?.endsWith(".mp3")
                 ? "mp3"
                 : input.filename?.endsWith(".wav")
@@ -237,23 +272,68 @@ function createHarness(
             },
           },
     replyStream: (request) => {
-      replyRequests.push(request);
+      replyRequestCount += 1;
+      if (options.retainReplyRequests !== false) replyRequests.push(request);
       return replyFactory(request);
     },
     audio: {
       createQueue: (queueOptions) => {
         queueCreated += 1;
+        activeQueues += 1;
+        maximumActiveQueues = Math.max(maximumActiveQueues, activeQueues);
+        const gate = deferred<void>();
+        let settled = false;
+        let started = false;
+        const startPlayback = () => {
+          if (started) return;
+          started = true;
+          recordingDuringPlayback.push(state.isRecording);
+          queueOptions.onStarted();
+        };
+        const release = () => {
+          if (settled) return;
+          settled = true;
+          activeQueues -= 1;
+          gate.resolve();
+        };
         return {
-          enqueue: async () => undefined,
+          enqueue: async () => {
+            if (playbackBehavior === "fail-enqueue") {
+              const error = new Error("invalid encoded audio");
+              error.name = "AudioContractError";
+              throw error;
+            }
+          },
           finish: async () => {
-            recordingDuringPlayback.push(state.isRecording);
-            queueOptions.onStarted();
+            queueFinished += 1;
+            if (playbackBehavior === "fail-finish") {
+              release();
+              const error = new Error("playback queue failed");
+              error.name = "AudioPlaybackError";
+              throw error;
+            }
+            startPlayback();
+            if (playbackBehavior === "callback-failure") {
+              const error = new Error("player status failed");
+              error.name = "AudioPlaybackError";
+              queueOptions.onError(error);
+              release();
+              return;
+            }
+            if (playbackBehavior === "hang") {
+              await gate.promise;
+              return;
+            }
             queueOptions.onCaptured(
               `file:///reply-${queueOptions.captureKey}.wav`,
             );
             queueOptions.onFinished();
+            release();
           },
-          stop: async () => undefined,
+          stop: async () => {
+            queueStopped += 1;
+            release();
+          },
         };
       },
       save: async (_audioBase64, cacheKey, format) => {
@@ -396,11 +476,32 @@ function createHarness(
     get speechCancelled() {
       return speechCancelled;
     },
+    get speechStopped() {
+      return speechStopped;
+    },
+    get activeSpeechHandles() {
+      return activeSpeechHandles;
+    },
     get audioStopped() {
       return audioStopped;
     },
     get queueCreated() {
       return queueCreated;
+    },
+    get queueFinished() {
+      return queueFinished;
+    },
+    get queueStopped() {
+      return queueStopped;
+    },
+    get activeQueues() {
+      return activeQueues;
+    },
+    get maximumActiveQueues() {
+      return maximumActiveQueues;
+    },
+    get replyRequestCount() {
+      return replyRequestCount;
     },
     get ended() {
       return ended;
@@ -411,6 +512,9 @@ function createHarness(
     setReplyFactory(factory: ConversationDependencies["replyStream"]) {
       replyFactory = factory;
     },
+    setPlaybackBehavior(behavior: typeof playbackBehavior) {
+      playbackBehavior = behavior;
+    },
     setSpeechResult(next: typeof speechResult) {
       speechResult = next;
     },
@@ -419,6 +523,9 @@ function createHarness(
     },
     setSpeechStopError(error: Error | undefined) {
       speechStopError = error;
+    },
+    setRecordedError(error: Error | undefined) {
+      recordedError = error;
     },
     setSynthesizeUri(factory: (text: string) => string) {
       synthesizeUri = factory;
@@ -937,5 +1044,362 @@ test("feedback that resolves after a newer turn is rejected as stale", async () 
   assert.equal(
     harness.state.turns.find((turn) => turn.id === firstUser.id)?.textEn,
     undefined,
+  );
+});
+
+type SoakScenarioArtifact = {
+  name: string;
+  status: "passed";
+  metrics: Record<string, number | string | boolean>;
+  invariants: string[];
+};
+
+const soakArtifact = {
+  schemaVersion: 1,
+  suite: "koe-voice-soak",
+  target: "deterministic conversation-engine boundary",
+  scenarios: [] as SoakScenarioArtifact[],
+};
+
+function recordSoakScenario(
+  name: string,
+  metrics: SoakScenarioArtifact["metrics"],
+  invariants: string[],
+): void {
+  soakArtifact.scenarios.push({ name, status: "passed", metrics, invariants });
+}
+
+function assertNoOwnedResources(harness: Harness): void {
+  const diagnostics = harness.engine.getDiagnostics();
+  assert.equal(diagnostics.activeResponseRunCount, 0);
+  assert.equal(diagnostics.activeCaptureCount, 0);
+  assert.equal(diagnostics.activePlaybackQueueCount, 0);
+  assert.equal(diagnostics.pendingTimerCount, 0);
+  assert.equal(diagnostics.pendingEnrichmentCount, 0);
+  assert.equal(harness.clock.pendingTimerCount, 0);
+  assert.equal(harness.activeSpeechHandles, 0);
+  assert.equal(harness.activeQueues, 0);
+  assert.equal(harness.state.isRecording, false);
+  assert.equal(harness.state.isStreaming, false);
+}
+
+test("a 240-turn varied-length conversation remains ordered, bounded, and resource-clean", async () => {
+  const harness = createHarness({ retainReplyRequests: false });
+  let responseNumber = 0;
+  harness.setReplyFactory(() => {
+    responseNumber += 1;
+    return reply(`返事 ${responseNumber}`, { streamedAudio: true });
+  });
+  const utterances = [
+    "はい",
+    "今日はいい天気ですね。",
+    "えっと、先週の日曜日に友達と川沿いを散歩して、それから小さい喫茶店で長い時間話しました。",
+    `長い発話 ${"日本語を自然に続けます。".repeat(32)}`,
+  ];
+  const heapAtStart = process.memoryUsage().heapUsed;
+  let peakHeap = heapAtStart;
+
+  for (let index = 0; index < 240; index += 1) {
+    harness.clock.advance(5);
+    await harness.injectRecorded(
+      `${utterances[index % utterances.length]} ${index}`,
+    );
+    await flush();
+    if (index % 20 === 0) {
+      peakHeap = Math.max(peakHeap, process.memoryUsage().heapUsed);
+    }
+    assert.equal(harness.engine.getState().phase, "idle");
+    assertNoOwnedResources(harness);
+  }
+
+  const ids = harness.state.turns.map((turn) => turn.id);
+  assert.equal(harness.state.turns.length, 480);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal(harness.replyRequestCount, 240);
+  assert.equal(harness.queueCreated, 240);
+  assert.equal(harness.queueFinished, 240);
+  assert.equal(harness.maximumActiveQueues, 1);
+  assert.ok(harness.state.turns.every((turn) => !turn.streaming));
+  assert.ok(
+    harness.state.turns.every(
+      (turn, index) => turn.role === (index % 2 === 0 ? "user" : "assistant"),
+    ),
+  );
+  assert.ok(
+    harness.state.turns.every(
+      (turn, index, turns) =>
+        index === 0 || turn.createdAt >= turns[index - 1]!.createdAt,
+    ),
+  );
+  const heapAtEnd = process.memoryUsage().heapUsed;
+  const heapDelta = Math.max(0, heapAtEnd - heapAtStart);
+  const heapBytesPerPersistedTurn = Math.round(
+    heapDelta / harness.state.turns.length,
+  );
+  // The complete 480-turn history is deliberately retained. This guards
+  // against accidental per-turn retention of entire response histories.
+  assert.ok(heapBytesPerPersistedTurn < 200_000);
+
+  recordSoakScenario(
+    "240-turn varied utterance soak",
+    {
+      userTurns: 240,
+      persistedTurns: 480,
+      replyRequests: harness.replyRequestCount,
+      queuesCreated: harness.queueCreated,
+      maximumActiveQueues: harness.maximumActiveQueues,
+      heapDeltaBytes: heapDelta,
+      peakHeapBytes: peakHeap,
+      heapBytesPerPersistedTurn,
+    },
+    [
+      "turn IDs stayed unique and user/assistant ordering stayed exact",
+      "every assistant turn completed with streaming=false",
+      "response run, capture, playback queue, timer, and enrichment counts returned to zero after every turn",
+      "at most one playback queue was active",
+    ],
+  );
+});
+
+test("hostile provider, audio, network, lifecycle, and termination timing always settles", async () => {
+  const failureCases = [
+    ["provider error", "ProviderStreamError", "providerFailure"],
+    ["provider timeout", "ProviderTimeoutError", "providerTimeout"],
+    ["network loss", "NetworkError", "network"],
+    ["rate limit", "RateLimitError", "network"],
+    ["invalid encoding", "AudioContractError", "playbackFailure"],
+  ] as const;
+  let retries = 0;
+
+  for (const [label, errorName, expectedKind] of failureCases) {
+    const harness = createHarness();
+    harness.setReplyFactory(() =>
+      (async function* () {
+        const error = new Error(label);
+        error.name = errorName;
+        throw error;
+      })(),
+    );
+    await harness.injectRecorded(`failure:${label}`);
+    assert.equal(harness.engine.getState().phase, "recovery");
+    assert.equal(harness.state.voice.errorKind, expectedKind);
+    assert.equal(harness.state.voice.recovery, "retryResponse");
+    assert.equal(
+      harness.state.turns.filter((turn) => turn.role === "user").length,
+      1,
+    );
+    assert.equal(
+      harness.state.turns.filter((turn) => turn.role === "assistant").length,
+      1,
+    );
+    assert.equal(harness.engine.getDiagnostics().activeResponseRunCount, 0);
+    assert.equal(harness.engine.getDiagnostics().activePlaybackQueueCount, 0);
+    assert.equal(harness.activeQueues, 0);
+    assert.equal(harness.state.isStreaming, false);
+
+    harness.setReplyFactory(() => reply("recovered", { streamedAudio: true }));
+    await harness.engine.recover();
+    retries += 1;
+    assert.equal(harness.replyRequestCount, 2);
+    assert.equal(
+      harness.state.turns.filter((turn) => turn.role === "assistant").length,
+      1,
+    );
+    harness.clock.advance(1_400);
+    await flush();
+    assert.equal(harness.engine.getState().phase, "idle");
+    assertNoOwnedResources(harness);
+  }
+
+  const emptyAudio = createHarness();
+  emptyAudio.setReplyFactory(() => reply("text but no stream audio"));
+  emptyAudio.setSynthesizeUri(() => "");
+  await emptyAudio.injectRecorded("empty audio");
+  assert.equal(emptyAudio.state.voice.errorKind, "playbackFailure");
+  assert.equal(emptyAudio.state.voice.recovery, "retryResponse");
+  assert.equal(emptyAudio.engine.getDiagnostics().activeResponseRunCount, 0);
+
+  const playbackFailure = createHarness();
+  playbackFailure.setPlaybackBehavior("callback-failure");
+  await playbackFailure.injectRecorded("playback callback failure");
+  assert.equal(playbackFailure.state.voice.errorKind, "playbackFailure");
+  assert.equal(playbackFailure.activeQueues, 0);
+  assert.equal(playbackFailure.state.isStreaming, false);
+
+  const storagePressure = createHarness();
+  const quota = new Error("database or cache is full");
+  quota.name = "QuotaExceededError";
+  storagePressure.setRecordedError(quota);
+  await storagePressure.injectRecorded("storage pressure");
+  assert.equal(storagePressure.engine.getState().phase, "recovery");
+  assert.equal(storagePressure.state.voice.errorKind, "network");
+  assert.equal(storagePressure.state.turns.length, 0);
+  assertNoOwnedResources(storagePressure);
+
+  const repeatedBackgrounding = createHarness();
+  await repeatedBackgrounding.engine.startHandsFree();
+  for (let index = 0; index < 32; index += 1) {
+    const staleInput = repeatedBackgrounding.transcriptInputs.at(-1)!;
+    staleInput.onEvent({
+      type: "interim",
+      text: `partial ${index}`,
+      confidence: 0.5,
+    });
+    await repeatedBackgrounding.engine.interrupt("app");
+    staleInput.onEvent({
+      type: "final",
+      text: `stale ${index}`,
+      confidence: 1,
+    });
+    assert.equal(repeatedBackgrounding.activeSpeechHandles, 0);
+    assert.equal(
+      repeatedBackgrounding.engine.getDiagnostics().pendingTimerCount,
+      0,
+    );
+    await repeatedBackgrounding.engine.resume();
+    assert.equal(repeatedBackgrounding.activeSpeechHandles, 1);
+    assert.equal(repeatedBackgrounding.state.turns.length, 0);
+  }
+  await repeatedBackgrounding.engine.pauseHandsFree();
+  assertNoOwnedResources(repeatedBackgrounding);
+
+  const repeatedBargeIn = createHarness();
+  const bargeInGates: Array<Deferred<void>> = [];
+  let bargeInRequest = 0;
+  repeatedBargeIn.setReplyFactory(({ userTurn }) => {
+    bargeInRequest += 1;
+    if (bargeInRequest % 2 === 0) {
+      return reply(`fresh:${userTurn}`, { streamedAudio: true });
+    }
+    const gate = deferred<void>();
+    bargeInGates.push(gate);
+    return (async function* () {
+      await gate.promise;
+      yield { type: "text" as const, text: "stale barge-in reply" };
+      return result("stale barge-in reply");
+    })();
+  });
+  for (let index = 0; index < 24; index += 1) {
+    const interrupted = repeatedBargeIn.injectRecorded(`slow ${index}`);
+    await waitFor(() => repeatedBargeIn.replyRequestCount === index * 2 + 1);
+    await repeatedBargeIn.injectRecorded(`barge ${index}`);
+    bargeInGates[index]!.resolve();
+    await interrupted;
+    assert.equal(repeatedBargeIn.engine.getState().phase, "idle");
+    assertNoOwnedResources(repeatedBargeIn);
+  }
+  const bargeInAssistants = repeatedBargeIn.state.turns.filter(
+    (turn) => turn.role === "assistant",
+  );
+  assert.equal(bargeInAssistants.length, 48);
+  assert.equal(bargeInAssistants.filter((turn) => turn.interrupted).length, 24);
+  assert.equal(
+    bargeInAssistants.some((turn) => turn.textJa.includes("stale barge-in")),
+    false,
+  );
+
+  const playbackInterruption = createHarness();
+  playbackInterruption.setPlaybackBehavior("hang");
+  const interruptedPlayback = playbackInterruption.injectRecorded(
+    "background during playback",
+  );
+  await waitFor(
+    () => playbackInterruption.engine.getState().phase === "speaking",
+  );
+  await playbackInterruption.engine.interrupt("app");
+  await interruptedPlayback;
+  assert.equal(playbackInterruption.queueStopped, 1);
+  assert.equal(playbackInterruption.activeQueues, 0);
+  await playbackInterruption.engine.resume();
+  assert.equal(playbackInterruption.engine.getState().phase, "idle");
+  assertNoOwnedResources(playbackInterruption);
+
+  const endDuringCapture = createHarness();
+  await endDuringCapture.engine.startHandsFree();
+  await endDuringCapture.engine.endImmediately();
+  assert.equal(endDuringCapture.speechCancelled, 1);
+  assert.equal(endDuringCapture.engine.getState().phase, "ended");
+  assertNoOwnedResources(endDuringCapture);
+
+  const endDuringPlayback = createHarness();
+  endDuringPlayback.setPlaybackBehavior("hang");
+  const pendingPlayback = endDuringPlayback.injectRecorded(
+    "end during playback",
+  );
+  await waitFor(() => endDuringPlayback.engine.getState().phase === "speaking");
+  endDuringPlayback.engine.requestEnd();
+  await pendingPlayback;
+  await endDuringPlayback.engine.finishEnd();
+  assert.equal(endDuringPlayback.queueStopped, 1);
+  assert.equal(endDuringPlayback.engine.getState().phase, "ended");
+  assertNoOwnedResources(endDuringPlayback);
+
+  const neverFeedback = deferred<typeof EMPTY_FEEDBACK>();
+  const endWithPendingFeedback = createHarness();
+  endWithPendingFeedback.setReplyFactory(() =>
+    reply("audible reply", {
+      streamedAudio: true,
+      feedback: neverFeedback.promise,
+    }),
+  );
+  await endWithPendingFeedback.injectRecorded("end before feedback");
+  assert.equal(
+    endWithPendingFeedback.engine.getDiagnostics().pendingEnrichmentCount,
+    1,
+  );
+  await endWithPendingFeedback.engine.endImmediately();
+  await flush();
+  assert.equal(endWithPendingFeedback.replyRequests[0]!.signal.aborted, true);
+  assert.equal(endWithPendingFeedback.engine.getState().phase, "ended");
+  assertNoOwnedResources(endWithPendingFeedback);
+
+  const terminatedRoute = createHarness();
+  const providerGate = deferred<void>();
+  terminatedRoute.setReplyFactory(() =>
+    (async function* () {
+      await providerGate.promise;
+      yield { type: "text" as const, text: "late termination callback" };
+      return result("late termination callback");
+    })(),
+  );
+  const terminatedRequest = terminatedRoute.injectRecorded("terminate app");
+  await waitFor(() => terminatedRoute.replyRequestCount === 1);
+  terminatedRoute.engine.dispose();
+  providerGate.resolve();
+  await terminatedRequest;
+  await flush();
+  assert.equal(terminatedRoute.replyRequests[0]!.signal.aborted, true);
+  assert.equal(terminatedRoute.engine.getDiagnostics().disposed, true);
+  assertNoOwnedResources(terminatedRoute);
+
+  recordSoakScenario(
+    "adversarial failure and lifecycle matrix",
+    {
+      failureKinds: failureCases.length + 3,
+      successfulExplicitRetries: retries,
+      backgroundForegroundCycles: 32,
+      repeatedBargeInCycles: 24,
+      playbackInterruptions: 2,
+      terminationCases: 3,
+      staleTurnsAccepted: 0,
+      maximumActiveQueues: Math.max(
+        playbackInterruption.maximumActiveQueues,
+        endDuringPlayback.maximumActiveQueues,
+      ),
+    },
+    [
+      "provider, timeout, network, rate-limit, encoding, empty-audio, playback, and storage-pressure failures exposed concrete recovery states",
+      "each explicit response retry reused one assistant turn and attempted exactly once",
+      "late recognizer, provider, playback, and feedback callbacks changed no completed or newer turn",
+      "background, foreground, end-session, route disposal, and termination released every owned handle and timer",
+      "no scenario remained recording, streaming, listening, speaking, or spinning",
+    ],
+  );
+
+  const artifactDirectory = resolve(".artifacts/voice-soak");
+  await mkdir(artifactDirectory, { recursive: true });
+  await writeFile(
+    resolve(artifactDirectory, "engine-summary.json"),
+    `${JSON.stringify(soakArtifact, null, 2)}\n`,
   );
 });
