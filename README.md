@@ -31,6 +31,12 @@ validated as raw signed 16-bit little-endian PCM, 48,000 Hz, mono. Standalone
 Inworld TTS is requested and validated as MP3, 24,000 Hz, mono. The canonical
 values live in `shared/inworld.ts`; app and Worker tests import the same values
 so a voice, encoding, sample-rate, or channel disagreement fails the build.
+Streaming PCM chunks are converted to native audio buffers and fed to one
+gapless queue; the completed stream is saved as one WAV only after every chunk
+has arrived. The app also understands the deployed Worker's older JSON reply
+shape by validating and directly playing its 24 kHz mono MP3. A text-only
+reply deliberately uses standalone `Asuka` TTS, and a missing or malformed
+fallback remains a recoverable error rather than a silent successful turn.
 
 Every voice turn also carries `sessionId`, `turnId`, and `responseRunId` from
 the app to the Worker. Structured logs record lifecycle and failure categories,

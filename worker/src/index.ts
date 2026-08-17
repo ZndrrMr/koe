@@ -16,6 +16,7 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import {
   INWORLD_STANDALONE_AUDIO_CONTRACT,
+  KOE_V1_ROUTER_MODEL,
   KOE_V1_VOICE_ID,
 } from "../../shared/inworld";
 import {
@@ -657,9 +658,12 @@ app.post("/llm/chat", async (c) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: body.model ?? "mistral/mistral-small-2603",
+        model: body.model ?? KOE_V1_ROUTER_MODEL,
         max_tokens: body.maxTokens ?? 600,
         stream,
+        ...((body.model ?? KOE_V1_ROUTER_MODEL) === "auto"
+          ? { extra_body: { sort: ["latency"] } }
+          : {}),
         ...(!body.noAudio && stream
           ? {
               audio: {

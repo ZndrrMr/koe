@@ -1,5 +1,14 @@
 import * as FileSystem from "expo-file-system/legacy";
-import { createAudioPlayer, type AudioPlayer } from "expo-audio";
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  type AudioPlayer,
+} from "expo-audio";
+import {
+  AudioContext,
+  AudioManager,
+  type AudioBufferQueueSourceNode,
+} from "react-native-audio-api";
 import { config, hasWorker } from "@/utils/config";
 import { authHeaders, workerUrl } from "@/services/api";
 import { sha256 } from "@/utils/hash";
@@ -21,7 +30,6 @@ import {
 import {
   pcm16EnergyFromBase64,
   pcmBase64ChunksToWavBase64,
-  pcmBase64ToWavBase64,
 } from "@/services/pcm";
 
 export type SynthesizeResult = {
@@ -29,6 +37,21 @@ export type SynthesizeResult = {
   durationMs: number;
   timestamps?: Array<{ word: string; startMs: number; endMs: number }>;
 };
+
+export class AudioPlaybackError extends Error {
+  constructor(
+    public readonly kind:
+      | "audio-session"
+      | "interrupted"
+      | "player-status"
+      | "capture",
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "AudioPlaybackError";
+  }
+}
 
 const CACHE_DIR = `${FileSystem.cacheDirectory}tts`;
 
@@ -40,6 +63,22 @@ async function ensureCacheDir() {
 
 let currentPlayer: AudioPlayer | null = null;
 let currentStream: PCMPlaybackQueue | null = null;
+
+async function configurePlaybackAudioSession(): Promise<void> {
+  await setAudioModeAsync({
+    playsInSilentMode: true,
+    interruptionMode: "doNotMix",
+    allowsRecording: false,
+    shouldPlayInBackground: false,
+    shouldRouteThroughEarpiece: false,
+  });
+  AudioManager.setAudioSessionOptions({
+    iosCategory: "playback",
+    iosMode: "spokenAudio",
+    iosOptions: [],
+    iosNotifyOthersOnDeactivation: true,
+  });
+}
 
 export async function synthesize(
   text: string,
@@ -79,7 +118,7 @@ export async function synthesize(
   }
 
   if (!hasWorker()) {
-    log.warn("TTS: worker URL unset — returning silent placeholder.");
+    log.warn("TTS: worker URL unset — no playable fallback is available.");
     voiceEvent(
       "standalone_tts_unavailable",
       opts?.trace,
@@ -88,7 +127,10 @@ export async function synthesize(
       },
       "warn",
     );
-    return { audioUri: file, durationMs: 0 };
+    throw new AudioContractError(
+      "empty-audio",
+      "No standalone speech provider is configured",
+    );
   }
 
   try {
@@ -128,16 +170,40 @@ export async function synthesize(
 
     const ab = await res.arrayBuffer();
     const bytes = new Uint8Array(ab);
+    const declaredEncoding = res.headers.get("X-Koe-Audio-Encoding");
+    const declaredSampleRate = res.headers.get("X-Koe-Audio-Sample-Rate");
+    const declaredChannels = res.headers.get("X-Koe-Audio-Channels");
+    const hasDeclaredContract =
+      declaredEncoding !== null &&
+      declaredSampleRate !== null &&
+      declaredChannels !== null;
+    const hasAnyDeclaredContract =
+      declaredEncoding !== null ||
+      declaredSampleRate !== null ||
+      declaredChannels !== null;
+    // Older deployed Workers return the canonical MP3 body and content type
+    // without the newer X-Koe contract headers. In that case inspect the
+    // bytes themselves; if any declaration is present, require the complete
+    // canonical contract rather than silently accepting partial metadata.
+    if (hasAnyDeclaredContract && !hasDeclaredContract) {
+      throw new AudioContractError(
+        "encoding-mismatch",
+        "Standalone audio response contained an incomplete declared contract",
+      );
+    }
     const observation = validateInworldStandaloneMP3(
       bytes,
       res.headers.get("Content-Type"),
-      {
-        encoding: res.headers.get("X-Koe-Audio-Encoding") ?? "",
-        sampleRate: Number(res.headers.get("X-Koe-Audio-Sample-Rate")),
-        channels: Number(res.headers.get("X-Koe-Audio-Channels")),
-      },
+      hasDeclaredContract
+        ? {
+            encoding: declaredEncoding,
+            sampleRate: Number(declaredSampleRate),
+            channels: Number(declaredChannels),
+          }
+        : undefined,
     );
     voiceEvent("standalone_tts_decoded", opts?.trace, {
+      path: hasDeclaredContract ? "worker-contract" : "worker-compat",
       status: res.status,
       providerRequestId:
         res.headers.get("X-Koe-Provider-Request-Id") ?? undefined,
@@ -205,8 +271,15 @@ export async function play(
   if (!audioUri) return;
   try {
     await stop();
+    await configurePlaybackAudioSession();
     const player = createAudioPlayer({ uri: audioUri }, { updateInterval: 50 });
-    voiceEvent("audio_session_ready", opts?.trace, { path: "standalone" });
+    voiceEvent("audio_session_ready", opts?.trace, {
+      path: "standalone",
+      category: "playback",
+      mode: "spokenAudio",
+      options: "none",
+      route: "speaker",
+    });
     if (opts?.rate) player.setPlaybackRate(opts.rate);
     currentPlayer = player;
     let started = false;
@@ -286,15 +359,18 @@ type PCMPlaybackQueueOptions = {
 };
 
 export class PCMPlaybackQueue {
-  private queuedUris: string[] = [];
-  private player: AudioPlayer | null = null;
+  private context: AudioContext | null = null;
+  private source: AudioBufferQueueSourceNode | null = null;
+  private interruptionSubscription?: { remove: () => void };
+  private readonly pendingBufferIds = new Set<string>();
   private stopped = false;
   private inputFinished = false;
   private started = false;
+  private settled = false;
   private captured = false;
   private captureChunks: string[] = [];
-  private captureSampleRate = 48_000;
-  private captureChannels = 1;
+  private captureSampleRate?: number;
+  private captureChannels?: number;
   private writeChain: Promise<void> = Promise.resolve();
   private resolveDone!: () => void;
   private readonly done = new Promise<void>((resolve) => {
@@ -312,6 +388,18 @@ export class PCMPlaybackQueue {
   ): Promise<void> {
     if (!audioBase64 || this.stopped) return Promise.resolve();
     const byteCount = decodeBase64Audio(audioBase64).byteLength;
+    if (
+      (this.captureSampleRate !== undefined &&
+        this.captureSampleRate !== sampleRate) ||
+      (this.captureChannels !== undefined && this.captureChannels !== channels)
+    ) {
+      return Promise.reject(
+        new AudioPlaybackError(
+          "audio-session",
+          "Streamed audio format changed within one response",
+        ),
+      );
+    }
     this.captureChunks.push(audioBase64);
     this.captureSampleRate = sampleRate;
     this.captureChannels = channels;
@@ -319,7 +407,7 @@ export class PCMPlaybackQueue {
     voiceEvent("playback_chunk_queued", this.options.trace, {
       path: "stream",
       byteCount,
-      queueDepth: this.queuedUris.length + 1,
+      queueDepth: this.pendingBufferIds.size + 1,
       declaredEncoding: "pcm_s16le",
       observedEncoding: "pcm_s16le",
       sampleRate,
@@ -327,19 +415,43 @@ export class PCMPlaybackQueue {
     });
     this.writeChain = this.writeChain.then(async () => {
       if (this.stopped) return;
-      await ensureCacheDir();
-      const uri = `${CACHE_DIR}/stream-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`;
-      const wav = pcmBase64ToWavBase64(audioBase64, sampleRate, channels);
-      await FileSystem.writeAsStringAsync(uri, wav, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      if (this.stopped) {
-        await FileSystem.deleteAsync(uri, { idempotent: true });
-        return;
-      }
-      this.queuedUris.push(uri);
       try {
-        this.drain();
+        await this.ensureAudioGraph(sampleRate);
+        if (this.stopped || !this.context || !this.source) return;
+        const bytes = decodeBase64Audio(audioBase64);
+        const frameCount = bytes.byteLength / (channels * 2);
+        const buffer = this.context.createBuffer(
+          channels,
+          frameCount,
+          sampleRate,
+        );
+        const view = new DataView(
+          bytes.buffer,
+          bytes.byteOffset,
+          bytes.byteLength,
+        );
+        for (let channel = 0; channel < channels; channel += 1) {
+          const samples = new Float32Array(frameCount);
+          for (let frame = 0; frame < frameCount; frame += 1) {
+            const offset = (frame * channels + channel) * 2;
+            samples[frame] = view.getInt16(offset, true) / 32_768;
+          }
+          buffer.copyToChannel(samples, channel);
+        }
+        const bufferId = this.source.enqueueBuffer(buffer);
+        this.pendingBufferIds.add(bufferId);
+        if (!this.started) {
+          this.started = true;
+          // RNAudioAPI's queue source currently defaults an omitted offset to
+          // -1 and rejects it before reaching native code. Pass the canonical
+          // zero offset explicitly so the first queued buffer can start.
+          this.source.start(0, 0);
+          voiceEvent("playback_started", this.options.trace, {
+            path: "stream",
+            queueDepth: this.pendingBufferIds.size,
+          });
+          this.options.onStarted?.();
+        }
       } catch (error) {
         voiceEvent(
           "audio_session_failed",
@@ -350,10 +462,13 @@ export class PCMPlaybackQueue {
           },
           "error",
         );
-        this.options.onError?.(
-          error instanceof Error ? error : new Error("Audio session failed"),
-        );
-        throw error;
+        throw error instanceof AudioPlaybackError
+          ? error
+          : new AudioPlaybackError(
+              "audio-session",
+              "Streamed audio session failed",
+              { cause: error },
+            );
       }
     });
     return this.writeChain;
@@ -361,54 +476,110 @@ export class PCMPlaybackQueue {
 
   async finish(): Promise<void> {
     await this.writeChain;
+    if (this.stopped) return this.done;
+    if (!this.captureChunks.length) {
+      throw new AudioPlaybackError(
+        "capture",
+        "Streamed playback finished without audio",
+      );
+    }
     await this.persistCapture();
     this.inputFinished = true;
     voiceEvent("playback_input_finished", this.options.trace, {
       path: "stream",
-      queueDepth: this.queuedUris.length + (this.player ? 1 : 0),
+      queueDepth: this.pendingBufferIds.size,
     });
     this.maybeFinish();
     return this.done;
   }
 
   async stop(): Promise<void> {
-    if (this.stopped) return;
-    await this.writeChain;
-    await this.persistCapture();
+    if (this.stopped) return this.done;
     this.stopped = true;
+    await this.writeChain.catch(() => {});
+    this.captureChunks = [];
+    this.pendingBufferIds.clear();
     voiceEvent(
       "playback_cancelled",
       this.options.trace,
       {
         path: "stream",
-        queueDepth: this.queuedUris.length + (this.player ? 1 : 0),
+        queueDepth: 0,
       },
       "warn",
     );
-    const player = this.player;
-    this.player = null;
-    if (player) {
-      try {
-        player.pause();
-        player.remove();
-      } catch {}
-    }
-    const pending = this.queuedUris.splice(0);
-    await Promise.all(
-      pending.map((uri) =>
-        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {}),
-      ),
-    );
+    await this.releaseAudioGraph();
     if (currentStream === this) currentStream = null;
     this.options.onEnergy?.(0);
-    this.resolveDone();
+    this.settleDone();
+    return this.done;
+  }
+
+  private async ensureAudioGraph(sampleRate: number): Promise<void> {
+    if (this.context && this.source) return;
+    await configurePlaybackAudioSession();
+    AudioManager.observeAudioInterruptions(true);
+    this.interruptionSubscription = AudioManager.addSystemEventListener(
+      "interruption",
+      (event) => {
+        if (event.type !== "began") return;
+        voiceEvent(
+          "playback_failed",
+          this.options.trace,
+          {
+            path: "stream",
+            failureKind: "interrupted",
+            queueDepth: this.pendingBufferIds.size,
+          },
+          "error",
+        );
+        void this.fail(
+          new AudioPlaybackError(
+            "interrupted",
+            "The streamed audio session was interrupted",
+          ),
+        );
+      },
+    );
+    AudioManager.setAudioSessionOptions({
+      iosCategory: "playback",
+      iosMode: "spokenAudio",
+      iosOptions: [],
+      iosNotifyOthersOnDeactivation: true,
+    });
+    await AudioManager.setAudioSessionActivity(true);
+    const context = new AudioContext({ sampleRate });
+    const source = context.createBufferQueueSource({ pitchCorrection: false });
+    source.connect(context.destination);
+    source.onBufferEnded = (event) => {
+      this.pendingBufferIds.delete(event.bufferId);
+      voiceEvent("playback_chunk_ended", this.options.trace, {
+        path: "stream",
+        queueDepth: this.pendingBufferIds.size,
+      });
+      this.maybeFinish();
+    };
+    this.context = context;
+    this.source = source;
+    await context.resume();
+    voiceEvent("audio_session_ready", this.options.trace, {
+      path: "stream",
+      category: "playback",
+      mode: "spokenAudio",
+      options: "none",
+      route: "speaker",
+      sampleRate,
+      channels: this.captureChannels,
+    });
   }
 
   private async persistCapture(): Promise<void> {
     if (
       this.captured ||
       !this.captureChunks.length ||
-      !this.options.captureKey
+      !this.options.captureKey ||
+      this.captureSampleRate === undefined ||
+      this.captureChannels === undefined
     ) {
       return;
     }
@@ -426,83 +597,86 @@ export class PCMPlaybackQueue {
       );
       this.options.onCaptured?.(uri);
     } catch (error) {
-      log.warn("Could not preserve streamed reply audio", error);
+      throw new AudioPlaybackError(
+        "capture",
+        "Could not preserve streamed reply audio",
+        { cause: error },
+      );
     } finally {
       this.captureChunks = [];
     }
   }
 
-  private drain(): void {
-    if (this.stopped || this.player || !this.queuedUris.length) {
-      this.maybeFinish();
-      return;
-    }
-    const uri = this.queuedUris.shift()!;
-    const player = createAudioPlayer(
-      { uri },
-      { updateInterval: 25, keepAudioSessionActive: true },
-    );
-    this.player = player;
-    voiceEvent("audio_session_ready", this.options.trace, {
-      path: "stream",
-      queueDepth: this.queuedUris.length + 1,
-    });
-    const listener = player.addListener("playbackStatusUpdate", (status) => {
-      if (status.playing && !this.started) {
-        this.started = true;
-        voiceEvent("playback_started", this.options.trace, {
-          path: "stream",
-          queueDepth: this.queuedUris.length + 1,
-        });
-        this.options.onStarted?.();
-      }
-      if (status.playbackState === "failed") {
-        voiceEvent(
-          "playback_failed",
-          this.options.trace,
-          {
-            path: "stream",
-            queueDepth: this.queuedUris.length + 1,
-            failureKind: "player-status",
-          },
-          "error",
-        );
-        listener.remove();
-        void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-        void this.stop().then(() => {
-          this.options.onError?.(new Error("Streamed audio playback failed"));
-        });
-        return;
-      }
-      if (!status.didJustFinish) return;
-      listener.remove();
-      if (this.player === player) this.player = null;
-      player.remove();
-      voiceEvent("playback_chunk_ended", this.options.trace, {
-        path: "stream",
-        queueDepth: this.queuedUris.length,
-      });
-      void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-      this.drain();
-    });
-    player.play();
-  }
-
   private maybeFinish(): void {
     if (
       !this.inputFinished ||
-      this.player ||
-      this.queuedUris.length ||
-      this.stopped
+      this.pendingBufferIds.size ||
+      this.stopped ||
+      this.settled
     )
       return;
+    this.settled = true;
+    void this.releaseAudioGraph()
+      .then(() => {
+        if (currentStream === this) currentStream = null;
+        this.options.onEnergy?.(0);
+        voiceEvent("playback_ended", this.options.trace, {
+          path: "stream",
+          queueDepth: 0,
+        });
+        this.options.onFinished?.();
+        this.resolveDone();
+      })
+      .catch((error) => {
+        const playbackError =
+          error instanceof AudioPlaybackError
+            ? error
+            : new AudioPlaybackError(
+                "audio-session",
+                "Could not close streamed playback cleanly",
+                { cause: error },
+              );
+        this.options.onError?.(playbackError);
+        this.resolveDone();
+      });
+  }
+
+  private async fail(error: AudioPlaybackError): Promise<void> {
+    if (this.stopped || (this.settled && !this.context)) return;
+    this.stopped = true;
+    this.captureChunks = [];
+    this.pendingBufferIds.clear();
+    await this.releaseAudioGraph().catch(() => {});
     if (currentStream === this) currentStream = null;
     this.options.onEnergy?.(0);
-    voiceEvent("playback_ended", this.options.trace, {
-      path: "stream",
-      queueDepth: 0,
-    });
-    this.options.onFinished?.();
+    this.options.onError?.(error);
+    this.settleDone();
+  }
+
+  private async releaseAudioGraph(): Promise<void> {
+    const source = this.source;
+    const context = this.context;
+    this.source = null;
+    this.context = null;
+    this.interruptionSubscription?.remove();
+    this.interruptionSubscription = undefined;
+    AudioManager.observeAudioInterruptions(false);
+    if (source) {
+      source.onBufferEnded = null;
+      try {
+        source.stop();
+      } catch {}
+      try {
+        source.disconnect();
+      } catch {}
+    }
+    if (context) await context.close();
+    await AudioManager.setAudioSessionActivity(false).catch(() => {});
+  }
+
+  private settleDone(): void {
+    if (this.settled) return;
+    this.settled = true;
     this.resolveDone();
   }
 }

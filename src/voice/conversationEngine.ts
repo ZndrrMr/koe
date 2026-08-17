@@ -81,6 +81,7 @@ export type ConversationFailure =
   | "permissionDenied"
   | "network"
   | "sttFailure"
+  | "providerFailure"
   | "providerTimeout"
   | "audioInterruption"
   | "playbackFailure"
@@ -129,6 +130,11 @@ export type ConversationDependencies = {
       onError: (error: Error) => void;
       onEnergy: (energy: number) => void;
     }) => PlaybackQueue;
+    save: (
+      audioBase64: string,
+      cacheKey: string,
+      format: string,
+    ) => Promise<string>;
     synthesize: (
       text: string,
       options: { trace?: VoiceTraceContext; withTimestamps?: boolean },
@@ -198,6 +204,13 @@ export class RecordedAudioInjectionUnavailableError extends Error {
   constructor(message = "Recorded-audio injection is unavailable") {
     super(message);
     this.name = "RecordedAudioInjectionUnavailableError";
+  }
+}
+
+export class NoPlayableAudioError extends Error {
+  constructor(message = "The provider reply contained no playable audio") {
+    super(message);
+    this.name = "NoPlayableAudioError";
   }
 }
 
@@ -1013,7 +1026,8 @@ export class ConversationEngine {
     epoch: number;
   }): Promise<void> {
     let receivedText = false;
-    let receivedAudio = false;
+    let receivedStreamAudio = false;
+    let providerAudioUri: string | undefined;
     let playbackFailed = false;
     let reply = "";
     const isCurrent = () =>
@@ -1057,35 +1071,51 @@ export class ConversationEngine {
       });
       this.dependencies.session.setVoice(voiceError("playbackFailure"));
     };
-    const queue = this.dependencies.audio.createQueue({
-      captureKey: input.assistantTurnId,
-      trace: input.trace,
-      onCaptured: (audioUri) => {
-        if (isCurrent())
-          this.dependencies.session.patchTurn(input.assistantTurnId, {
-            audioUri,
-          });
-      },
-      onStarted: () => {
-        if (!isCurrent()) return;
-        const latency = this.latency.firstAudioPlayed();
-        this.updateLatency(latency, "firstTextToFirstAudioMs");
-        this.transition("speaking");
-        this.publish({
-          ownership: { ...this.state.ownership, audioSession: "playback" },
-        });
-        this.dependencies.session.setVoicePhase("speaking");
-      },
-      onFinished: () => {
-        if (!isCurrent()) return;
-        this.settleReply(input.responseRun, input.retry);
-      },
-      onError: handlePlaybackFailure,
-      onEnergy: (energy) => {
-        if (isCurrent()) this.publish({ audioEnergy: energy });
-      },
-    });
-    this.responseQueue = queue;
+    const handlePlaybackStarted = () => {
+      if (!isCurrent()) return;
+      const latency = this.latency.firstAudioPlayed();
+      this.updateLatency(latency, "firstTextToFirstAudioMs");
+      this.transition("speaking");
+      this.publish({
+        ownership: { ...this.state.ownership, audioSession: "playback" },
+      });
+      this.dependencies.session.setVoicePhase("speaking");
+    };
+    const handlePlaybackFinished = () => {
+      if (!isCurrent()) return;
+      this.settleReply(input.responseRun, input.retry);
+    };
+    let queue: PlaybackQueue | undefined;
+    const responseQueue = () => {
+      if (queue) return queue;
+      queue = this.dependencies.audio.createQueue({
+        captureKey: input.assistantTurnId,
+        trace: input.trace,
+        onCaptured: (audioUri) => {
+          if (isCurrent())
+            this.dependencies.session.patchTurn(input.assistantTurnId, {
+              audioUri,
+            });
+        },
+        onStarted: handlePlaybackStarted,
+        onFinished: handlePlaybackFinished,
+        onError: handlePlaybackFailure,
+        onEnergy: (energy) => {
+          if (isCurrent()) this.publish({ audioEnergy: energy });
+        },
+      });
+      this.responseQueue = queue;
+      return queue;
+    };
+    const playAudioFile = async (audioUri: string) => {
+      this.dependencies.session.patchTurn(input.assistantTurnId, { audioUri });
+      await this.dependencies.audio.play(audioUri, {
+        trace: input.trace,
+        onStarted: handlePlaybackStarted,
+        onFinished: handlePlaybackFinished,
+        onError: handlePlaybackFailure,
+      });
+    };
 
     try {
       const historyWithUser = this.dependencies.session
@@ -1103,7 +1133,7 @@ export class ConversationEngine {
       while (true) {
         const next = await generator.next();
         if (!isCurrent()) {
-          await queue.stop();
+          await queue?.stop();
           return;
         }
         if (next.done) {
@@ -1139,56 +1169,29 @@ export class ConversationEngine {
             );
           }
           this.failedReply = undefined;
-          if (receivedAudio) {
-            await queue.finish();
+          if (receivedStreamAudio) {
+            await responseQueue().finish();
+          } else if (providerAudioUri) {
+            await playAudioFile(providerAudioUri);
           } else {
-            await queue.stop();
             if (!isCurrent()) return;
-            if (finalText) {
-              this.dependencies.telemetry(
-                "response_fallback",
-                input.trace,
-                { path: "standalone-tts", reason: "stream-contained-no-audio" },
-                "warn",
+            this.dependencies.telemetry(
+              "response_fallback",
+              input.trace,
+              { path: "standalone-tts", reason: "stream-contained-no-audio" },
+              "warn",
+            );
+            const synthesized = await this.dependencies.audio.synthesize(
+              finalText,
+              { trace: input.trace },
+            );
+            if (!isCurrent()) return;
+            if (!synthesized.audioUri) {
+              throw new NoPlayableAudioError(
+                "Standalone TTS returned no playable audio",
               );
-              const synthesized = await this.dependencies.audio.synthesize(
-                finalText,
-                {
-                  trace: input.trace,
-                },
-              );
-              if (!isCurrent()) return;
-              this.dependencies.session.patchTurn(input.assistantTurnId, {
-                audioUri: synthesized.audioUri,
-              });
-              if (synthesized.audioUri) {
-                await this.dependencies.audio.play(synthesized.audioUri, {
-                  trace: input.trace,
-                  onStarted: () => {
-                    if (!isCurrent()) return;
-                    const latency = this.latency.firstAudioPlayed();
-                    this.updateLatency(latency, "firstTextToFirstAudioMs");
-                    this.transition("speaking");
-                    this.publish({
-                      ownership: {
-                        ...this.state.ownership,
-                        audioSession: "playback",
-                      },
-                    });
-                    this.dependencies.session.setVoicePhase("speaking");
-                  },
-                  onFinished: () => {
-                    if (isCurrent())
-                      this.settleReply(input.responseRun, input.retry);
-                  },
-                  onError: handlePlaybackFailure,
-                });
-              } else {
-                this.settleReply(input.responseRun, input.retry);
-              }
-            } else {
-              this.settleReply(input.responseRun, input.retry);
             }
+            await playAudioFile(synthesized.audioUri);
           }
           return;
         }
@@ -1206,18 +1209,39 @@ export class ConversationEngine {
             this.updateLatency(latency, "transcriptToFirstTextMs");
             this.dependencies.session.setVoicePhase("firstReply");
           }
-        } else {
-          receivedAudio = true;
-          await queue.enqueue(
+        } else if (chunk.type === "audio") {
+          if (providerAudioUri) {
+            throw new Error("Provider mixed PCM and encoded reply audio");
+          }
+          receivedStreamAudio = true;
+          await responseQueue().enqueue(
             chunk.audioBase64,
             chunk.sampleRate,
             chunk.channels,
           );
           if (!isCurrent()) return;
+        } else {
+          if (receivedStreamAudio || providerAudioUri) {
+            throw new Error("Provider returned conflicting reply audio");
+          }
+          providerAudioUri = await this.dependencies.audio.save(
+            chunk.audioBase64,
+            `provider-${input.assistantTurnId}-${input.trace.responseRunId}`,
+            chunk.encoding,
+          );
+          this.dependencies.telemetry("provider_audio_persisted", input.trace, {
+            path: "provider-json-compat",
+            declaredEncoding: chunk.encoding,
+            observedEncoding: chunk.encoding,
+            sampleRate: chunk.sampleRate,
+            channels: chunk.channels,
+            byteCount: chunk.byteCount,
+          });
+          if (!isCurrent()) return;
         }
       }
     } catch (error) {
-      await queue.stop();
+      await queue?.stop();
       if (!isCurrent()) return;
       if (
         input.responseRun.signal.aborted &&
@@ -1238,7 +1262,9 @@ export class ConversationEngine {
               ? "decode"
               : this.dependencies.classifyError(error) === "providerTimeout"
                 ? "timeout"
-                : "provider",
+                : this.dependencies.classifyError(error) === "playbackFailure"
+                  ? "playback"
+                  : "provider",
           errorName: this.dependencies.errorName(error),
         },
         "error",
@@ -1260,7 +1286,13 @@ export class ConversationEngine {
       });
       const failure = this.dependencies.classifyError(error);
       this.enterRecovery(
-        failure === "providerTimeout" ? "providerTimeout" : "network",
+        failure === "providerTimeout"
+          ? "providerTimeout"
+          : failure === "audioContract" || failure === "playbackFailure"
+            ? "playbackFailure"
+            : failure === "providerFailure"
+              ? "providerFailure"
+              : "network",
       );
       this.publish({
         ownership: { ...this.state.ownership, retry: input.assistantTurnId },
@@ -1465,6 +1497,7 @@ export class ConversationEngine {
       | "permissionDenied"
       | "network"
       | "sttFailure"
+      | "providerFailure"
       | "providerTimeout"
       | "audioInterruption"
       | "playbackFailure",

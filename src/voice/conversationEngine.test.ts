@@ -69,6 +69,21 @@ function reply(
   })();
 }
 
+function encodedReply(text: string) {
+  return (async function* () {
+    yield { type: "text" as const, text };
+    yield {
+      type: "audio-file" as const,
+      audioBase64: "//PE", // The service contract validates before the engine.
+      encoding: "mp3" as const,
+      sampleRate: 24_000,
+      channels: 1,
+      byteCount: 3,
+    };
+    return result(text);
+  })();
+}
+
 async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
@@ -144,10 +159,15 @@ function createHarness(
     mimeType?: string;
   }> = [];
   let audioStopped = 0;
+  let queueCreated = 0;
   let ended = 0;
   let closeoutPrepared = 0;
   const writes: Array<{ kind: "add" | "patch"; turnId: string }> = [];
   const telemetry: string[] = [];
+  const savedAudio: Array<{ cacheKey: string; format: string }> = [];
+  const synthesizedTexts: string[] = [];
+  const playedAudioUris: string[] = [];
+  let synthesizeUri = (text: string) => `file:///tts-${text}.mp3`;
   const state: ConversationSessionSnapshot = {
     id: null,
     turns: [],
@@ -214,19 +234,30 @@ function createHarness(
       return replyFactory(request);
     },
     audio: {
-      createQueue: (queueOptions) => ({
-        enqueue: async () => undefined,
-        finish: async () => {
-          queueOptions.onStarted();
-          queueOptions.onCaptured(
-            `file:///reply-${queueOptions.captureKey}.wav`,
-          );
-          queueOptions.onFinished();
-        },
-        stop: async () => undefined,
-      }),
-      synthesize: async (text) => ({ audioUri: `file:///tts-${text}.mp3` }),
-      play: async (_audioUri, playbackOptions) => {
+      createQueue: (queueOptions) => {
+        queueCreated += 1;
+        return {
+          enqueue: async () => undefined,
+          finish: async () => {
+            queueOptions.onStarted();
+            queueOptions.onCaptured(
+              `file:///reply-${queueOptions.captureKey}.wav`,
+            );
+            queueOptions.onFinished();
+          },
+          stop: async () => undefined,
+        };
+      },
+      save: async (_audioBase64, cacheKey, format) => {
+        savedAudio.push({ cacheKey, format });
+        return `file:///${cacheKey}.${format}`;
+      },
+      synthesize: async (text) => {
+        synthesizedTexts.push(text);
+        return { audioUri: synthesizeUri(text) };
+      },
+      play: async (audioUri, playbackOptions) => {
+        playedAudioUris.push(audioUri);
         playbackOptions.onStarted?.();
         playbackOptions.onFinished?.();
       },
@@ -308,12 +339,19 @@ function createHarness(
     ids: { next: () => `id-${++idCounter}` },
     telemetry: (event) => telemetry.push(event),
     logger: { warn: () => undefined },
-    classifyError: (error) =>
-      error instanceof Error && error.name === "AbortError"
-        ? "cancelled"
-        : error instanceof Error && error.name === "ProviderTimeoutError"
-          ? "providerTimeout"
-          : "network",
+    classifyError: (error) => {
+      if (!(error instanceof Error)) return "network";
+      if (error.name === "AbortError") return "cancelled";
+      if (error.name === "ProviderTimeoutError") return "providerTimeout";
+      if (error.name === "ProviderStreamError") return "providerFailure";
+      if (error.name === "AudioContractError") return "audioContract";
+      if (
+        error.name === "AudioPlaybackError" ||
+        error.name === "NoPlayableAudioError"
+      )
+        return "playbackFailure";
+      return "network";
+    },
     errorName: (error) =>
       error instanceof Error ? error.name : "UnknownError",
     haptics: {
@@ -336,6 +374,9 @@ function createHarness(
     state,
     writes,
     telemetry,
+    savedAudio,
+    synthesizedTexts,
+    playedAudioUris,
     transcriptInputs,
     recordedRequests,
     replyRequests,
@@ -344,6 +385,9 @@ function createHarness(
     },
     get audioStopped() {
       return audioStopped;
+    },
+    get queueCreated() {
+      return queueCreated;
     },
     get ended() {
       return ended;
@@ -356,6 +400,9 @@ function createHarness(
     },
     setSpeechResult(next: typeof speechResult) {
       speechResult = next;
+    },
+    setSynthesizeUri(factory: (text: string) => string) {
+      synthesizeUri = factory;
     },
     injectRecorded(text: string, extension: "mp3" | "m4a" | "wav" = "m4a") {
       recordedText = text;
@@ -417,6 +464,89 @@ test("microphone endpoint/final events and injected files share the deterministi
   });
   assert.ok(harness.writes.filter((write) => write.kind === "add").length >= 4);
   assert.ok(harness.writes.some((write) => write.kind === "patch"));
+});
+
+test("a validated provider MP3 is persisted and played without a second synthesis", async () => {
+  const harness = createHarness();
+  harness.setReplyFactory(() => encodedReply("実際の音声です。"));
+
+  await harness.injectRecorded("音声で答えてください");
+  await flush();
+
+  const assistant = turnByRole(harness, "assistant");
+  assert.equal(assistant.textJa, "実際の音声です。");
+  assert.match(assistant.audioUri ?? "", /provider-.*\.mp3$/);
+  assert.equal(harness.savedAudio.length, 1);
+  assert.deepEqual(harness.synthesizedTexts, []);
+  assert.deepEqual(harness.playedAudioUris, [assistant.audioUri]);
+  assert.equal(harness.queueCreated, 0);
+  assert.equal(harness.engine.getState().phase, "idle");
+});
+
+test("text-only provider output deliberately falls back to standalone speech", async () => {
+  const harness = createHarness();
+  harness.setReplyFactory(() => reply("音声を作り直します。"));
+
+  await harness.injectRecorded("続けてください");
+  await flush();
+
+  const assistant = turnByRole(harness, "assistant");
+  assert.deepEqual(harness.synthesizedTexts, ["音声を作り直します。"]);
+  assert.deepEqual(harness.playedAudioUris, [assistant.audioUri]);
+  assert.ok(harness.telemetry.includes("response_fallback"));
+  assert.equal(harness.state.voice.errorKind, undefined);
+  assert.equal(harness.engine.getState().phase, "idle");
+});
+
+test("text without streamed or fallback audio remains a specific recoverable failure", async () => {
+  const harness = createHarness();
+  harness.setReplyFactory(() => reply("文字だけの応答です。"));
+  harness.setSynthesizeUri(() => "");
+
+  await harness.injectRecorded("音声はありますか");
+  await flush();
+
+  const assistant = turnByRole(harness, "assistant");
+  assert.equal(assistant.textJa, "文字だけの応答です。");
+  assert.equal(assistant.audioUri, undefined);
+  assert.equal(harness.engine.getState().phase, "recovery");
+  assert.equal(harness.state.voice.errorKind, "playbackFailure");
+  assert.equal(harness.state.voice.recovery, "retryResponse");
+});
+
+test("provider timeout remains a specific retryable state without silent success", async () => {
+  const harness = createHarness();
+  harness.setReplyFactory(() =>
+    (async function* () {
+      const error = new Error("provider response timed out");
+      error.name = "ProviderTimeoutError";
+      throw error;
+    })(),
+  );
+
+  await harness.injectRecorded("時間切れを確認します");
+  await flush();
+
+  const assistant = turnByRole(harness, "assistant");
+  assert.equal(assistant.streaming, false);
+  assert.equal(assistant.audioUri, undefined);
+  assert.equal(harness.engine.getState().phase, "recovery");
+  assert.equal(harness.state.voice.errorKind, "providerTimeout");
+  assert.equal(harness.state.voice.recovery, "retryResponse");
+  assert.equal(harness.playedAudioUris.length, 0);
+});
+
+test("saved reply replay uses the persisted audio without changing turn state", async () => {
+  const harness = createHarness();
+  harness.setReplyFactory(() => encodedReply("保存した返事です。"));
+  await harness.injectRecorded("保存してください");
+  const assistantBefore = { ...turnByRole(harness, "assistant") };
+
+  await harness.engine.playAudio(assistantBefore.audioUri!);
+
+  assert.equal(harness.playedAudioUris.at(-1), assistantBefore.audioUri);
+  assert.deepEqual(turnByRole(harness, "assistant"), assistantBefore);
+  assert.equal(harness.engine.getState().phase, "idle");
 });
 
 test("MP3, M4A, and WAV recorded files produce equivalent canonical turns", async () => {

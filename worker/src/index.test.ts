@@ -4,6 +4,7 @@ import { app } from "./index";
 import {
   INWORLD_ROUTER_AUDIO_CONTRACT,
   INWORLD_STANDALONE_AUDIO_CONTRACT,
+  KOE_V1_ROUTER_MODEL,
   KOE_V1_VOICE_ID,
 } from "../../shared/inworld";
 import audioFixture from "../../shared/fixtures/inworldAudioContract.json";
@@ -344,6 +345,8 @@ test("llm chat passes SSE through and pins the one V1 voice", async () => {
     assert.equal(response.headers.get("X-Koe-Voice-Id"), KOE_V1_VOICE_ID);
     assert.equal(response.headers.get("X-Koe-Response-Run-Id"), "run-test");
     assert.equal(upstreamBody?.stream, true);
+    assert.equal(upstreamBody?.model, KOE_V1_ROUTER_MODEL);
+    assert.deepEqual(upstreamBody?.extra_body, { sort: ["latency"] });
     assert.deepEqual(upstreamBody?.audio, {
       voice: KOE_V1_VOICE_ID,
       model: "inworld-tts-1.5-max",

@@ -8,6 +8,13 @@
  */
 export const KOE_V1_VOICE_ID = "Asuka" as const;
 
+/**
+ * Let Inworld choose from models that are currently available instead of
+ * pinning Koe to a provider model ID that can disappear independently of an
+ * app release. The voice remains fixed and is applied after model routing.
+ */
+export const KOE_V1_ROUTER_MODEL = "auto" as const;
+
 export const INWORLD_ROUTER_AUDIO_CONTRACT = {
   encoding: "pcm_s16le",
   sampleRate: 48_000,

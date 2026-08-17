@@ -3,7 +3,11 @@ import { AppState, Linking } from "react-native";
 import { randomUUID } from "expo-crypto";
 
 import { AudioContractError } from "../services/audioContract";
-import { streamConversation, ProviderTimeoutError } from "../services/llm";
+import {
+  streamConversation,
+  ProviderStreamError,
+  ProviderTimeoutError,
+} from "../services/llm";
 import { analyzePronunciation } from "../services/pitch";
 import { annotate } from "../services/furigana";
 import {
@@ -11,7 +15,14 @@ import {
   transcribeRecordedAudio,
 } from "../services/recordedAudioInput";
 import { startStreaming, STTError } from "../services/stt";
-import { PCMPlaybackQueue, play, stop, synthesize } from "../services/tts";
+import {
+  AudioPlaybackError,
+  PCMPlaybackQueue,
+  play,
+  saveAudioFromBase64,
+  stop,
+  synthesize,
+} from "../services/tts";
 import { useSession } from "../stores/useSession";
 import { fail, success, tap } from "../utils/haptics";
 import { log } from "../utils/log";
@@ -19,6 +30,7 @@ import { errorName, voiceEvent } from "../utils/telemetry";
 import { shouldAutoSendFirstTranscript } from "./firstExchange";
 import {
   ConversationEngine,
+  NoPlayableAudioError,
   type ConversationDependencies,
   type ConversationFailure,
   type ConversationSessionSnapshot,
@@ -40,7 +52,10 @@ function classifyError(error: unknown): ConversationFailure {
     }
   }
   if (error instanceof ProviderTimeoutError) return "providerTimeout";
+  if (error instanceof ProviderStreamError) return "providerFailure";
   if (error instanceof AudioContractError) return "audioContract";
+  if (error instanceof AudioPlaybackError) return "playbackFailure";
+  if (error instanceof NoPlayableAudioError) return "playbackFailure";
   if (error instanceof RecordedAudioInputError) {
     return error.kind === "network" || error.kind === "provider"
       ? "network"
@@ -88,6 +103,7 @@ function createDependencies(): ConversationDependencies {
     replyStream: streamConversation,
     audio: {
       createQueue: (options) => new PCMPlaybackQueue(options),
+      save: saveAudioFromBase64,
       synthesize,
       play,
       stop,

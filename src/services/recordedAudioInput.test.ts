@@ -285,3 +285,26 @@ test("a Worker metadata mutation is a recoverable explicit failure", async () =>
       error.kind === "audio-metadata-mismatch",
   );
 });
+
+test("an older text-only Worker response retains locally validated metadata", async () => {
+  const bytes = wavFixture();
+  const file = recordedFile(bytes, "canonical.wav", "audio/wav");
+  const result = await transcribeRecordedAudio(
+    { uri: file.uri, filename: file.name, mimeType: file.type },
+    { sessionId: "session", turnId: "legacy-worker" },
+    {
+      materialize: async () => file,
+      decode: async () => ({
+        numberOfChannels: 1,
+        sampleRate: 16_000,
+        length: 3_200,
+      }),
+      transcribe: async () => ({ text: CANONICAL_TEXT }),
+    },
+  );
+
+  assert.equal(result.text, CANONICAL_TEXT);
+  assert.equal(result.metadata.filename, "canonical.wav");
+  assert.equal(result.metadata.sampleRate, 16_000);
+  assert.equal(result.metadata.channels, 1);
+});

@@ -20,6 +20,7 @@ export type VoiceErrorKind =
   | "permissionDenied"
   | "network"
   | "sttFailure"
+  | "providerFailure"
   | "providerTimeout"
   | "audioInterruption"
   | "playbackFailure";
@@ -106,6 +107,10 @@ const ERROR_RECOVERY: Record<
   sttFailure: {
     message: "Speech recognition stopped unexpectedly.",
     recovery: "listenAgain",
+  },
+  providerFailure: {
+    message: "Koe's voice provider returned no usable reply.",
+    recovery: "retryResponse",
   },
   providerTimeout: {
     message: "The voice provider took too long to respond.",

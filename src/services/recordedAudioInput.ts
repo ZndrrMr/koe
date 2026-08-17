@@ -62,7 +62,7 @@ export type RecordedAudioInputRuntime = {
     encodedBytes: Uint8Array,
     metadata: RecordedAudioMetadata,
     trace: VoiceTraceContext,
-  ) => Promise<{ text: string; audio: RecordedAudioMetadata }>;
+  ) => Promise<{ text: string; audio?: RecordedAudioMetadata }>;
 };
 
 export async function transcribeRecordedAudio(
@@ -171,7 +171,7 @@ export async function transcribeRecordedAudio(
     byteCount: metadata.byteCount,
   });
 
-  let response: { text: string; audio: RecordedAudioMetadata };
+  let response: { text: string; audio?: RecordedAudioMetadata };
   try {
     response = await runtime.transcribe(encodedBytes, metadata, trace);
   } catch (error) {
@@ -202,7 +202,26 @@ export async function transcribeRecordedAudio(
       "Recorded audio transcription returned no speech",
     );
   }
-  assertMetadataRoundTrip(metadata, response.audio);
+  if (response.audio) {
+    assertMetadataRoundTrip(metadata, response.audio);
+  } else {
+    // Older deployed Workers return only {text}. The app already decoded and
+    // validated the exact local bytes before upload, so it can safely retain
+    // that local metadata while making the deployment drift observable.
+    voiceEvent(
+      "stt_metadata_fallback",
+      trace,
+      {
+        path: "worker-json-compat",
+        failureKind: "metadata-missing",
+        declaredEncoding: metadata.format,
+        sampleRate: metadata.sampleRate,
+        channels: metadata.channels,
+        byteCount: metadata.byteCount,
+      },
+      "warn",
+    );
+  }
   voiceEvent("stt_final", trace, {
     path: "async-rest-recorded-file",
     transcriptChars: text.length,
@@ -275,7 +294,7 @@ const nativeRecordedAudioRuntime: RecordedAudioInputRuntime = {
     }
     return (await response.json()) as {
       text: string;
-      audio: RecordedAudioMetadata;
+      audio?: RecordedAudioMetadata;
     };
   },
 };
