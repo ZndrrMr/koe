@@ -1,19 +1,27 @@
 import React, { useCallback, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { randomUUID } from "expo-crypto";
-import { ArrowRight, Clock3, Mic } from "lucide-react-native";
 
+import ArtFamilyProofScreen from "@/art/ArtFamilyProofScreen";
+import { useKoeIllustration } from "@/art/koeIllustrations";
 import { getLatestActiveSession, type SessionSummary } from "@/db";
-import { tap } from "@/utils/haptics";
+import { useFirstUse } from "@/stores/useFirstUse";
 import {
   type ConversationPalette,
   useConversationPalette,
 } from "@/theme/conversation";
 import { CONVERSATION_TARGET } from "@/theme/interaction";
-import { useFirstUse } from "@/stores/useFirstUse";
-import ArtFamilyProofScreen from "@/art/ArtFamilyProofScreen";
+import { tap } from "@/utils/haptics";
 
 export default function IndexScreen() {
   const onboardingDone = useFirstUse((state) => state.onboardingDone);
@@ -30,6 +38,9 @@ export default function IndexScreen() {
 function ConversationHome() {
   const router = useRouter();
   const palette = useConversationPalette();
+  const illustration = useKoeIllustration("homeStart");
+  const { height } = useWindowDimensions();
+  const compact = height < 740;
   const [recoverable, setRecoverable] = useState<SessionSummary | null>(null);
 
   useFocusEffect(
@@ -65,137 +76,124 @@ function ConversationHome() {
     <SafeAreaView
       style={[styles.safeArea, { backgroundColor: palette.canvas }]}
     >
-      <View style={styles.ambient} pointerEvents="none">
-        <View
-          style={[styles.ambientRule, { backgroundColor: palette.hairline }]}
-        />
-        <View
-          style={[styles.ambientDisc, { backgroundColor: palette.seamSoft }]}
-        />
-      </View>
-
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          compact && styles.compactContent,
+        ]}
+        alwaysBounceVertical={false}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.header}>
-          <View>
-            <Text style={[styles.wordmark, { color: palette.ink }]}>声</Text>
-            <Text style={[styles.kicker, { color: palette.muted }]}>KOE</Text>
-          </View>
-        </View>
+        <KoeLockup palette={palette} />
 
-        <View style={styles.hero}>
-          <Text style={[styles.heroLabel, { color: palette.proof }]}>
-            CONVERSATION / 会話
-          </Text>
+        <Image
+          source={illustration}
+          resizeMode="contain"
+          accessible
+          accessibilityRole="image"
+          accessibilityLabel="Two engraved voice contours exchange a single thread."
+          accessibilityIgnoresInvertColors
+          style={[styles.art, compact && styles.compactArt]}
+        />
+
+        <View style={styles.proposition}>
           <Text style={[styles.heroTitle, { color: palette.ink }]}>
-            Speak. Hear Koe. Keep going.
+            {recoverable
+              ? "Return to the conversation."
+              : "Speak, and let the conversation follow."}
           </Text>
-          <Text style={[styles.heroDetail, { color: palette.muted }]}>
-            One open Japanese conversation, with a compact note only when it
-            helps.
+          <View
+            style={[styles.ochreMark, { backgroundColor: palette.ochre }]}
+          />
+          <Text style={[styles.japaneseLine, { color: palette.ink }]}>
+            {recoverable ? "声の続きへ。" : "声を出す。会話になる。"}
+          </Text>
+          <Text style={[styles.detail, { color: palette.muted }]}>
+            {recoverable
+              ? `${recoverable.turnCount} saved ${recoverable.turnCount === 1 ? "turn" : "turns"}. Koe will listen from where you stopped.`
+              : "Japanese or English. Koe listens, answers aloud, and keeps the exchange open."}
           </Text>
         </View>
 
-        {recoverable ? (
-          <Pressable
-            testID="continue-conversation"
-            accessibilityRole="button"
-            accessibilityLabel="Continue interrupted conversation"
-            accessibilityHint="Restores the conversation at its last saved turn"
-            onPress={continueConversation}
-            style={[styles.primaryAction, { backgroundColor: palette.control }]}
-          >
-            <View
-              style={[
-                styles.actionIcon,
-                { borderColor: `${palette.controlText}55` },
-              ]}
-            >
-              <Clock3 color={palette.controlText} size={22} />
-            </View>
-            <View style={styles.actionCopy}>
-              <Text
-                style={[styles.actionKicker, { color: palette.controlText }]}
-              >
-                PICK UP YOUR LAST THREAD
-              </Text>
-              <Text
-                style={[styles.actionTitle, { color: palette.controlText }]}
-              >
-                Continue conversation
-              </Text>
-              <Text
-                style={[styles.actionDetail, { color: palette.controlText }]}
-              >
-                {recoverable.turnCount} saved{" "}
-                {recoverable.turnCount === 1 ? "turn" : "turns"}
-              </Text>
-            </View>
-            <ArrowRight color={palette.controlText} size={22} />
-          </Pressable>
-        ) : (
-          <PrimarySpeakAction palette={palette} onPress={startConversation} />
-        )}
-
-        {recoverable ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Start a new conversation"
-            onPress={startConversation}
-            style={({ pressed }) => [
-              styles.secondaryAction,
-              {
-                borderColor: palette.hairline,
-                backgroundColor: pressed ? palette.seamSoft : "transparent",
-              },
-            ]}
-          >
-            <Mic color={palette.seam} size={19} />
-            <Text style={[styles.secondaryText, { color: palette.ink }]}>
-              Start a new conversation
-            </Text>
-          </Pressable>
-        ) : null}
+        <View style={styles.actions}>
+          <RuledAction
+            testID={
+              recoverable ? "continue-conversation" : "start-conversation"
+            }
+            label={recoverable ? "Continue conversation" : "Start speaking"}
+            hint={
+              recoverable
+                ? "Restores the conversation at its last saved turn"
+                : "Opens a Japanese conversation with no setup"
+            }
+            palette={palette}
+            onPress={recoverable ? continueConversation : startConversation}
+          />
+          {recoverable ? (
+            <RuledAction
+              label="Start a new conversation"
+              palette={palette}
+              onPress={startConversation}
+              secondary
+            />
+          ) : null}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-function PrimarySpeakAction({
+function KoeLockup({ palette }: { palette: ConversationPalette }) {
+  return (
+    <View style={styles.lockup} accessibilityRole="header">
+      <Text style={[styles.wordmark, { color: palette.ink }]}>声</Text>
+      <Text style={[styles.kicker, { color: palette.muted }]}>KOE</Text>
+    </View>
+  );
+}
+
+function RuledAction({
+  testID,
+  label,
+  hint,
   palette,
   onPress,
+  secondary = false,
 }: {
+  testID?: string;
+  label: string;
+  hint?: string;
   palette: ConversationPalette;
   onPress: () => void;
+  secondary?: boolean;
 }) {
   return (
     <Pressable
-      testID="start-conversation"
+      testID={testID}
       accessibilityRole="button"
-      accessibilityLabel="Start speaking"
-      accessibilityHint="Opens a neutral Japanese conversation with no setup"
+      accessibilityLabel={label}
+      accessibilityHint={hint}
       onPress={onPress}
-      style={[styles.primaryAction, { backgroundColor: palette.control }]}
+      style={({ pressed }) => [
+        styles.action,
+        secondary && styles.secondaryAction,
+        {
+          borderColor: secondary ? palette.hairline : palette.ruleStrong,
+          backgroundColor: pressed ? palette.seamSoft : "transparent",
+        },
+      ]}
     >
       <View
-        style={[styles.actionIcon, { borderColor: `${palette.controlText}55` }]}
+        style={[
+          styles.actionContent,
+          secondary && styles.secondaryActionContent,
+        ]}
       >
-        <Mic color={palette.controlText} size={23} />
+        <Text style={[styles.actionText, { color: palette.ink }]}>{label}</Text>
+        {!secondary ? (
+          <Text style={[styles.actionArrow, { color: palette.seam }]}>→</Text>
+        ) : null}
       </View>
-      <View style={styles.actionCopy}>
-        <Text style={[styles.actionKicker, { color: palette.controlText }]}>
-          NO SETUP
-        </Text>
-        <Text style={[styles.actionTitle, { color: palette.controlText }]}>
-          Start speaking
-        </Text>
-        <Text style={[styles.actionDetail, { color: palette.controlText }]}>
-          Japanese or English
-        </Text>
-      </View>
-      <ArrowRight color={palette.controlText} size={22} />
     </Pressable>
   );
 }
@@ -205,34 +203,18 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     width: "100%",
-    maxWidth: 680,
+    maxWidth: 620,
     alignSelf: "center",
-    paddingHorizontal: 20,
-    paddingBottom: 34,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 12,
   },
-  ambient: { ...StyleSheet.absoluteFillObject, overflow: "hidden" },
-  ambientRule: {
-    position: "absolute",
-    left: "22%",
-    top: 0,
-    bottom: 0,
-    width: StyleSheet.hairlineWidth,
-    opacity: 0.65,
-  },
-  ambientDisc: {
-    position: "absolute",
-    width: 420,
-    height: 420,
-    borderRadius: 210,
-    right: -220,
-    top: 96,
-    opacity: 0.45,
-  },
-  header: {
-    minHeight: 84,
+  compactContent: { paddingHorizontal: 20, paddingTop: 8 },
+  lockup: {
+    minHeight: 52,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 7,
   },
   wordmark: {
     fontFamily: "Hiragino Mincho ProN",
@@ -240,66 +222,63 @@ const styles = StyleSheet.create({
     lineHeight: 34,
   },
   kicker: {
-    fontFamily: "SFMono-Medium",
+    fontFamily: "AvenirNext-DemiBold",
     fontSize: 8,
+    lineHeight: 12,
     letterSpacing: 1.8,
-    marginTop: 1,
   },
-  hero: { paddingTop: 54, paddingBottom: 34, maxWidth: 540 },
-  heroLabel: {
-    fontFamily: "SFMono-Medium",
-    fontSize: 9,
-    letterSpacing: 1.35,
-    lineHeight: 13,
+  art: {
+    width: 310,
+    height: 248,
+    alignSelf: "center",
+    marginTop: 4,
   },
+  compactArt: { width: 270, height: 216, marginTop: 0 },
+  proposition: { maxWidth: 500 },
   heroTitle: {
+    fontFamily: "Iowan Old Style",
+    fontSize: 36,
+    lineHeight: 40,
+  },
+  ochreMark: { width: 92, height: 7, marginTop: 8 },
+  japaneseLine: {
     fontFamily: "Hiragino Mincho ProN",
-    fontSize: 38,
-    lineHeight: 48,
-    marginTop: 10,
+    fontSize: 17,
+    lineHeight: 26,
+    marginTop: 8,
   },
-  heroDetail: { fontSize: 14, lineHeight: 21, marginTop: 10, maxWidth: 430 },
-  primaryAction: {
-    minHeight: 132,
-    borderRadius: 6,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-    flexDirection: "row",
-    alignItems: "center",
+  detail: {
+    fontFamily: "Avenir Next",
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 7,
+    maxWidth: 430,
   },
-  actionIcon: {
-    width: 50,
-    height: 50,
-    borderRadius: 3,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
+  actions: { marginTop: "auto", paddingTop: 24 },
+  action: {
+    minHeight: 64,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    paddingHorizontal: 2,
+    paddingVertical: 12,
+    alignItems: "stretch",
     justifyContent: "center",
   },
-  actionCopy: { flex: 1, paddingHorizontal: 16 },
-  actionKicker: {
-    fontFamily: "SFMono-Medium",
-    fontSize: 8,
-    letterSpacing: 1.3,
-    lineHeight: 12,
-    opacity: 0.68,
-  },
-  actionTitle: {
-    fontSize: 20,
-    lineHeight: 27,
-    fontWeight: "700",
-    marginTop: 3,
-  },
-  actionDetail: { fontSize: 11, lineHeight: 16, opacity: 0.68, marginTop: 2 },
   secondaryAction: {
     minHeight: CONVERSATION_TARGET.action,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 5,
-    marginTop: 10,
-    paddingHorizontal: 16,
+    marginTop: 8,
+  },
+  actionContent: {
+    width: "100%",
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+    justifyContent: "space-between",
   },
-  secondaryText: { fontSize: 13, lineHeight: 18, fontWeight: "700" },
+  secondaryActionContent: { justifyContent: "center" },
+  actionText: {
+    fontFamily: "AvenirNext-DemiBold",
+    fontSize: 17,
+    lineHeight: 22,
+  },
+  actionArrow: { fontFamily: "Avenir Next", fontSize: 24, lineHeight: 28 },
 });

@@ -6,12 +6,16 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { openDb } from "@/db";
 import { useFirstUse } from "@/stores/useFirstUse";
+import { useConversationPalette } from "@/theme/conversation";
 import { log } from "@/utils/log";
 
 export default function RootLayout() {
   const [ready, setReady] = useState(false);
   const router = useRouter();
+  const palette = useConversationPalette();
   const segments = useSegments();
+  const firstSegment = segments[0];
+  const reviewNavigationApplied = useRef(false);
   const firstExchangeReviewApplied = useRef(false);
   const onboardingDone = useFirstUse((s) => s.onboardingDone);
   const reviewStatusBarStyle =
@@ -33,16 +37,22 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (!ready) return;
-    const first = segments[0];
     const reviewRoute = __DEV__
       ? process.env.EXPO_PUBLIC_KOE_REVIEW_ROUTE
       : undefined;
+    if (reviewRoute === "microphone-education") {
+      if (firstSegment !== "onboarding" && !reviewNavigationApplied.current) {
+        reviewNavigationApplied.current = true;
+        router.replace("/onboarding/welcome");
+      }
+      return;
+    }
     if (
       reviewRoute === "first-exchange" &&
       !firstExchangeReviewApplied.current
     ) {
       firstExchangeReviewApplied.current = true;
-      if (first === "session") return;
+      if (firstSegment === "session") return;
       router.replace({
         pathname: "/session/[id]",
         params: {
@@ -54,22 +64,25 @@ export default function RootLayout() {
       });
       return;
     }
-    if (reviewRoute === "session" && first !== "session") {
-      router.replace({
-        pathname: "/session/[id]",
-        params: {
-          id:
-            process.env.EXPO_PUBLIC_KOE_REVIEW_SESSION_ID ??
-            "zan-849-simulator-review",
-        },
-      });
+    if (reviewRoute === "session") {
+      if (firstSegment !== "session" && !reviewNavigationApplied.current) {
+        reviewNavigationApplied.current = true;
+        router.replace({
+          pathname: "/session/[id]",
+          params: {
+            id:
+              process.env.EXPO_PUBLIC_KOE_REVIEW_SESSION_ID ??
+              "zan-849-simulator-review",
+          },
+        });
+      }
       return;
     }
     if (reviewRoute === "art-family") return;
-    if (!onboardingDone && first !== "onboarding") {
+    if (!onboardingDone && firstSegment !== "onboarding") {
       router.replace("/onboarding/welcome");
     }
-  }, [ready, onboardingDone, segments]);
+  }, [ready, onboardingDone, firstSegment, router]);
 
   if (!ready) return null;
 
@@ -77,7 +90,12 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <StatusBar style={reviewStatusBarStyle} />
-        <Stack screenOptions={{ headerShown: false }}>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: palette.canvas },
+          }}
+        >
           <Stack.Screen name="index" />
           <Stack.Screen name="onboarding" />
           <Stack.Screen

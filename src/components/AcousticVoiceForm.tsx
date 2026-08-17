@@ -1,105 +1,58 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { StyleSheet, Text, useWindowDimensions, View } from "react-native";
-import Animated, {
-  cancelAnimation,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from "react-native-reanimated";
-import Svg, { Circle, Ellipse, G, Line, Path } from "react-native-svg";
+import React from "react";
+import { StyleSheet, Text, View } from "react-native";
+import Svg, { Circle, G, Line, Path } from "react-native-svg";
 
-import { colors } from "@/theme/colors";
 import { useConversationPalette } from "@/theme/conversation";
 import type { VoicePhase } from "@/voice/lifecycle";
-import {
-  ACOUSTIC_PRESENTATION,
-  advanceEnergyTrace,
-  type AcousticDirection,
-  INITIAL_ENERGY_TRACE,
-  voiceSeamPaths,
-} from "@/voice/acousticVisual";
+import { ACOUSTIC_PRESENTATION } from "@/voice/acousticVisual";
 
 type Props = {
   phase: VoicePhase;
   energy: number;
-  direction?: AcousticDirection;
   compact?: boolean;
   showLabels?: boolean;
   testID?: string;
 };
 
-const FORM_WIDTH = 250;
-const FORM_HEIGHT = 320;
+type PlateKind =
+  | "ready"
+  | "listening"
+  | "understanding"
+  | "speaking"
+  | "note"
+  | "recovery";
 
+const PLATE_BY_PHASE: Record<VoicePhase, PlateKind> = {
+  idle: "ready",
+  listening: "listening",
+  interimTranscript: "listening",
+  understanding: "understanding",
+  firstReply: "understanding",
+  speaking: "speaking",
+  interrupted: "listening",
+  transcriptCheck: "note",
+  feedback: "note",
+  retryListening: "listening",
+  comparing: "understanding",
+  responseRetry: "understanding",
+  success: "ready",
+  recoverableError: "recovery",
+};
+
+/**
+ * The production voice plate is intentionally static. State, copy, and the
+ * current action carry meaning without relying on animation or audio energy.
+ */
 export function AcousticVoiceForm({
   phase,
-  energy,
-  direction = "voiceSeam",
+  energy: _energy,
   compact = false,
   showLabels = true,
   testID = "acoustic-voice-form",
 }: Props) {
   const palette = useConversationPalette();
   const presentation = ACOUSTIC_PRESENTATION[phase];
-  const reducedMotion = useReducedMotion();
-  const { width: windowWidth } = useWindowDimensions();
-  const [trace, setTrace] = useState(INITIAL_ENERGY_TRACE);
-  const progress = useSharedValue(0);
-  const formScale = useSharedValue(1);
-  const isWide = !compact && windowWidth >= 700;
-  const height = compact ? 190 : isWide ? 400 : FORM_HEIGHT;
-  const width = compact ? 160 : isWide ? 310 : FORM_WIDTH;
-
-  useEffect(() => {
-    setTrace((current) => advanceEnergyTrace(current, phase, energy));
-  }, [energy, phase]);
-
-  useEffect(() => {
-    formScale.value = reducedMotion ? 1 : 0.975;
-    formScale.value = withTiming(1, { duration: reducedMotion ? 0 : 260 });
-  }, [formScale, phase, reducedMotion]);
-
-  useEffect(() => {
-    cancelAnimation(progress);
-    progress.value = 0;
-    if (presentation.processing && !reducedMotion) {
-      progress.value = withRepeat(
-        withTiming(1, { duration: 1_450 }),
-        -1,
-        false,
-      );
-    }
-    return () => cancelAnimation(progress);
-  }, [presentation.processing, progress, reducedMotion]);
-
-  const formStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: formScale.value }],
-  }));
-  const progressStyle = useAnimatedStyle(() => ({
-    opacity: presentation.processing ? 1 : 0,
-    transform: [
-      { translateY: (progress.value - 0.5) * Math.max(40, height - 56) },
-    ],
-  }));
-
-  const amplitude =
-    presentation.shape === "compressed"
-      ? compact
-        ? 20
-        : isWide
-          ? 40
-          : 31
-      : compact
-        ? 34
-        : isWide
-          ? 72
-          : 57;
-  const paths = useMemo(
-    () => voiceSeamPaths(trace, { width, height, amplitude }),
-    [amplitude, height, trace, width],
-  );
+  const plateSize = compact ? 144 : 204;
 
   return (
     <View
@@ -108,23 +61,28 @@ export function AcousticVoiceForm({
       accessibilityRole="image"
       accessibilityLabel={presentation.accessibilityLabel}
       accessibilityValue={{ text: presentation.titleEn }}
-      style={[styles.container, compact && styles.compactContainer]}
+      style={styles.container}
     >
+      <View
+        style={[
+          styles.stage,
+          compact && styles.compactStage,
+          { width: compact ? 208 : 300, height: compact ? 176 : 268 },
+        ]}
+      >
+        <VoiceStatePlate
+          kind={PLATE_BY_PHASE[phase]}
+          color={phase === "recoverableError" ? palette.error : palette.seam}
+          size={plateSize}
+        />
+      </View>
+
       {showLabels ? (
-        <View
-          style={[styles.labelBlock, isWide && styles.wideLabelBlock]}
-          accessibilityLiveRegion="polite"
-        >
-          <Text style={[styles.eyebrow, { color: palette.muted }]}>
+        <View accessibilityLiveRegion="polite" style={styles.copy}>
+          <Text style={[styles.eyebrow, { color: palette.seam }]}>
             {presentation.eyebrow}
           </Text>
-          <Text
-            style={[
-              styles.japaneseTitle,
-              isWide && styles.wideJapaneseTitle,
-              { color: palette.ink },
-            ]}
-          >
+          <Text style={[styles.japaneseTitle, { color: palette.ink }]}>
             {presentation.titleJa}
           </Text>
           <Text style={[styles.englishTitle, { color: palette.muted }]}>
@@ -132,341 +90,124 @@ export function AcousticVoiceForm({
           </Text>
         </View>
       ) : null}
-
-      <Animated.View style={[{ width, height }, formStyle]}>
-        <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
-          {direction === "voiceSeam" ? (
-            <VoiceSeam
-              phase={phase}
-              width={width}
-              height={height}
-              trace={trace}
-              envelope={paths.envelope}
-              center={paths.center}
-              palette={palette}
-              amplitude={amplitude}
-            />
-          ) : direction === "moraField" ? (
-            <MoraField
-              trace={trace}
-              width={width}
-              height={height}
-              phase={phase}
-              palette={palette}
-            />
-          ) : (
-            <ResonanceGate
-              trace={trace}
-              width={width}
-              height={height}
-              phase={phase}
-              palette={palette}
-            />
-          )}
-        </Svg>
-
-        {presentation.processing ? (
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.progressMarker,
-              {
-                backgroundColor: palette.brass,
-                left: width / 2 - 3,
-                top: height / 2 - 3,
-              },
-              progressStyle,
-            ]}
-          />
-        ) : null}
-      </Animated.View>
     </View>
   );
 }
 
-type Palette = {
-  [Key in keyof (typeof colors.conversation)["light"]]: string;
-};
-
-function VoiceSeam({
-  phase,
-  width,
-  height,
-  trace,
-  envelope,
-  center,
-  palette,
-  amplitude,
+function VoiceStatePlate({
+  kind,
+  color,
+  size,
 }: {
-  phase: VoicePhase;
-  width: number;
-  height: number;
-  trace: readonly number[];
-  envelope: string;
-  center: string;
-  palette: Palette;
-  amplitude: number;
+  kind: PlateKind;
+  color: string;
+  size: number;
 }) {
-  const presentation = ACOUSTIC_PRESENTATION[phase];
-  const comparisonLeft = voiceSeamPaths(trace, {
-    width,
-    height,
-    amplitude: amplitude * 0.72,
-    offsetX: -12,
-  });
-  const comparisonRight = voiceSeamPaths(trace, {
-    width,
-    height,
-    amplitude: amplitude * 0.92,
-    offsetX: 12,
-  });
-  const isInput =
-    phase === "listening" ||
-    phase === "interimTranscript" ||
-    phase === "retryListening";
-  const isOutput = phase === "speaking";
-
-  if (presentation.shape === "split" || presentation.shape === "comparing") {
-    return (
-      <G>
-        <Path
-          d={comparisonLeft.envelope}
-          fill={palette.seamSoft}
-          stroke={palette.seam}
-          strokeWidth={1.2}
-          opacity={presentation.shape === "comparing" ? 0.45 : 0.72}
-        />
-        <Path
-          d={comparisonRight.envelope}
-          fill={presentation.shape === "split" ? palette.proof : palette.seam}
-          fillOpacity={presentation.shape === "split" ? 0.12 : 0.14}
-          stroke={presentation.shape === "split" ? palette.proof : palette.seam}
-          strokeWidth={presentation.shape === "split" ? 2.2 : 1.8}
-        />
-        <Line
-          x1={width / 2}
-          y1={22}
-          x2={width / 2}
-          y2={height - 22}
-          stroke={palette.hairline}
-          strokeWidth={1}
-        />
-      </G>
-    );
-  }
-
-  const broken = presentation.shape === "broken";
-  const resolved = presentation.shape === "resolved";
   return (
-    <G>
-      <Line
-        x1={width / 2}
-        y1={4}
-        x2={width / 2}
-        y2={height - 4}
-        stroke={palette.hairline}
-        strokeWidth={1}
-      />
-      <Path
-        d={envelope}
-        fill={palette.seam}
-        fillOpacity={resolved ? 0.1 : isInput || isOutput ? 0.17 : 0.1}
-        stroke={broken ? palette.proof : palette.seam}
-        strokeWidth={broken ? 1.6 : isOutput ? 2.1 : 1.5}
-        strokeDasharray={broken ? "24 16" : undefined}
-      />
-      <Path
-        d={center}
-        fill="none"
-        stroke={broken ? palette.proof : palette.ink}
-        strokeOpacity={0.82}
-        strokeWidth={isOutput ? 2.4 : 1.5}
-        strokeDasharray={broken ? "19 14" : undefined}
-        strokeLinecap="round"
-      />
-      {isInput ? (
-        <G opacity={0.75}>
-          <Line
-            x1={25}
-            y1={height - 43}
-            x2={43}
-            y2={height - 43}
-            stroke={palette.seam}
-          />
-          <Line
-            x1={31}
-            y1={height - 34}
-            x2={43}
-            y2={height - 34}
-            stroke={palette.seam}
-          />
-          <Line
-            x1={37}
-            y1={height - 25}
-            x2={43}
-            y2={height - 25}
-            stroke={palette.seam}
-          />
-        </G>
-      ) : null}
-      {isOutput ? (
-        <G opacity={0.75}>
-          <Line
-            x1={width - 43}
-            y1={25}
-            x2={width - 25}
-            y2={25}
-            stroke={palette.seam}
-          />
-          <Line
-            x1={width - 43}
-            y1={34}
-            x2={width - 31}
-            y2={34}
-            stroke={palette.seam}
-          />
-          <Line
-            x1={width - 43}
-            y1={43}
-            x2={width - 37}
-            y2={43}
-            stroke={palette.seam}
-          />
-        </G>
-      ) : null}
-      {resolved ? (
-        <Circle
-          cx={width / 2}
-          cy={height / 2}
-          r={25}
-          fill="none"
-          stroke={palette.success}
-          strokeWidth={2}
-        />
-      ) : null}
+    <Svg width={size} height={size} viewBox="0 0 204 204">
+      {kind === "ready" ? <ReadyPlate color={color} /> : null}
+      {kind === "listening" ? <ListeningPlate color={color} /> : null}
+      {kind === "understanding" ? <UnderstandingPlate color={color} /> : null}
+      {kind === "speaking" ? <SpeakingPlate color={color} /> : null}
+      {kind === "note" ? <NotePlate color={color} /> : null}
+      {kind === "recovery" ? <RecoveryPlate color={color} /> : null}
+    </Svg>
+  );
+}
+
+function ReadyPlate({ color }: { color: string }) {
+  return (
+    <G fill="none" stroke={color}>
+      <Circle cx="102" cy="102" r="66" opacity={0.32} />
+      <Circle cx="102" cy="102" r="42" opacity={0.16} />
+      <Path d="M102 62v80M92 76v52M112 76v52" strokeWidth={2} />
     </G>
   );
 }
 
-function MoraField({
-  trace,
-  width,
-  height,
-  phase,
-  palette,
-}: {
-  trace: readonly number[];
-  width: number;
-  height: number;
-  phase: VoicePhase;
-  palette: Palette;
-}) {
+function ListeningPlate({ color }: { color: string }) {
   return (
-    <G>
-      {trace.map((sample, index) => {
-        const y = 18 + (index / (trace.length - 1)) * (height - 36);
-        const direction = index % 2 ? -1 : 1;
-        return (
-          <Circle
-            key={index}
-            cx={width / 2 + direction * sample * width * 0.18}
-            cy={y}
-            r={3 + sample * 12}
-            fill={
-              phase === "transcriptCheck" || phase === "feedback"
-                ? palette.proof
-                : palette.seam
-            }
-            fillOpacity={0.24 + sample * 0.5}
-          />
-        );
-      })}
+    <G fill="none" stroke={color}>
+      <Circle cx="102" cy="102" r="82" opacity={0.24} />
+      <Circle cx="102" cy="102" r="58" opacity={0.48} />
+      <Path
+        d="M74 128c14-48 42-48 56 0M80 105c12-34 32-34 44 0M91 82c7-17 15-17 22 0"
+        strokeWidth={2}
+      />
+      <Line x1="102" y1="20" x2="102" y2="44" opacity={0.55} />
+      <Line x1="102" y1="160" x2="102" y2="184" opacity={0.55} />
+      <Line x1="20" y1="102" x2="44" y2="102" opacity={0.55} />
+      <Line x1="160" y1="102" x2="184" y2="102" opacity={0.55} />
     </G>
   );
 }
 
-function ResonanceGate({
-  trace,
-  width,
-  height,
-  phase,
-  palette,
-}: {
-  trace: readonly number[];
-  width: number;
-  height: number;
-  phase: VoicePhase;
-  palette: Palette;
-}) {
-  const energy = trace.slice(-5).reduce((sum, item) => sum + item, 0) / 5;
+function UnderstandingPlate({ color }: { color: string }) {
   return (
-    <G>
-      {[0, 1, 2, 3].map((ring) => (
-        <Ellipse
-          key={ring}
-          cx={width / 2}
-          cy={height / 2}
-          rx={25 + ring * 19 + energy * 28}
-          ry={38 + ring * 28 + energy * 42}
-          fill="none"
-          stroke={
-            phase === "transcriptCheck" || phase === "feedback"
-              ? palette.proof
-              : palette.seam
-          }
-          strokeWidth={ring === 0 ? 2 : 1}
-          opacity={0.82 - ring * 0.16}
-        />
-      ))}
-      <Line
-        x1={width / 2}
-        y1={12}
-        x2={width / 2}
-        y2={height - 12}
-        stroke={palette.ink}
-        strokeWidth={1.4}
+    <G fill="none" stroke={color}>
+      <Path d="M37 102c22-53 108-53 130 0-22 53-108 53-130 0Z" opacity={0.34} />
+      <Path d="M55 102c16-35 78-35 94 0-16 35-78 35-94 0Z" opacity={0.62} />
+      <Path d="M78 102c8-17 40-17 48 0-8 17-40 17-48 0Z" strokeWidth={2} />
+    </G>
+  );
+}
+
+function SpeakingPlate({ color }: { color: string }) {
+  return (
+    <G fill="none" stroke={color}>
+      <Circle cx="102" cy="102" r="34" opacity={0.2} />
+      <Path d="M102 64v76M90 78v48M114 78v48" strokeWidth={2} />
+      <Path d="M25 102h32M147 102h32M47 47l23 23M134 134l23 23M47 157l23-23M134 70l23-23" />
+      <Path d="M102 20v27M102 157v27" opacity={0.55} />
+    </G>
+  );
+}
+
+function NotePlate({ color }: { color: string }) {
+  return (
+    <G fill="none" stroke={color}>
+      <Path d="M43 66h118M43 102h84M43 138h118" opacity={0.7} />
+      <Path d="M94 153h67" strokeWidth={7} opacity={0.88} />
+    </G>
+  );
+}
+
+function RecoveryPlate({ color }: { color: string }) {
+  return (
+    <G fill="none" stroke={color}>
+      <Path
+        d="M102 35a67 67 0 0 1 54 28M169 102a67 67 0 0 1-28 54M102 169a67 67 0 0 1-54-28M35 102a67 67 0 0 1 28-54"
+        strokeWidth={2}
       />
+      <Path d="M75 102h54M102 75v54" opacity={0.75} />
     </G>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    alignItems: "center",
-  },
-  compactContainer: {
-    flex: 1,
-  },
-  labelBlock: {
-    alignItems: "center",
-    minHeight: 94,
-    paddingHorizontal: 16,
-  },
-  wideLabelBlock: { minHeight: 110 },
+  container: { alignItems: "center" },
+  stage: { alignItems: "center", justifyContent: "center" },
+  compactStage: { marginTop: 0 },
+  copy: { alignItems: "center", maxWidth: 340 },
   eyebrow: {
-    fontFamily: "SFMono-Medium",
+    fontFamily: "AvenirNext-DemiBold",
     fontSize: 10,
-    letterSpacing: 1.6,
-    lineHeight: 14,
+    lineHeight: 15,
+    letterSpacing: 1.4,
+    textAlign: "center",
   },
   japaneseTitle: {
     fontFamily: "Hiragino Mincho ProN",
-    fontSize: 26,
-    fontWeight: "600",
-    letterSpacing: 0.4,
-    lineHeight: 38,
-    marginTop: 6,
+    fontSize: 30,
+    lineHeight: 40,
+    marginTop: 8,
+    textAlign: "center",
   },
-  wideJapaneseTitle: { fontSize: 30, lineHeight: 42 },
   englishTitle: {
-    fontSize: 13,
-    letterSpacing: 0.2,
-    lineHeight: 18,
-  },
-  progressMarker: {
-    position: "absolute",
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    fontFamily: "Avenir Next",
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 3,
+    textAlign: "center",
   },
 });

@@ -1,4 +1,4 @@
-import type { ImageSourcePropType } from "react-native";
+import { useColorScheme, type ImageSourcePropType } from "react-native";
 
 import manifest from "../../assets/illustrations/koe/manifest.json";
 
@@ -29,3 +29,18 @@ export const koeIllustrations = {
 } satisfies Record<keyof typeof manifest.assets, AppearanceSources>;
 
 export type KoeIllustrationName = keyof typeof koeIllustrations;
+
+export function useKoeIllustration(
+  name: KoeIllustrationName,
+): ImageSourcePropType {
+  const systemScheme = useColorScheme();
+  const reviewScheme = __DEV__
+    ? process.env.EXPO_PUBLIC_KOE_REVIEW_SCHEME
+    : undefined;
+  const appearance =
+    reviewScheme === "dark" ||
+    (reviewScheme !== "light" && systemScheme === "dark")
+      ? "dark"
+      : "light";
+  return koeIllustrations[name][appearance];
+}

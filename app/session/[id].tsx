@@ -1,51 +1,49 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Image,
   Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import {
-  Bookmark,
-  Check,
-  RotateCcw,
-  Send,
-  Settings,
-  Trash2,
-  Volume2,
-  X,
-} from "lucide-react-native";
+import { RotateCcw, Send, Volume2, X } from "lucide-react-native";
 
-import { useSession, type ChatTurn } from "@/stores/useSession";
-import { MicButton } from "@/components/MicButton";
+import { useKoeIllustration } from "@/art/koeIllustrations";
 import { AcousticVoiceForm } from "@/components/AcousticVoiceForm";
+import { MicButton } from "@/components/MicButton";
 import { PronunciationFeedbackCard } from "@/components/PronunciationFeedbackCard";
+import {
+  buildSessionCloseout,
+  type SessionCloseout,
+} from "@/db/sessionHistory";
+import { useSession, type ChatTurn } from "@/stores/useSession";
 import {
   type ConversationPalette,
   useConversationPalette,
 } from "@/theme/conversation";
 import { CONVERSATION_TARGET } from "@/theme/interaction";
-import {
-  VOICE_PHASE_COPY,
-  type VoiceLatency,
-  type VoiceLifecycle,
-} from "@/voice/lifecycle";
+import type { ConversationPhase } from "@/voice/conversationEngine";
+import { VOICE_PHASE_COPY, type VoiceLifecycle } from "@/voice/lifecycle";
 import { useConversationEngine } from "@/voice/useConversationEngine";
-import {
-  buildSessionCloseout,
-  type LearningMomentDecision,
-  type SessionCloseout,
-} from "@/db/sessionHistory";
+
+type CloseoutStage = "ending" | "coda";
 
 export default function SessionScreen() {
   const router = useRouter();
   const palette = useConversationPalette();
+  const microphoneIllustration = useKoeIllustration("microphoneEducation");
+  const recoveryIllustration = useKoeIllustration("recovery");
+  const endingIllustration = useKoeIllustration("homeStart");
+  const codaIllustration = useKoeIllustration("coda");
+  const { height } = useWindowDimensions();
+  const compact = height < 740;
   const { id, intro, autostart } = useLocalSearchParams<{
     id: string;
     intro?: string;
@@ -63,8 +61,10 @@ export default function SessionScreen() {
   const [dismissedCorrectionId, setDismissedCorrectionId] = useState<
     string | null
   >(null);
+  const [closeoutStage, setCloseoutStage] = useState<CloseoutStage>("ending");
   const diagnosticRunStartedRef = useRef(false);
   const autoStartAppliedRef = useRef(false);
+  const reviewStateAppliedRef = useRef(false);
 
   useEffect(() => {
     void engine.start().then(() => {
@@ -72,11 +72,38 @@ export default function SessionScreen() {
         autoStartAppliedRef.current = true;
         void engine.startHandsFree();
       }
-      if (!__DEV__) return;
+      if (!__DEV__ || reviewStateAppliedRef.current) return;
+      reviewStateAppliedRef.current = true;
       const reviewPhase = process.env.EXPO_PUBLIC_KOE_REVIEW_PHASE as
         | VoiceLifecycle["phase"]
         | undefined;
       if (reviewPhase && reviewPhase in VOICE_PHASE_COPY) {
+        const store = useSession.getState();
+        if (reviewPhase !== "idle") {
+          store.addTurn({
+            id: `review-${reviewPhase}`,
+            role: reviewPhase === "speaking" ? "assistant" : "user",
+            textJa:
+              reviewPhase === "speaking"
+                ? "いいですね。京都では何を見たいですか？"
+                : "週末は友達と京都へ行きます。",
+            createdAt: Date.now() - 1_000,
+            corrections:
+              reviewPhase === "feedback"
+                ? {
+                    particles: [
+                      {
+                        original: "京都に行きます",
+                        corrected: "京都へ行きます",
+                        explanation: "へ emphasizes the direction of travel.",
+                      },
+                    ],
+                    register: { consistent: true },
+                    other: [],
+                  }
+                : undefined,
+          });
+        }
         engine.setReviewState({
           phase: reviewPhase,
           draftTranscript:
@@ -88,8 +115,25 @@ export default function SessionScreen() {
               ? 0.62
               : undefined,
         });
+        if (reviewPhase === "recoverableError") {
+          store.setVoice({
+            phase: "recoverableError",
+            interimTranscript: "",
+            errorKind: "network",
+            message:
+              "Your last spoken turn did not reach Koe. Nothing was added.",
+            recovery: "retryResponse",
+          });
+        }
       }
-      if (process.env.EXPO_PUBLIC_KOE_REVIEW_CODA === "1") {
+      const reviewCloseout =
+        process.env.EXPO_PUBLIC_KOE_REVIEW_CLOSEOUT ??
+        (process.env.EXPO_PUBLIC_KOE_REVIEW_CODA === "1" ? "coda" : "");
+      if (reviewCloseout === "ending") {
+        setCloseoutStage("ending");
+        engine.setReviewState({ showCoda: true });
+      }
+      if (reviewCloseout === "coda") {
         const store = useSession.getState();
         store.addTurn({
           id: "review-user-1",
@@ -114,6 +158,7 @@ export default function SessionScreen() {
           textJa: "いいですね。京都では何を見たいですか？",
           createdAt: Date.now() - 1_000,
         });
+        setCloseoutStage("coda");
         engine.setReviewState({ showCoda: true });
       }
     });
@@ -146,26 +191,22 @@ export default function SessionScreen() {
     })();
   }, [engine]);
 
-  const submitTranscript = () => {
-    void engine.submitTranscript();
-  };
-  const recoverVoice = () => {
-    void engine.recover();
-  };
+  const submitTranscript = () => void engine.submitTranscript();
+  const recoverVoice = () => void engine.recover();
   const discardTranscript = () => engine.discardTranscript();
   const setDraftTranscript = (text: string) => engine.editTranscript(text);
-  const startPronunciationRetry = (turn: ChatTurn) => {
+  const startPronunciationRetry = (turn: ChatTurn) =>
     void engine.startPronunciationRetry(turn.id);
-  };
   const play = (audioUri: string) => engine.playAudio(audioUri);
-  const endSession = () => engine.requestEnd();
-  const setShowCoda = (visible: boolean) => {
-    if (!visible) engine.continueAfterCoda();
+  const endSession = () => {
+    setCloseoutStage("ending");
+    engine.requestEnd();
   };
+  const continueConversation = () => engine.continueAfterCoda();
   const finishSession = async () => {
     try {
       await engine.finishEnd();
-      router.back();
+      router.replace("/");
     } catch {
       Alert.alert(
         "Session not finished",
@@ -225,167 +266,325 @@ export default function SessionScreen() {
   const closeout =
     session.closeout ??
     (session.id ? buildSessionCloseout(session.id, session.turns) : undefined);
-  const isFirstExchange = intro === "1" && session.turns.length === 0;
+  const isFirstExchange =
+    intro === "1" &&
+    session.turns.length === 0 &&
+    !handsFreeActive &&
+    session.voice.phase === "idle";
   const isVoiceRecovery = session.voice.phase === "recoverableError";
+  const controlPhase: ConversationPhase =
+    session.voice.phase === "speaking"
+      ? "speaking"
+      : ["understanding", "firstReply", "responseRetry"].includes(
+            session.voice.phase,
+          )
+        ? "understanding"
+        : engineState.phase;
+  const controlActive =
+    handsFreeActive ||
+    ["listening", "interimTranscript", "retryListening"].includes(
+      session.voice.phase,
+    );
 
   return (
     <SafeAreaView
       style={[styles.safeArea, { backgroundColor: palette.canvas }]}
     >
-      <AcousticAtmosphere palette={palette} />
-
-      <View style={styles.header}>
-        <Pressable
-          testID="end-session"
-          accessibilityRole="button"
-          accessibilityLabel={
-            isFirstExchange
-              ? "Explore Koe without speaking"
-              : "End conversation"
-          }
-          onPress={
-            isFirstExchange ? () => void leaveFirstExchange() : endSession
-          }
-          style={[
-            styles.headerPill,
-            {
-              borderColor: palette.hairline,
-              backgroundColor: "transparent",
-            },
-          ]}
-        >
-          <X color={palette.ink} size={16} />
-          <Text style={[styles.headerAction, { color: palette.ink }]}>
-            {isFirstExchange ? "Not now" : "End"}
-          </Text>
-        </Pressable>
-
-        <View style={styles.sessionLabel} pointerEvents="none">
-          <Text style={[styles.sessionKicker, { color: palette.muted }]}>
-            {isFirstExchange ? "FIRST EXCHANGE" : "LIVE CONVERSATION"}
-          </Text>
-          <Text style={[styles.sessionTitle, { color: palette.ink }]}>
-            {isFirstExchange ? "No setup needed" : "Open conversation"}
-          </Text>
-        </View>
-
-        <View
-          style={[styles.headerIcon, { borderColor: "transparent" }]}
-          accessibilityElementsHidden
-        />
-      </View>
+      <SessionHeader
+        palette={palette}
+        firstExchange={isFirstExchange}
+        onEnd={isFirstExchange ? () => void leaveFirstExchange() : endSession}
+      />
 
       <ScrollView
         style={styles.conversationScroll}
         contentContainerStyle={styles.conversationContent}
         keyboardShouldPersistTaps="handled"
+        alwaysBounceVertical={false}
         showsVerticalScrollIndicator={false}
       >
-        <View style={[styles.stage, isVoiceRecovery && styles.stageCompact]}>
-          <AcousticVoiceForm
-            phase={session.voice.phase}
-            energy={audioEnergy}
-            compact={isVoiceRecovery}
+        {isVoiceRecovery ? (
+          <RecoveryState
+            voice={session.voice}
+            palette={palette}
+            illustration={recoveryIllustration}
+            compact={compact}
+            onRecover={recoverVoice}
+            onEnd={endSession}
           />
-          {isFirstExchange && !isVoiceRecovery ? (
-            <FirstExchangePrompt palette={palette} />
+        ) : isFirstExchange ? (
+          <FirstExchangePrompt
+            palette={palette}
+            illustration={microphoneIllustration}
+            compact={compact}
+          />
+        ) : (
+          <>
+            <View style={[styles.stage, compact && styles.compactStage]}>
+              <AcousticVoiceForm
+                phase={session.voice.phase}
+                energy={audioEnergy}
+                compact={compact}
+              />
+              <Text style={[styles.stateDetail, { color: palette.muted }]}>
+                {VOICE_PHASE_COPY[session.voice.phase].detail}
+              </Text>
+              <CurrentUtterance
+                text={liveText}
+                isKoe={!retryTarget && latestTurn?.role === "assistant"}
+                palette={palette}
+              />
+            </View>
+
+            <TranscriptCheckPanel
+              voice={session.voice}
+              palette={palette}
+              draftTranscript={draftTranscript}
+              onChangeTranscript={setDraftTranscript}
+              onSubmit={submitTranscript}
+              onDiscard={discardTranscript}
+            />
+
+            {latestPronunciation?.pronunciation &&
+            ["idle", "feedback"].includes(session.voice.phase) ? (
+              <PronunciationFeedbackCard
+                feedback={latestPronunciation.pronunciation}
+                palette={palette}
+                attemptAudioUri={latestPronunciation.audioUri}
+                referenceAudioUri={latestPronunciation.referenceAudioUri}
+                previous={
+                  previousPronunciation?.pronunciation
+                    ? {
+                        feedback: previousPronunciation.pronunciation,
+                        audioUri: previousPronunciation.audioUri,
+                      }
+                    : undefined
+                }
+                onPlay={(uri) => void play(uri)}
+                onRetry={() => startPronunciationRetry(latestPronunciation)}
+              />
+            ) : latestCorrection &&
+              ["idle", "feedback"].includes(session.voice.phase) ? (
+              <CorrectionMoment
+                turn={latestCorrection}
+                palette={palette}
+                onDismiss={() => setDismissedCorrectionId(latestCorrection.id)}
+                onReplay={
+                  latestCorrection.audioUri
+                    ? () => void play(latestCorrection.audioUri!)
+                    : undefined
+                }
+              />
+            ) : null}
+          </>
+        )}
+      </ScrollView>
+
+      {!isVoiceRecovery ? (
+        <View style={styles.speakDock}>
+          {isFirstExchange ? (
+            <RuledSessionAction
+              testID="hands-free-control"
+              label="Continue"
+              hint="Requests microphone access and begins continuous turn-taking"
+              palette={palette}
+              onPress={handleHandsFreeControl}
+            />
           ) : (
-            <CurrentUtterance
-              text={liveText}
-              isKoe={!retryTarget && latestTurn?.role === "assistant"}
+            <MicButton
+              active={controlActive}
+              phase={controlPhase}
+              recovery={session.voice.recovery}
+              onPress={handleHandsFreeControl}
               palette={palette}
             />
           )}
         </View>
+      ) : null}
 
-        <VoiceLifecyclePanel
-          voice={session.voice}
-          latency={session.latency}
-          palette={palette}
-          draftTranscript={draftTranscript}
-          onChangeTranscript={setDraftTranscript}
-          onSubmit={submitTranscript}
-          onDiscard={discardTranscript}
-          onRecover={recoverVoice}
-        />
-
-        {latestPronunciation?.pronunciation &&
-        ["idle", "feedback"].includes(session.voice.phase) ? (
-          <PronunciationFeedbackCard
-            feedback={latestPronunciation.pronunciation}
-            palette={palette}
-            attemptAudioUri={latestPronunciation.audioUri}
-            referenceAudioUri={latestPronunciation.referenceAudioUri}
-            previous={
-              previousPronunciation?.pronunciation
-                ? {
-                    feedback: previousPronunciation.pronunciation,
-                    audioUri: previousPronunciation.audioUri,
-                  }
-                : undefined
-            }
-            onPlay={(uri) => void play(uri)}
-            onRetry={() => startPronunciationRetry(latestPronunciation)}
-          />
-        ) : latestCorrection && session.voice.phase === "idle" ? (
-          <CorrectionMoment
-            turn={latestCorrection}
-            palette={palette}
-            onDismiss={() => setDismissedCorrectionId(latestCorrection.id)}
-            onReplay={
-              latestCorrection.audioUri
-                ? () => void play(latestCorrection.audioUri!)
-                : undefined
-            }
-          />
-        ) : null}
-      </ScrollView>
-
-      <View style={[styles.speakDock, { borderColor: palette.hairline }]}>
-        <MicButton
-          active={handsFreeActive}
-          phase={engineState.phase}
-          recovery={session.voice.recovery}
-          onPress={handleHandsFreeControl}
-          palette={palette}
-        />
-      </View>
-
-      <SessionCoda
+      <SessionCloseout
         visible={showCoda}
+        stage={closeoutStage}
         closeout={closeout}
         palette={palette}
-        onContinue={() => setShowCoda(false)}
-        onDecision={(momentId, decision) =>
-          void useSession.getState().setMomentDecision(momentId, decision)
-        }
+        endingIllustration={endingIllustration}
+        codaIllustration={codaIllustration}
+        onContinue={continueConversation}
+        onShowCoda={() => setCloseoutStage("coda")}
         onFinish={() => void finishSession()}
       />
     </SafeAreaView>
   );
 }
 
-function VoiceLifecyclePanel({
+function SessionHeader({
+  palette,
+  firstExchange,
+  onEnd,
+}: {
+  palette: ConversationPalette;
+  firstExchange: boolean;
+  onEnd: () => void;
+}) {
+  const label = firstExchange ? "Not now" : "End";
+  return (
+    <View style={styles.header}>
+      <Pressable
+        testID="end-session"
+        accessibilityRole="button"
+        accessibilityLabel={
+          firstExchange ? "Explore Koe without speaking" : "End conversation"
+        }
+        onPress={onEnd}
+        style={({ pressed }) => [
+          styles.headerAction,
+          { backgroundColor: pressed ? palette.seamSoft : "transparent" },
+        ]}
+      >
+        <X color={palette.ink} size={17} strokeWidth={1.5} />
+        <Text style={[styles.headerActionText, { color: palette.ink }]}>
+          {label}
+        </Text>
+      </Pressable>
+      <View style={styles.lockup} accessibilityRole="header">
+        <Text style={[styles.lockupKanji, { color: palette.ink }]}>声</Text>
+        <Text style={[styles.lockupLatin, { color: palette.muted }]}>KOE</Text>
+      </View>
+      <View style={styles.headerBalance} accessibilityElementsHidden />
+    </View>
+  );
+}
+
+function FirstExchangePrompt({
+  palette,
+  illustration,
+  compact,
+}: {
+  palette: ConversationPalette;
+  illustration: ReturnType<typeof useKoeIllustration>;
+  compact: boolean;
+}) {
+  return (
+    <View style={styles.firstExchange}>
+      <Image
+        source={illustration}
+        resizeMode="contain"
+        accessible
+        accessibilityRole="image"
+        accessibilityLabel="Two engraved voice contours turn toward one another."
+        accessibilityIgnoresInvertColors
+        style={[styles.microphoneArt, compact && styles.compactMicrophoneArt]}
+      />
+      <Text style={[styles.editorialLabel, { color: palette.seam }]}>
+        FIRST VOICE
+      </Text>
+      <Text style={[styles.displayLarge, { color: palette.ink }]}>
+        Let Koe hear your voice.
+      </Text>
+      <Text style={[styles.jpBody, { color: palette.ink }]}>
+        声を聞かせてください。
+      </Text>
+      <Text style={[styles.bodyCopy, { color: palette.muted }]}>
+        Continue asks for microphone access. Speak Japanese or English; Koe will
+        answer aloud and listen again automatically.
+      </Text>
+    </View>
+  );
+}
+
+function TranscriptCheckPanel({
   voice,
-  latency,
   palette,
   draftTranscript,
   onChangeTranscript,
   onSubmit,
   onDiscard,
-  onRecover,
 }: {
   voice: VoiceLifecycle;
-  latency: VoiceLatency;
   palette: ConversationPalette;
   draftTranscript: string;
   onChangeTranscript: (value: string) => void;
   onSubmit: () => void;
   onDiscard: () => void;
-  onRecover: () => void;
 }) {
-  const copy = VOICE_PHASE_COPY[voice.phase];
-  const recoveryLabel =
+  if (voice.phase !== "transcriptCheck") return null;
+  return (
+    <View style={[styles.transcriptPanel, { borderColor: palette.hairline }]}>
+      <Text style={[styles.editorialLabel, { color: palette.seam }]}>
+        HEARD / 聞き取り
+      </Text>
+      <Text style={[styles.panelInstruction, { color: palette.muted }]}>
+        Correct only what Koe misheard, then send.
+      </Text>
+      <TextInput
+        accessibilityLabel="Correct transcript"
+        value={draftTranscript}
+        onChangeText={onChangeTranscript}
+        multiline
+        selectionColor={palette.seam}
+        style={[
+          styles.transcriptInput,
+          { color: palette.ink, borderColor: palette.ruleStrong },
+        ]}
+      />
+      <View style={styles.transcriptActions}>
+        <Pressable
+          testID="discard-transcript"
+          accessibilityRole="button"
+          accessibilityLabel="Try recording again"
+          onPress={onDiscard}
+          style={({ pressed }) => [
+            styles.transcriptAction,
+            {
+              borderColor: palette.hairline,
+              backgroundColor: pressed ? palette.seamSoft : "transparent",
+            },
+          ]}
+        >
+          <RotateCcw color={palette.ink} size={17} />
+          <Text style={[styles.transcriptActionText, { color: palette.ink }]}>
+            Try again
+          </Text>
+        </Pressable>
+        <Pressable
+          testID="send-transcript"
+          accessibilityRole="button"
+          accessibilityLabel="Send corrected transcript"
+          onPress={onSubmit}
+          style={({ pressed }) => [
+            styles.transcriptAction,
+            {
+              borderColor: palette.ruleStrong,
+              backgroundColor: pressed ? palette.seamSoft : "transparent",
+            },
+          ]}
+        >
+          <Send color={palette.seam} size={17} />
+          <Text style={[styles.transcriptActionText, { color: palette.ink }]}>
+            Send line
+          </Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function RecoveryState({
+  voice,
+  palette,
+  illustration,
+  compact,
+  onRecover,
+  onEnd,
+}: {
+  voice: VoiceLifecycle;
+  palette: ConversationPalette;
+  illustration: ReturnType<typeof useKoeIllustration>;
+  compact: boolean;
+  onRecover: () => void;
+  onEnd: () => void;
+}) {
+  const label =
     voice.recovery === "openSettings"
       ? "Open settings"
       : voice.recovery === "retryResponse"
@@ -393,131 +592,42 @@ function VoiceLifecyclePanel({
         : voice.recovery === "resume"
           ? "Resume"
           : "Try again";
-  const isVisible =
-    voice.phase === "transcriptCheck" || voice.phase === "recoverableError";
-
   return (
-    <View>
-      <View
-        accessible
-        accessibilityLiveRegion="polite"
-        accessibilityRole="summary"
-        style={styles.srStatus}
-      >
-        <Text>{voice.message ?? `${copy.title}. ${copy.detail}`}</Text>
-      </View>
-
-      {isVisible ? (
-        <View
-          style={[
-            styles.lifecyclePanel,
-            { borderColor: palette.hairline, backgroundColor: palette.canvas },
-          ]}
-        >
-          {voice.phase === "transcriptCheck" ? (
-            <View>
-              <Text style={[styles.editorialLabel, { color: palette.proof }]}>
-                TRANSCRIPT / 聞き取り
-              </Text>
-              <Text style={[styles.panelInstruction, { color: palette.muted }]}>
-                Correct only what Koe misheard, then send.
-              </Text>
-              <TextInput
-                accessibilityLabel="Correct transcript"
-                value={draftTranscript}
-                onChangeText={onChangeTranscript}
-                multiline
-                selectionColor={palette.proof}
-                style={[
-                  styles.transcriptInput,
-                  { color: palette.ink, borderColor: palette.hairline },
-                ]}
-              />
-              <View style={styles.actionRow}>
-                <Pressable
-                  testID="discard-transcript"
-                  accessibilityRole="button"
-                  accessibilityLabel="Try recording again"
-                  onPress={onDiscard}
-                  style={[
-                    styles.secondaryAction,
-                    {
-                      borderColor: palette.hairline,
-                      backgroundColor: "transparent",
-                    },
-                  ]}
-                >
-                  <RotateCcw color={palette.ink} size={16} />
-                  <Text style={[styles.actionText, { color: palette.ink }]}>
-                    Try again
-                  </Text>
-                </Pressable>
-                <Pressable
-                  testID="send-transcript"
-                  accessibilityRole="button"
-                  accessibilityLabel="Send corrected transcript"
-                  onPress={onSubmit}
-                  style={[
-                    styles.primaryAction,
-                    {
-                      backgroundColor: palette.control,
-                    },
-                  ]}
-                >
-                  <Send color={palette.controlText} size={16} />
-                  <Text
-                    style={[styles.actionText, { color: palette.controlText }]}
-                  >
-                    Send line
-                  </Text>
-                </Pressable>
-              </View>
-            </View>
-          ) : null}
-
-          {voice.phase === "recoverableError" ? (
-            <View>
-              <Text style={[styles.editorialLabel, { color: palette.proof }]}>
-                VOICE PAUSED / 回復
-              </Text>
-              <Text style={[styles.panelInstruction, { color: palette.ink }]}>
-                {voice.message ?? copy.detail}
-              </Text>
-              <Pressable
-                testID="recover-voice"
-                accessibilityRole="button"
-                accessibilityLabel={recoveryLabel}
-                onPress={onRecover}
-                style={[
-                  styles.recoveryAction,
-                  {
-                    backgroundColor: palette.control,
-                  },
-                ]}
-              >
-                {voice.recovery === "openSettings" ? (
-                  <Settings color={palette.controlText} size={16} />
-                ) : (
-                  <RotateCcw color={palette.controlText} size={16} />
-                )}
-                <Text
-                  style={[styles.actionText, { color: palette.controlText }]}
-                >
-                  {recoveryLabel}
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
-        </View>
-      ) : null}
-
-      {Object.values(latency).some((value) => value !== undefined) ? (
-        <Text style={[styles.latency, { color: palette.muted }]}>
-          HEARD {formatLatency(latency.listeningToTranscriptMs)} · WORDS{" "}
-          {formatLatency(latency.transcriptToFirstTextMs)} · VOICE{" "}
-          {formatLatency(latency.firstTextToFirstAudioMs)}
+    <View style={styles.recoveryBody}>
+      <View style={styles.recoveryCopy}>
+        <Image
+          source={illustration}
+          resizeMode="contain"
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          accessibilityIgnoresInvertColors
+          style={[styles.recoveryArt, compact && styles.compactRecoveryArt]}
+        />
+        <Text style={[styles.editorialLabel, { color: palette.error }]}>
+          VOICE PAUSED / 回復
         </Text>
-      ) : null}
+        <Text style={[styles.displayMedium, { color: palette.ink }]}>
+          {recoveryHeading(voice)}
+        </Text>
+        <Text style={[styles.bodyCopy, { color: palette.muted }]}>
+          {voice.message ?? VOICE_PHASE_COPY.recoverableError.detail}
+        </Text>
+      </View>
+      <View style={styles.recoveryActions}>
+        <RuledSessionAction
+          testID="recover-voice"
+          label={label}
+          palette={palette}
+          onPress={onRecover}
+        />
+        <RuledSessionAction
+          label="End conversation"
+          palette={palette}
+          onPress={onEnd}
+          secondary
+        />
+      </View>
     </View>
   );
 }
@@ -531,52 +641,19 @@ function CurrentUtterance({
   isKoe: boolean;
   palette: ConversationPalette;
 }) {
-  if (!text) return <View style={styles.utterancePlaceholder} />;
+  if (!text) return null;
   return (
     <View
       accessible
       accessibilityLabel={`${isKoe ? "Koe" : "You"}: ${text}`}
-      style={styles.utterance}
+      style={[styles.utterance, { borderColor: palette.hairline }]}
     >
-      <Text style={[styles.utteranceRole, { color: palette.muted }]}>
-        {isKoe ? "KOE / 応答" : "YOU / 発話"}
-      </Text>
       <Text
-        numberOfLines={3}
+        numberOfLines={2}
         style={[styles.utteranceText, { color: palette.ink }]}
       >
         {text}
       </Text>
-    </View>
-  );
-}
-
-function FirstExchangePrompt({ palette }: { palette: ConversationPalette }) {
-  return (
-    <View
-      accessible
-      accessibilityRole="summary"
-      accessibilityLabel="Your first exchange. Tap Start once, then speak naturally. Koe will answer and listen again automatically. You can speak Japanese or English. The first start asks for microphone and speech recognition access."
-      style={styles.firstExchange}
-    >
-      <Text style={[styles.firstExchangeLabel, { color: palette.proof }]}>
-        YOUR FIRST LINE / 最初の声
-      </Text>
-      <Text style={[styles.firstExchangeTitle, { color: palette.ink }]}>
-        こんにちは
-      </Text>
-      <Text style={[styles.firstExchangeInstruction, { color: palette.ink }]}>
-        Tap Start once, then speak naturally.
-      </Text>
-      <Text style={[styles.firstExchangeDetail, { color: palette.muted }]}>
-        Say this, or start in English. Koe will answer and show one sound to
-        tune.
-      </Text>
-      <View style={[styles.permissionNote, { borderColor: palette.hairline }]}>
-        <Text style={[styles.permissionText, { color: palette.muted }]}>
-          The first start asks for microphone and speech recognition access.
-        </Text>
-      </View>
     </View>
   );
 }
@@ -597,239 +674,275 @@ function CorrectionMoment({
   return (
     <View
       accessibilityRole="summary"
-      style={[styles.correctionMoment, { borderColor: palette.proof }]}
+      style={[styles.correctionMoment, { borderColor: palette.hairline }]}
     >
       <View style={styles.correctionCopy}>
-        <Text style={[styles.editorialLabel, { color: palette.proof }]}>
-          ONE THING TO KEEP
+        <Text style={[styles.editorialLabel, { color: palette.seam }]}>
+          ONE USEFUL NOTE / 気づき
         </Text>
         <Text style={[styles.correctionText, { color: palette.ink }]}>
           {note}
         </Text>
       </View>
-      {onReplay ? (
+      <View style={styles.noteActions}>
+        {onReplay ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Replay your line"
+            onPress={onReplay}
+            style={({ pressed }) => [
+              styles.inlineAction,
+              {
+                borderColor: palette.hairline,
+                backgroundColor: pressed ? palette.seamSoft : "transparent",
+              },
+            ]}
+          >
+            <Volume2 color={palette.seam} size={18} />
+          </Pressable>
+        ) : null}
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Replay your line"
-          onPress={onReplay}
-          style={[styles.inlineIconButton, { borderColor: palette.hairline }]}
+          accessibilityLabel="Dismiss note"
+          onPress={onDismiss}
+          style={({ pressed }) => [
+            styles.inlineAction,
+            {
+              borderColor: palette.hairline,
+              backgroundColor: pressed ? palette.seamSoft : "transparent",
+            },
+          ]}
         >
-          <Volume2 color={palette.ink} size={17} />
+          <X color={palette.ink} size={18} />
         </Pressable>
-      ) : null}
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Dismiss correction"
-        onPress={onDismiss}
-        style={[styles.inlineIconButton, { borderColor: palette.hairline }]}
-      >
-        <X color={palette.ink} size={17} />
-      </Pressable>
+      </View>
     </View>
   );
 }
 
-function SessionCoda({
+function SessionCloseout({
   visible,
+  stage,
   closeout,
   palette,
+  endingIllustration,
+  codaIllustration,
   onContinue,
-  onDecision,
+  onShowCoda,
   onFinish,
 }: {
   visible: boolean;
+  stage: CloseoutStage;
   closeout?: SessionCloseout;
   palette: ConversationPalette;
+  endingIllustration: ReturnType<typeof useKoeIllustration>;
+  codaIllustration: ReturnType<typeof useKoeIllustration>;
   onContinue: () => void;
-  onDecision: (momentId: string, decision: LearningMomentDecision) => void;
+  onShowCoda: () => void;
   onFinish: () => void;
 }) {
-  const moments = closeout?.moments ?? [];
+  const moments = (closeout?.moments ?? [])
+    .filter((moment) => moment.decision !== "discarded")
+    .slice(0, 3);
   return (
-    <Modal visible={visible} animationType="fade" onRequestClose={onContinue}>
+    <Modal
+      visible={visible}
+      animationType="none"
+      onRequestClose={stage === "ending" ? onContinue : onFinish}
+    >
       <SafeAreaView
-        style={[styles.codaSafeArea, { backgroundColor: palette.canvas }]}
+        style={[styles.closeoutSafeArea, { backgroundColor: palette.canvas }]}
       >
-        <View style={styles.codaHeader}>
-          <Text style={[styles.sessionKicker, { color: palette.muted }]}>
-            SESSION / 余韻
-          </Text>
-          <Pressable
-            testID="continue-conversation"
-            accessibilityRole="button"
-            accessibilityLabel="Continue conversation"
-            onPress={onContinue}
-            style={[styles.headerIcon, { borderColor: palette.hairline }]}
-          >
-            <X color={palette.ink} size={19} />
-          </Pressable>
+        <View style={styles.closeoutHeader}>
+          <View style={styles.lockup} accessibilityRole="header">
+            <Text style={[styles.lockupKanji, { color: palette.ink }]}>声</Text>
+            <Text style={[styles.lockupLatin, { color: palette.muted }]}>
+              KOE
+            </Text>
+          </View>
         </View>
         <ScrollView
-          style={styles.codaScroll}
-          contentContainerStyle={styles.codaBody}
+          style={styles.closeoutScroll}
+          contentContainerStyle={styles.closeoutBody}
+          alwaysBounceVertical={false}
           showsVerticalScrollIndicator={false}
         >
-          <Text style={[styles.codaTitle, { color: palette.ink }]}>
-            今日、残った声
-          </Text>
-          <Text style={[styles.codaSubtitle, { color: palette.muted }]}>
-            Keep what helps. Discard the rest. Koe will not turn this into a
-            chat archive.
-          </Text>
-          <View style={styles.momentList}>
-            {moments.length ? (
-              moments.map((moment) => (
+          {stage === "ending" ? (
+            <>
+              <Image
+                source={endingIllustration}
+                resizeMode="contain"
+                accessible
+                accessibilityRole="image"
+                accessibilityLabel="Two engraved voice contours exchange a single thread."
+                accessibilityIgnoresInvertColors
+                style={styles.endingArt}
+              />
+              <Text style={[styles.editorialLabel, { color: palette.seam }]}>
+                ENDING / 終わりますか
+              </Text>
+              <Text style={[styles.displayLarge, { color: palette.ink }]}>
+                Leave the conversation here?
+              </Text>
+              <Text style={[styles.bodyCopy, { color: palette.muted }]}>
+                Koe will keep up to three useful moments from this exchange. You
+                can continue speaking instead.
+              </Text>
+            </>
+          ) : (
+            <>
+              {moments.length ? (
+                <Image
+                  source={codaIllustration}
+                  resizeMode="cover"
+                  accessible={false}
+                  accessibilityElementsHidden
+                  importantForAccessibility="no-hide-descendants"
+                  accessibilityIgnoresInvertColors
+                  style={styles.codaArt}
+                />
+              ) : null}
+              <Text style={[styles.editorialLabel, { color: palette.seam }]}>
+                TODAY&apos;S THREAD / 余韻
+              </Text>
+              <Text style={[styles.displayMedium, { color: palette.ink }]}>
+                {codaTitle(moments.length)}
+              </Text>
+              {moments.length ? (
                 <View
-                  key={moment.id}
-                  style={[
-                    styles.momentRow,
-                    {
-                      borderColor:
-                        moment.decision === "saved"
-                          ? palette.success
-                          : palette.hairline,
-                      opacity: moment.decision === "discarded" ? 0.56 : 1,
-                    },
-                  ]}
+                  style={[styles.momentList, { borderColor: palette.hairline }]}
                 >
-                  <View style={styles.momentCopy}>
-                    <Text style={[styles.momentKind, { color: palette.proof }]}>
-                      {momentKindLabel(moment.kind)}
-                    </Text>
-                    <Text style={[styles.momentText, { color: palette.ink }]}>
-                      {moment.textJa}
-                    </Text>
-                    {moment.textEn ? (
-                      <Text
-                        style={[
-                          styles.momentTranslation,
-                          { color: palette.muted },
-                        ]}
-                      >
-                        {moment.textEn}
-                      </Text>
-                    ) : null}
-                    {moment.note ? (
-                      <Text
-                        style={[styles.momentNote, { color: palette.muted }]}
-                      >
-                        {moment.note}
-                      </Text>
-                    ) : null}
-                  </View>
-                  <View style={styles.momentActions}>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Keep ${moment.textJa}`}
-                      accessibilityState={{
-                        selected: moment.decision === "saved",
-                      }}
-                      onPress={() => onDecision(moment.id, "saved")}
+                  {moments.map((moment) => (
+                    <View
+                      key={moment.id}
                       style={[
-                        styles.momentAction,
-                        {
-                          borderColor: palette.hairline,
-                          backgroundColor:
-                            moment.decision === "saved"
-                              ? palette.control
-                              : "transparent",
-                        },
-                      ]}
-                    >
-                      {moment.decision === "saved" ? (
-                        <Check color={palette.controlText} size={16} />
-                      ) : (
-                        <Bookmark color={palette.ink} size={16} />
-                      )}
-                      <Text
-                        style={[
-                          styles.momentActionText,
-                          {
-                            color:
-                              moment.decision === "saved"
-                                ? palette.controlText
-                                : palette.ink,
-                          },
-                        ]}
-                      >
-                        {moment.decision === "saved" ? "Kept" : "Keep"}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Discard ${moment.textJa}`}
-                      accessibilityState={{
-                        selected: moment.decision === "discarded",
-                      }}
-                      onPress={() => onDecision(moment.id, "discarded")}
-                      style={[
-                        styles.momentAction,
+                        styles.momentRow,
                         { borderColor: palette.hairline },
                       ]}
                     >
-                      <Trash2 color={palette.muted} size={16} />
-                      <Text
-                        style={[
-                          styles.momentActionText,
-                          { color: palette.muted },
-                        ]}
-                      >
-                        {moment.decision === "discarded"
-                          ? "Discarded"
-                          : "Discard"}
+                      <Text style={[styles.momentText, { color: palette.ink }]}>
+                        {moment.textJa}
                       </Text>
-                    </Pressable>
-                  </View>
+                      {moment.note ? (
+                        <Text
+                          style={[styles.momentNote, { color: palette.muted }]}
+                        >
+                          {moment.note}
+                        </Text>
+                      ) : null}
+                    </View>
+                  ))}
                 </View>
-              ))
-            ) : (
-              <View
-                style={[styles.momentRow, { borderColor: palette.hairline }]}
-              >
-                <Text style={[styles.momentText, { color: palette.ink }]}>
-                  Keep talking to make a moment worth carrying forward.
+              ) : (
+                <Text style={[styles.bodyCopy, { color: palette.muted }]}>
+                  Nothing needs saving from this exchange. The next conversation
+                  starts clean.
                 </Text>
-              </View>
-            )}
-          </View>
+              )}
+            </>
+          )}
         </ScrollView>
-        <View style={styles.codaActions}>
-          <Pressable
-            testID="resume-conversation"
-            accessibilityRole="button"
-            accessibilityLabel="Keep talking"
-            onPress={onContinue}
-            style={[
-              styles.codaSecondary,
-              {
-                borderColor: palette.hairline,
-                backgroundColor: "transparent",
-              },
-            ]}
-          >
-            <Text style={[styles.actionText, { color: palette.ink }]}>
-              Keep talking
-            </Text>
-          </Pressable>
-          <Pressable
-            testID="finish-session"
-            accessibilityRole="button"
-            accessibilityLabel="Finish session"
-            onPress={onFinish}
-            style={[styles.codaPrimary, { backgroundColor: palette.control }]}
-          >
-            <Text style={[styles.actionText, { color: palette.controlText }]}>
-              Finish session
-            </Text>
-          </Pressable>
+        <View style={styles.closeoutActions}>
+          {stage === "ending" ? (
+            <>
+              <RuledSessionAction
+                testID="resume-conversation"
+                label="Keep talking"
+                palette={palette}
+                onPress={onContinue}
+              />
+              <RuledSessionAction
+                testID="finish-session"
+                label="Finish session"
+                palette={palette}
+                onPress={onShowCoda}
+                secondary
+              />
+            </>
+          ) : (
+            <RuledSessionAction
+              testID="return-home"
+              label="Return home"
+              palette={palette}
+              onPress={onFinish}
+            />
+          )}
         </View>
       </SafeAreaView>
     </Modal>
   );
 }
 
-function formatLatency(value?: number): string {
-  return value === undefined ? "—" : `${Math.round(value)} ms`;
+function RuledSessionAction({
+  testID,
+  label,
+  hint,
+  palette,
+  onPress,
+  secondary = false,
+}: {
+  testID?: string;
+  label: string;
+  hint?: string;
+  palette: ConversationPalette;
+  onPress: () => void;
+  secondary?: boolean;
+}) {
+  return (
+    <Pressable
+      testID={testID}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={hint}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.ruledAction,
+        secondary && styles.secondaryRuledAction,
+        {
+          borderColor: secondary ? palette.hairline : palette.ruleStrong,
+          backgroundColor: pressed ? palette.seamSoft : "transparent",
+        },
+      ]}
+    >
+      <View
+        style={[
+          styles.ruledActionContent,
+          secondary && styles.secondaryRuledActionContent,
+        ]}
+      >
+        <Text style={[styles.ruledActionText, { color: palette.ink }]}>
+          {label}
+        </Text>
+        {!secondary ? (
+          <Text style={[styles.ruledActionArrow, { color: palette.seam }]}>
+            →
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function recoveryHeading(voice: VoiceLifecycle): string {
+  if (voice.errorKind === "permissionDenied") {
+    return "Koe needs permission to listen.";
+  }
+  if (voice.errorKind === "silence" || voice.errorKind === "sttFailure") {
+    return "Koe did not catch that line.";
+  }
+  if (voice.errorKind === "playbackFailure") {
+    return "Koe could not play its reply.";
+  }
+  if (voice.errorKind === "audioInterruption") {
+    return "The conversation paused.";
+  }
+  return "Koe lost that part of the exchange.";
+}
+
+function codaTitle(count: number): string {
+  if (count === 0) return "The conversation can rest here.";
+  if (count === 1) return "One moment worth keeping.";
+  return `${count} moments worth keeping.`;
 }
 
 function correctionNotesForTurn(turn: ChatTurn): string[] {
@@ -851,165 +964,137 @@ function correctionNotesForTurn(turn: ChatTurn): string[] {
     : [];
 }
 
-function momentKindLabel(kind: "expression" | "correction" | "retry") {
-  if (kind === "correction") return "THE CORRECTION THAT MATTERED";
-  if (kind === "retry") return "STRONGEST RETRY";
-  return "EXPRESSION WORTH KEEPING";
-}
-
-function AcousticAtmosphere({ palette }: { palette: ConversationPalette }) {
-  return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-      <View
-        style={[
-          styles.ambientRule,
-          { backgroundColor: palette.hairline, left: "18%" },
-        ]}
-      />
-      <View
-        style={[
-          styles.ambientRule,
-          { backgroundColor: palette.hairline, right: "18%" },
-        ]}
-      />
-      <View
-        style={[
-          styles.ambientCircle,
-          { borderColor: palette.seamSoft, backgroundColor: palette.seamSoft },
-        ]}
-      />
-    </View>
-  );
-}
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
-  conversationScroll: { flex: 1 },
-  conversationContent: { flexGrow: 1 },
   header: {
-    minHeight: 88,
-    paddingTop: 20,
-    paddingHorizontal: 16,
+    minHeight: 68,
+    paddingTop: 12,
+    paddingHorizontal: 20,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    zIndex: 2,
   },
-  headerPill: {
-    minWidth: 72,
-    height: CONVERSATION_TARGET.minimum,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 22,
-    paddingHorizontal: 13,
+  headerAction: {
+    width: 76,
+    minHeight: CONVERSATION_TARGET.minimum,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
     gap: 6,
   },
-  headerAction: { fontSize: 13, fontWeight: "600" },
-  sessionLabel: {
-    position: "absolute",
-    left: 96,
-    right: 96,
-    alignItems: "center",
+  headerActionText: {
+    fontFamily: "AvenirNext-DemiBold",
+    fontSize: 14,
+    lineHeight: 20,
   },
-  sessionKicker: {
-    fontFamily: "SFMono-Medium",
-    fontSize: 9,
-    letterSpacing: 1.4,
-    lineHeight: 13,
-  },
-  sessionTitle: { fontSize: 12, fontWeight: "600", marginTop: 2 },
-  headerIcon: {
-    width: CONVERSATION_TARGET.roundIcon,
-    height: CONVERSATION_TARGET.roundIcon,
-    borderRadius: 24,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stage: {
+  headerBalance: { width: 76, height: CONVERSATION_TARGET.minimum },
+  lockup: {
     flex: 1,
-    minHeight: 390,
+    minHeight: CONVERSATION_TARGET.minimum,
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 7,
+  },
+  lockupKanji: {
+    fontFamily: "Hiragino Mincho ProN",
+    fontSize: 25,
+    lineHeight: 32,
+  },
+  lockupLatin: {
+    fontFamily: "AvenirNext-DemiBold",
+    fontSize: 8,
+    lineHeight: 12,
+    letterSpacing: 1.8,
+  },
+  conversationScroll: { flex: 1 },
+  conversationContent: {
+    flexGrow: 1,
+    width: "100%",
+    maxWidth: 620,
+    alignSelf: "center",
     paddingHorizontal: 24,
   },
-  stageCompact: { minHeight: 286 },
-  utterancePlaceholder: { height: 76 },
-  firstExchange: {
-    minHeight: 178,
-    maxWidth: 420,
+  stage: {
+    flexGrow: 1,
     alignItems: "center",
-    paddingHorizontal: 18,
+    paddingTop: 4,
+    paddingBottom: 20,
   },
-  firstExchangeLabel: {
-    fontFamily: "SFMono-Medium",
-    fontSize: 9,
-    letterSpacing: 1.25,
-    lineHeight: 13,
-  },
-  firstExchangeTitle: {
-    fontFamily: "Hiragino Mincho ProN",
-    fontSize: 34,
-    lineHeight: 48,
-    marginTop: 4,
-  },
-  firstExchangeInstruction: {
+  compactStage: { paddingTop: 0, paddingBottom: 12 },
+  stateDetail: {
+    fontFamily: "Avenir Next",
     fontSize: 15,
-    fontWeight: "700",
-    lineHeight: 21,
+    lineHeight: 22,
     textAlign: "center",
-    marginTop: 5,
+    maxWidth: 330,
+    marginTop: 6,
   },
-  firstExchangeDetail: {
-    fontSize: 12,
-    lineHeight: 18,
-    textAlign: "center",
-    marginTop: 5,
-    maxWidth: 320,
-  },
-  permissionNote: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    marginTop: 14,
-    paddingTop: 9,
-    paddingHorizontal: 12,
-  },
-  permissionText: { fontSize: 10, lineHeight: 15, textAlign: "center" },
   utterance: {
-    minHeight: 76,
-    maxWidth: 620,
-    alignItems: "center",
-    paddingHorizontal: 18,
-  },
-  utteranceRole: {
-    fontFamily: "SFMono-Medium",
-    fontSize: 9,
-    letterSpacing: 1.2,
-    marginBottom: 7,
+    width: "100%",
+    minHeight: 64,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    justifyContent: "center",
+    marginTop: 24,
+    paddingVertical: 14,
   },
   utteranceText: {
     fontFamily: "Hiragino Mincho ProN",
     fontSize: 20,
-    lineHeight: 30,
-    textAlign: "center",
+    lineHeight: 29,
   },
-  srStatus: { position: "absolute", width: 1, height: 1, opacity: 0 },
-  lifecyclePanel: {
+  firstExchange: { flexGrow: 1 },
+  microphoneArt: {
+    width: 310,
+    height: 240,
+    alignSelf: "center",
+    marginTop: 8,
+  },
+  compactMicrophoneArt: { width: 270, height: 202, marginTop: 0 },
+  editorialLabel: {
+    fontFamily: "AvenirNext-DemiBold",
+    fontSize: 10,
+    lineHeight: 15,
+    letterSpacing: 1.4,
+  },
+  displayLarge: {
+    fontFamily: "Iowan Old Style",
+    fontSize: 36,
+    lineHeight: 40,
+    marginTop: 10,
+  },
+  displayMedium: {
+    fontFamily: "Iowan Old Style",
+    fontSize: 30,
+    lineHeight: 35,
+    marginTop: 12,
+  },
+  jpBody: {
+    fontFamily: "Hiragino Mincho ProN",
+    fontSize: 17,
+    lineHeight: 26,
+    marginTop: 8,
+  },
+  bodyCopy: {
+    fontFamily: "Avenir Next",
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 8,
+    maxWidth: 440,
+  },
+  transcriptPanel: {
     borderTopWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 20,
-    paddingTop: 13,
+    paddingTop: 16,
     paddingBottom: 12,
   },
-  editorialLabel: {
-    fontFamily: "SFMono-Medium",
-    fontSize: 9,
-    letterSpacing: 1.35,
-    lineHeight: 13,
+  panelInstruction: {
+    fontFamily: "Avenir Next",
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
   },
-  panelInstruction: { fontSize: 12, lineHeight: 17, marginTop: 3 },
   transcriptInput: {
     minHeight: CONVERSATION_TARGET.action,
-    maxHeight: 92,
+    maxHeight: 100,
     borderBottomWidth: 1,
     fontFamily: "Hiragino Mincho ProN",
     fontSize: 18,
@@ -1017,161 +1102,160 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
     paddingVertical: 10,
   },
-  actionRow: { flexDirection: "row", gap: 10, marginTop: 12 },
-  secondaryAction: {
+  transcriptActions: { flexDirection: "row", gap: 10, marginTop: 12 },
+  transcriptAction: {
     flex: 1,
     minHeight: CONVERSATION_TARGET.action,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 4,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    paddingHorizontal: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
-  primaryAction: {
-    flex: 1,
-    minHeight: CONVERSATION_TARGET.action,
-    borderRadius: 4,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingHorizontal: 14,
+  transcriptActionText: {
+    fontFamily: "AvenirNext-DemiBold",
+    fontSize: 15,
+    lineHeight: 21,
   },
-  recoveryAction: {
-    minHeight: CONVERSATION_TARGET.action,
-    borderRadius: 4,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginTop: 12,
-    paddingHorizontal: 16,
+  recoveryBody: { flexGrow: 1, justifyContent: "space-between" },
+  recoveryCopy: { flexGrow: 1 },
+  recoveryArt: {
+    width: 144,
+    height: 144,
+    alignSelf: "center",
+    marginTop: 64,
+    marginBottom: 20,
   },
-  actionText: { fontSize: 14, fontWeight: "700" },
-  latency: {
-    fontFamily: "SFMono-Regular",
-    fontSize: 8,
-    letterSpacing: 0.8,
-    textAlign: "center",
-    paddingVertical: 4,
-  },
-  correctionMoment: {
-    minHeight: 74,
-    borderLeftWidth: 2,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginHorizontal: 16,
-    marginBottom: 8,
-    paddingLeft: 12,
-  },
-  correctionCopy: { flex: 1 },
-  correctionText: { fontSize: 12, lineHeight: 17, marginTop: 4 },
-  inlineIconButton: {
-    width: CONVERSATION_TARGET.minimum,
-    height: CONVERSATION_TARGET.minimum,
-    borderRadius: 22,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: "center",
-    justifyContent: "center",
+  compactRecoveryArt: { marginTop: 24 },
+  recoveryActions: {
+    minHeight: 148,
+    paddingTop: 24,
+    paddingBottom: 12,
   },
   speakDock: {
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 4,
+    width: "100%",
+    maxWidth: 620,
+    alignSelf: "center",
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 12,
   },
-  ambientRule: {
-    position: "absolute",
-    top: 76,
-    bottom: 86,
-    width: StyleSheet.hairlineWidth,
-    opacity: 0.52,
+  ruledAction: {
+    width: "100%",
+    minHeight: 64,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    paddingHorizontal: 2,
+    paddingVertical: 12,
+    alignItems: "stretch",
+    justifyContent: "center",
   },
-  ambientCircle: {
-    position: "absolute",
-    width: 430,
-    height: 430,
-    borderRadius: 215,
-    borderWidth: 1,
-    opacity: 0.18,
-    left: "50%",
-    top: "47%",
-    marginLeft: -215,
-    marginTop: -215,
+  secondaryRuledAction: {
+    minHeight: CONVERSATION_TARGET.action,
+    marginTop: 8,
   },
-  codaSafeArea: { flex: 1 },
-  codaHeader: {
-    minHeight: 112,
-    paddingHorizontal: 20,
-    paddingTop: 48,
+  ruledActionContent: {
+    width: "100%",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  codaScroll: { flex: 1 },
-  codaBody: {
-    flexGrow: 1,
-    justifyContent: "center",
-    paddingHorizontal: 26,
-    paddingVertical: 24,
+  secondaryRuledActionContent: { justifyContent: "center" },
+  ruledActionText: {
+    fontFamily: "AvenirNext-DemiBold",
+    fontSize: 17,
+    lineHeight: 22,
   },
-  codaTitle: {
-    fontFamily: "Hiragino Mincho ProN",
-    fontSize: 32,
-    fontWeight: "600",
-    lineHeight: 44,
+  ruledActionArrow: {
+    fontFamily: "Avenir Next",
+    fontSize: 24,
+    lineHeight: 28,
   },
-  codaSubtitle: { fontSize: 13, lineHeight: 19, marginTop: 6, maxWidth: 380 },
-  momentList: { marginTop: 26, gap: 10 },
-  momentRow: {
-    minHeight: 118,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 8,
-    padding: 14,
+  correctionMoment: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 14,
+    flexDirection: "row",
+    alignItems: "center",
     gap: 12,
+    marginBottom: 8,
   },
-  momentCopy: { gap: 4 },
-  momentKind: {
-    fontFamily: "SFMono-Medium",
-    fontSize: 8,
-    letterSpacing: 1.15,
-    lineHeight: 12,
+  correctionCopy: { flex: 1 },
+  correctionText: {
+    fontFamily: "Avenir Next",
+    fontSize: 15,
+    lineHeight: 21,
+    marginTop: 5,
+  },
+  noteActions: { flexDirection: "row", gap: 8 },
+  inlineAction: {
+    width: CONVERSATION_TARGET.minimum,
+    height: CONVERSATION_TARGET.minimum,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  closeoutSafeArea: { flex: 1 },
+  closeoutHeader: {
+    minHeight: 68,
+    paddingTop: 12,
+    paddingHorizontal: 24,
+    flexDirection: "row",
+  },
+  closeoutScroll: { flex: 1 },
+  closeoutBody: {
+    flexGrow: 1,
+    width: "100%",
+    maxWidth: 620,
+    alignSelf: "center",
+    paddingHorizontal: 24,
+    paddingBottom: 20,
+  },
+  endingArt: {
+    width: 120,
+    height: 96,
+    alignSelf: "center",
+    marginTop: 76,
+    marginBottom: 28,
+  },
+  codaArt: {
+    width: 280,
+    height: 180,
+    alignSelf: "center",
+    marginTop: 12,
+    marginBottom: 18,
+  },
+  momentList: {
+    marginTop: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  momentRow: {
+    minHeight: 54,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    justifyContent: "center",
+    paddingVertical: 10,
   },
   momentText: {
     fontFamily: "Hiragino Mincho ProN",
     fontSize: 17,
     lineHeight: 25,
   },
-  momentTranslation: { fontSize: 12, lineHeight: 17 },
-  momentNote: { fontSize: 11, lineHeight: 16 },
-  momentActions: { flexDirection: "row", gap: 8 },
-  momentAction: {
-    minHeight: CONVERSATION_TARGET.minimum,
-    flex: 1,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 4,
-    paddingHorizontal: 12,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 7,
+  momentNote: {
+    fontFamily: "Avenir Next",
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 3,
   },
-  momentActionText: { fontSize: 12, fontWeight: "700" },
-  codaActions: { paddingHorizontal: 20, paddingBottom: 10, gap: 10 },
-  codaSecondary: {
-    minHeight: CONVERSATION_TARGET.codaAction,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: 4,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  codaPrimary: {
-    minHeight: CONVERSATION_TARGET.codaAction,
-    borderRadius: 4,
-    alignItems: "center",
-    justifyContent: "center",
+  closeoutActions: {
+    width: "100%",
+    maxWidth: 620,
+    minHeight: 136,
+    alignSelf: "center",
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 12,
   },
 });
