@@ -42,13 +42,19 @@ function ConversationHome() {
 
   const startConversation = () => {
     tap();
-    router.push({ pathname: "/session/[id]", params: { id: randomUUID() } });
+    router.push({
+      pathname: "/session/[id]",
+      params: { id: randomUUID(), autostart: "1" },
+    });
   };
 
   const continueConversation = () => {
     if (!recoverable) return;
     tap();
-    router.push({ pathname: "/session/[id]", params: { id: recoverable.id } });
+    router.push({
+      pathname: "/session/[id]",
+      params: { id: recoverable.id, autostart: "1" },
+    });
   };
 
   return (

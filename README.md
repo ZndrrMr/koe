@@ -54,6 +54,8 @@ provider or deployed Worker configuration.
 For a development-only recorded-input trace, point `EXPO_PUBLIC_WORKER_URL` at
 the Worker, set `EXPO_PUBLIC_KOE_REVIEW_ROUTE=session`, and set
 `EXPO_PUBLIC_KOE_INJECT_AUDIO_URI` to a local or HTTP(S) MP3, M4A, or WAV.
+Use `EXPO_PUBLIC_KOE_INJECT_AUDIO_URIS` with pipe-separated URLs to exercise a
+multi-turn fixture sequence; each URL must end in its truthful filename.
 Optionally set `EXPO_PUBLIC_KOE_INJECT_AUDIO_FILENAME` and
 `EXPO_PUBLIC_KOE_INJECT_AUDIO_MIME_TYPE` when the URI does not carry truthful
 values. An iPhone Simulator Debug build decodes the file with the native audio

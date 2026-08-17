@@ -48,8 +48,11 @@ export const VOICE_PHASE_COPY: Record<
   VoicePhase,
   { title: string; detail: string }
 > = {
-  idle: { title: "Ready", detail: "Hold the mic and speak." },
-  listening: { title: "Listening…", detail: "Speak naturally, then release." },
+  idle: { title: "Ready", detail: "Tap Start once to begin." },
+  listening: {
+    title: "Listening…",
+    detail: "Speak naturally. Koe sends after a comfortable pause.",
+  },
   interimTranscript: {
     title: "Hearing you…",
     detail: "The transcript updates while you speak.",
@@ -59,8 +62,8 @@ export const VOICE_PHASE_COPY: Record<
     detail: "Koe is preparing a response.",
   },
   firstReply: { title: "Replying…", detail: "The first words are ready." },
-  speaking: { title: "Koe is speaking", detail: "Hold the mic to interrupt." },
-  interrupted: { title: "Interrupted", detail: "Koe stopped. Your turn." },
+  speaking: { title: "Koe is speaking", detail: "Tap Speak now to barge in." },
+  interrupted: { title: "Your turn", detail: "Koe stopped and is listening." },
   transcriptCheck: {
     title: "Check the words",
     detail: "Fix only what Koe misheard, or record the line again.",
@@ -71,7 +74,7 @@ export const VOICE_PHASE_COPY: Record<
   },
   retryListening: {
     title: "Listening for the retry…",
-    detail: "Say the highlighted phrase once, then release.",
+    detail: "Say the highlighted phrase once; the pause sends it.",
   },
   comparing: {
     title: "Comparing both attempts…",

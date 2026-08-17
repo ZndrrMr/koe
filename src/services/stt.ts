@@ -75,6 +75,10 @@ export async function ensurePermission(): Promise<boolean> {
 export async function startStreaming(opts: {
   onChunk: (chunk: STTChunk) => void;
   onAudioEnergy?: (energy: number) => void;
+  onSpeechStart?: () => void;
+  onSpeechEnd?: () => void;
+  onRecognitionEnd?: () => void;
+  onError?: (error: STTError) => void;
   languageHint?: "ja" | "ja,en";
   /** Optional recorder injection for isolated audio-pipeline proof surfaces. */
   recorder?: AudioRecorder;
@@ -148,6 +152,12 @@ export async function startStreaming(opts: {
     ExpoSpeechRecognitionModule.addListener("audioend", (event) => {
       audioUri = event.uri ?? audioUri;
     }),
+    ExpoSpeechRecognitionModule.addListener("speechstart", () => {
+      opts.onSpeechStart?.();
+    }),
+    ExpoSpeechRecognitionModule.addListener("speechend", () => {
+      opts.onSpeechEnd?.();
+    }),
     ExpoSpeechRecognitionModule.addListener("volumechange", (event) => {
       // Native metering is -2...10 and values below zero are inaudible.
       // Keep normalization here so visual consumers remain platform-agnostic.
@@ -180,9 +190,13 @@ export async function startStreaming(opts: {
           "error",
         );
       }
+      opts.onError?.(recognitionError);
       settle();
     }),
-    ExpoSpeechRecognitionModule.addListener("end", settle),
+    ExpoSpeechRecognitionModule.addListener("end", () => {
+      settle();
+      if (!cancelled) opts.onRecognitionEnd?.();
+    }),
   ];
 
   const cleanup = () => listeners.forEach((listener) => listener.remove());
@@ -196,6 +210,11 @@ export async function startStreaming(opts: {
       addsPunctuation: true,
       iosTaskHint: "dictation",
       iosVoiceProcessingEnabled: true,
+      iosCategory: {
+        category: "playAndRecord",
+        categoryOptions: ["defaultToSpeaker", "allowBluetooth"],
+        mode: "voiceChat",
+      },
       volumeChangeEventOptions: opts.onAudioEnergy
         ? { enabled: true, intervalMillis: 80 }
         : undefined,
@@ -209,6 +228,10 @@ export async function startStreaming(opts: {
     });
     voiceEvent("audio_session_ready", opts.trace, {
       path: "recording",
+      category: "playAndRecord",
+      mode: "voiceChat",
+      options: "defaultToSpeaker,allowBluetooth",
+      route: "system-selected",
       sampleRate: 16_000,
       channels: 1,
       declaredEncoding: "pcm_s16le",

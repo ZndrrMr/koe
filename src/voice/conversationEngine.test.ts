@@ -91,7 +91,7 @@ async function flush(): Promise<void> {
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return;
     await flush();
   }
@@ -151,6 +151,8 @@ function createHarness(
     durationMs: 600,
     audioUri: "file:///captured.m4a",
   };
+  let speechStartError: Error | undefined;
+  let speechStopError: Error | undefined;
   let speechCancelled = 0;
   let recordedText = "injected turn";
   const recordedRequests: Array<{
@@ -167,6 +169,7 @@ function createHarness(
   const savedAudio: Array<{ cacheKey: string; format: string }> = [];
   const synthesizedTexts: string[] = [];
   const playedAudioUris: string[] = [];
+  const recordingDuringPlayback: boolean[] = [];
   let synthesizeUri = (text: string) => `file:///tts-${text}.mp3`;
   const state: ConversationSessionSnapshot = {
     id: null,
@@ -196,9 +199,13 @@ function createHarness(
   const dependencies: ConversationDependencies = {
     speechInput: {
       start: async ({ onEvent, onAudioEnergy }) => {
+        if (speechStartError) throw speechStartError;
         transcriptInputs.push({ onEvent, onAudioEnergy });
         return {
-          stop: async () => speechResult,
+          stop: async () => {
+            if (speechStopError) throw speechStopError;
+            return speechResult;
+          },
           cancel: async () => {
             speechCancelled += 1;
           },
@@ -239,6 +246,7 @@ function createHarness(
         return {
           enqueue: async () => undefined,
           finish: async () => {
+            recordingDuringPlayback.push(state.isRecording);
             queueOptions.onStarted();
             queueOptions.onCaptured(
               `file:///reply-${queueOptions.captureKey}.wav`,
@@ -258,6 +266,7 @@ function createHarness(
       },
       play: async (audioUri, playbackOptions) => {
         playedAudioUris.push(audioUri);
+        recordingDuringPlayback.push(state.isRecording);
         playbackOptions.onStarted?.();
         playbackOptions.onFinished?.();
       },
@@ -342,6 +351,9 @@ function createHarness(
     classifyError: (error) => {
       if (!(error instanceof Error)) return "network";
       if (error.name === "AbortError") return "cancelled";
+      if (error.name === "PermissionDeniedError") return "permissionDenied";
+      if (error.name === "NoSpeechError") return "noSpeech";
+      if (error.name === "AudioInterruptionError") return "audioInterruption";
       if (error.name === "ProviderTimeoutError") return "providerTimeout";
       if (error.name === "ProviderStreamError") return "providerFailure";
       if (error.name === "AudioContractError") return "audioContract";
@@ -377,6 +389,7 @@ function createHarness(
     savedAudio,
     synthesizedTexts,
     playedAudioUris,
+    recordingDuringPlayback,
     transcriptInputs,
     recordedRequests,
     replyRequests,
@@ -401,6 +414,12 @@ function createHarness(
     setSpeechResult(next: typeof speechResult) {
       speechResult = next;
     },
+    setSpeechStartError(error: Error | undefined) {
+      speechStartError = error;
+    },
+    setSpeechStopError(error: Error | undefined) {
+      speechStopError = error;
+    },
     setSynthesizeUri(factory: (text: string) => string) {
       synthesizeUri = factory;
     },
@@ -421,6 +440,196 @@ function turnByRole(
 ): ChatTurn {
   return harness.state.turns.filter((turn) => turn.role === role)[index]!;
 }
+
+test("one start action sustains short and rapid turns without recording tutor playback", async () => {
+  const harness = createHarness();
+  harness.setReplyFactory(({ userTurn }) =>
+    reply(`reply:${userTurn}`, { streamedAudio: true }),
+  );
+
+  await harness.engine.startHandsFree();
+  assert.equal(harness.engine.getState().handsFreeActive, true);
+  assert.equal(harness.engine.getState().phase, "listening");
+
+  harness.transcriptInputs[0]!.onEvent({
+    type: "final",
+    text: "はい",
+    confidence: 0.99,
+  });
+  harness.clock.advance(300);
+  await waitFor(() => harness.transcriptInputs.length === 2);
+
+  assert.equal(harness.engine.getState().phase, "listening");
+  assert.equal(harness.engine.getState().ownership.audioSession, "microphone");
+
+  harness.transcriptInputs[1]!.onEvent({
+    type: "final",
+    text: "すぐ続けます",
+    confidence: 0.98,
+  });
+  harness.clock.advance(300);
+  await waitFor(() => harness.transcriptInputs.length === 3);
+
+  assert.deepEqual(
+    harness.state.turns.map((turn) => [turn.role, turn.textJa]),
+    [
+      ["user", "はい"],
+      ["assistant", "reply:はい"],
+      ["user", "すぐ続けます"],
+      ["assistant", "reply:すぐ続けます"],
+    ],
+  );
+  assert.deepEqual(harness.recordingDuringPlayback, [false, false]);
+  assert.equal(harness.state.voice.phase, "listening");
+});
+
+test("long speech keeps extending the endpoint and hesitant speech gets a wider pause", async () => {
+  const harness = createHarness();
+  await harness.engine.startHandsFree();
+  const input = harness.transcriptInputs[0]!;
+
+  input.onEvent({
+    type: "interim",
+    text: "先週の日曜日",
+    confidence: 0.7,
+  });
+  harness.clock.advance(1_200);
+  input.onEvent({
+    type: "interim",
+    text: "先週の日曜日、朝早く起きて川沿いを",
+    confidence: 0.76,
+  });
+  harness.clock.advance(1_200);
+  assert.equal(harness.replyRequests.length, 0);
+  assert.equal(harness.engine.getState().phase, "listening");
+
+  input.onEvent({
+    type: "interim",
+    text: "先週の日曜日、えっと…",
+    confidence: 0.72,
+  });
+  harness.clock.advance(2_000);
+  assert.equal(harness.replyRequests.length, 0);
+  assert.equal(harness.engine.getState().phase, "listening");
+
+  input.onEvent({
+    type: "final",
+    text: "先週の日曜日、朝早く起きて川沿いを散歩しました",
+    confidence: 0.97,
+  });
+  harness.clock.advance(300);
+  await waitFor(() => harness.transcriptInputs.length === 2);
+
+  assert.equal(
+    turnByRole(harness, "user").textJa,
+    "先週の日曜日、朝早く起きて川沿いを散歩しました",
+  );
+  assert.equal(harness.engine.getState().phase, "listening");
+});
+
+test("no speech and a false start retry quietly while hands-free remains active", async () => {
+  const harness = createHarness();
+  await harness.engine.startHandsFree();
+
+  harness.clock.advance(8_000);
+  await waitFor(() => harness.engine.getState().phase === "idle");
+  assert.equal(harness.state.voice.errorKind, undefined);
+  assert.match(harness.state.voice.message ?? "", /still listening/i);
+  harness.clock.advance(350);
+  await waitFor(() => harness.transcriptInputs.length === 2);
+
+  harness.clock.advance(150);
+  harness.transcriptInputs[1]!.onEvent({ type: "endpoint" });
+  await waitFor(() => harness.engine.getState().phase === "idle");
+  harness.clock.advance(350);
+  await waitFor(() => harness.transcriptInputs.length === 3);
+
+  assert.equal(harness.state.turns.length, 0);
+  assert.equal(harness.engine.getState().phase, "listening");
+  assert.ok(harness.telemetry.includes("hands_free_no_speech"));
+});
+
+test("a recognizer no-speech rejection follows the same quiet retry path", async () => {
+  const harness = createHarness();
+  const error = new Error("nothing recognized");
+  error.name = "NoSpeechError";
+  harness.setSpeechStopError(error);
+
+  await harness.engine.startHandsFree();
+  harness.clock.advance(8_000);
+  await waitFor(() => harness.engine.getState().phase === "idle");
+
+  assert.equal(harness.state.voice.errorKind, undefined);
+  assert.equal(harness.state.turns.length, 0);
+  harness.setSpeechStopError(undefined);
+  harness.clock.advance(350);
+  await waitFor(() => harness.engine.getState().phase === "listening");
+  assert.equal(harness.transcriptInputs.length, 2);
+});
+
+test("permission denial pauses truthfully instead of retrying or creating a turn", async () => {
+  const harness = createHarness();
+  const error = new Error("permission denied");
+  error.name = "PermissionDeniedError";
+  harness.setSpeechStartError(error);
+
+  await harness.engine.startHandsFree();
+
+  assert.equal(harness.engine.getState().phase, "recovery");
+  assert.equal(harness.state.voice.errorKind, "permissionDenied");
+  assert.equal(harness.state.voice.recovery, "openSettings");
+  assert.equal(harness.state.turns.length, 0);
+  assert.equal(harness.state.isRecording, false);
+
+  await harness.engine.interrupt("app");
+  harness.setSpeechStartError(undefined);
+  await harness.engine.resume();
+  assert.equal(harness.engine.getState().phase, "listening");
+  assert.equal(harness.state.voice.errorKind, undefined);
+  assert.equal(harness.transcriptInputs.length, 1);
+});
+
+test("backgrounding before hands-free starts does not invent an interruption", async () => {
+  const harness = createHarness();
+  await harness.engine.start();
+
+  await harness.engine.interrupt("app");
+  await harness.engine.resume();
+
+  assert.equal(harness.engine.getState().phase, "idle");
+  assert.equal(harness.state.voice.errorKind, undefined);
+  assert.equal(harness.transcriptInputs.length, 0);
+});
+
+test("intentional barge-in transfers playback to listening without an error state", async () => {
+  const harness = createHarness();
+  const gate = deferred<void>();
+  harness.setReplyFactory(() =>
+    (async function* () {
+      await gate.promise;
+      yield { type: "text" as const, text: "late reply" };
+      return result("late reply");
+    })(),
+  );
+  await harness.engine.startHandsFree();
+  harness.transcriptInputs[0]!.onEvent({
+    type: "final",
+    text: "first",
+    confidence: 1,
+  });
+  harness.clock.advance(300);
+  await waitFor(() => harness.replyRequests.length === 1);
+  const assistant = turnByRole(harness, "assistant");
+
+  await harness.engine.bargeIn();
+
+  assert.equal(harness.replyRequests[0]!.signal.aborted, true);
+  assert.equal(turnByRole(harness, "assistant").id, assistant.id);
+  assert.equal(turnByRole(harness, "assistant").interrupted, true);
+  assert.equal(harness.engine.getState().phase, "listening");
+  assert.notEqual(harness.state.voice.phase, "recoverableError");
+  gate.resolve();
+});
 
 test("microphone endpoint/final events and injected files share the deterministic multi-turn path", async () => {
   const harness = createHarness({ intro: "1" });
@@ -619,7 +828,7 @@ test("a newer turn cancels the old run and rejects its stale stream events", asy
 
 test("audio interruption cancels capture, rejects late transcripts, and cleanly resumes", async () => {
   const harness = createHarness();
-  await harness.engine.startListening();
+  await harness.engine.startHandsFree();
   const firstInput = harness.transcriptInputs[0]!;
   firstInput.onEvent({ type: "interim", text: "before", confidence: 0.7 });
 

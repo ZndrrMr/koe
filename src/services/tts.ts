@@ -278,7 +278,7 @@ export async function play(
       category: "playback",
       mode: "spokenAudio",
       options: "none",
-      route: "speaker",
+      route: "system-selected",
     });
     if (opts?.rate) player.setPlaybackRate(opts.rate);
     currentPlayer = player;
@@ -567,7 +567,7 @@ export class PCMPlaybackQueue {
       category: "playback",
       mode: "spokenAudio",
       options: "none",
-      route: "speaker",
+      route: "system-selected",
       sampleRate,
       channels: this.captureChannels,
     });

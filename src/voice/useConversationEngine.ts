@@ -43,6 +43,8 @@ function classifyError(error: unknown): ConversationFailure {
         return "permissionDenied";
       case "network":
         return "network";
+      case "no-speech":
+        return "noSpeech";
       case "interrupted":
         return "audioInterruption";
       case "cancelled":
@@ -54,7 +56,10 @@ function classifyError(error: unknown): ConversationFailure {
   if (error instanceof ProviderTimeoutError) return "providerTimeout";
   if (error instanceof ProviderStreamError) return "providerFailure";
   if (error instanceof AudioContractError) return "audioContract";
-  if (error instanceof AudioPlaybackError) return "playbackFailure";
+  if (error instanceof AudioPlaybackError)
+    return error.kind === "interrupted"
+      ? "audioInterruption"
+      : "playbackFailure";
   if (error instanceof NoPlayableAudioError) return "playbackFailure";
   if (error instanceof RecordedAudioInputError) {
     return error.kind === "network" || error.kind === "provider"
@@ -87,6 +92,10 @@ function createDependencies(): ConversationDependencies {
           languageHint: "ja,en",
           trace,
           onAudioEnergy,
+          onSpeechStart: () => onEvent({ type: "speechStart" }),
+          onSpeechEnd: () => onEvent({ type: "speechEnd" }),
+          onRecognitionEnd: () => onEvent({ type: "endpoint" }),
+          onError: (error) => onEvent({ type: "failure", error }),
           onChunk: (chunk) =>
             onEvent({
               type: chunk.isFinal ? "final" : "interim",
@@ -188,11 +197,12 @@ export function useConversationEngine(sessionId: string, intro?: string) {
     });
     let previous = AppState.currentState;
     const subscription = AppState.addEventListener("change", (next) => {
-      const wasBackground = previous === "background";
+      const wasInactive = previous !== "active";
+      const isInactive = next !== "active";
       previous = next;
-      if (next === "background") {
+      if (isInactive && !wasInactive) {
         void engine.interrupt("app");
-      } else if (next === "active" && wasBackground) {
+      } else if (next === "active" && wasInactive) {
         void engine.resume();
       }
     });

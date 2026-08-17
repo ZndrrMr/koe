@@ -5,6 +5,11 @@ import type { VoiceLatency, VoiceLifecycle, VoicePhase } from "./lifecycle";
 import type { VoiceTraceContext } from "../utils/telemetry";
 import { VoiceLatencyTracker, voiceError } from "./lifecycle";
 import { ResponseRunController, type ResponseRun } from "./responseRun";
+import {
+  HANDS_FREE_ENDPOINT,
+  endpointDelayMs,
+  type EndpointSignal,
+} from "./turnTaking";
 
 export type ConversationPhase =
   | "idle"
@@ -29,6 +34,7 @@ export type ConversationOwnership = {
 
 export type ConversationEngineState = {
   phase: ConversationPhase;
+  handsFreeActive: boolean;
   ownership: ConversationOwnership;
   draftTranscript: string;
   draftAudioUri?: string;
@@ -43,7 +49,10 @@ export type TranscriptInputEvent =
       text: string;
       confidence: number;
     }
-  | { type: "endpoint" };
+  | { type: "speechStart" }
+  | { type: "speechEnd" }
+  | { type: "endpoint" }
+  | { type: "failure"; error: unknown };
 
 export type SpeechInputHandle = {
   stop: () => Promise<{
@@ -77,8 +86,17 @@ export type ConversationSessionSnapshot = {
 
 type TimerHandle = unknown;
 
+type EndpointReason =
+  | "manual"
+  | "native-endpoint"
+  | "initial-silence"
+  | "audio-silence"
+  | "transcript-silence"
+  | "utterance-limit";
+
 export type ConversationFailure =
   | "permissionDenied"
+  | "noSpeech"
   | "network"
   | "sttFailure"
   | "providerFailure"
@@ -267,6 +285,7 @@ const EMPTY_OWNERSHIP: ConversationOwnership = {
 export class ConversationEngine {
   private state: ConversationEngineState = {
     phase: "idle",
+    handsFreeActive: false,
     ownership: EMPTY_OWNERSHIP,
     draftTranscript: "",
     audioEnergy: 0,
@@ -281,6 +300,10 @@ export class ConversationEngine {
   private eventGeneration = 0;
   private failedReply?: FailedReply;
   private responseQueue?: PlaybackQueue;
+  private stopPromise?: Promise<void>;
+  private stoppingCaptureToken?: number;
+  private endpointTimer?: TimerHandle;
+  private utteranceLimitTimer?: TimerHandle;
   private settleTimer?: TimerHandle;
   private startPromise?: Promise<void>;
   private closeoutPreparation: Promise<unknown> = Promise.resolve();
@@ -322,6 +345,60 @@ export class ConversationEngine {
     return this.startPromise;
   }
 
+  async startHandsFree(): Promise<void> {
+    if (this.disposed) return;
+    this.publish({ handsFreeActive: true });
+    this.dependencies.telemetry(
+      "hands_free_started",
+      this.dependencies.session.snapshot().traceContext,
+      {
+        initialSilenceMs: HANDS_FREE_ENDPOINT.initialSilenceMs,
+        interimSilenceMs: HANDS_FREE_ENDPOINT.interimSilenceMs,
+        hesitationSilenceMs: HANDS_FREE_ENDPOINT.hesitationSilenceMs,
+        finalResultGraceMs: HANDS_FREE_ENDPOINT.finalResultGraceMs,
+      },
+    );
+    if (this.state.phase === "recovery") {
+      await this.recover();
+      return;
+    }
+    await this.startListening();
+  }
+
+  async pauseHandsFree(): Promise<void> {
+    if (!this.state.handsFreeActive) return;
+    this.publish({ handsFreeActive: false });
+    this.resumeListening = false;
+    this.clearCaptureTimers();
+    this.dependencies.telemetry(
+      "hands_free_paused",
+      this.dependencies.session.snapshot().traceContext,
+    );
+    const capture = this.capture;
+    if (!capture) return;
+    ++this.eventGeneration;
+    this.capture = undefined;
+    this.dependencies.session.setRecording(false);
+    this.dependencies.session.setVoicePhase("idle", { interimTranscript: "" });
+    if (this.state.phase === "listening") {
+      this.transition("resuming");
+    }
+    if (LEGAL_TRANSITIONS[this.state.phase].includes("idle"))
+      this.transition("idle");
+    this.publish({
+      draftTranscript: "",
+      draftAudioUri: undefined,
+      audioEnergy: 0,
+      ownership: EMPTY_OWNERSHIP,
+    });
+    await capture.ready.then((handle) => handle.cancel()).catch(() => {});
+  }
+
+  async bargeIn(): Promise<void> {
+    this.publish({ handsFreeActive: true });
+    await this.startListening();
+  }
+
   async startListening(): Promise<void> {
     await this.start();
     if (
@@ -332,10 +409,10 @@ export class ConversationEngine {
       return;
     if (this.dependencies.session.snapshot().isRecording) return;
 
-    const epoch = ++this.eventGeneration;
     const wasResponding =
       this.responseRuns.hasActiveRun() ||
       this.dependencies.session.snapshot().isStreaming;
+    const epoch = wasResponding ? ++this.eventGeneration : this.eventGeneration;
     if (wasResponding) {
       this.dependencies.telemetry(
         "response_cancelled",
@@ -375,8 +452,17 @@ export class ConversationEngine {
     const ready = this.dependencies.speechInput.start({
       trace,
       onAudioEnergy: (energy) => {
-        if (this.isCaptureCurrent(token, epoch))
+        if (this.isCaptureCurrent(token, epoch)) {
           this.publish({ audioEnergy: energy });
+          if (energy >= HANDS_FREE_ENDPOINT.audibleEnergy) {
+            this.scheduleEndpoint(
+              token,
+              epoch,
+              HANDS_FREE_ENDPOINT.interimSilenceMs,
+              "audio-silence",
+            );
+          }
+        }
       },
       onEvent: (event) => this.receiveTranscriptEvent(token, epoch, event),
     });
@@ -388,6 +474,13 @@ export class ConversationEngine {
       finalTranscript: "",
     };
     this.capture = capture;
+    this.scheduleEndpoint(
+      token,
+      epoch,
+      HANDS_FREE_ENDPOINT.initialSilenceMs,
+      "initial-silence",
+    );
+    this.scheduleUtteranceLimit(token, epoch);
     try {
       const handle = await ready;
       if (!this.isCaptureCurrent(token, epoch)) {
@@ -398,6 +491,7 @@ export class ConversationEngine {
     } catch (error) {
       if (!this.isCaptureCurrent(token, epoch)) return;
       this.capture = undefined;
+      this.clearCaptureTimers();
       this.dependencies.session.setRecording(false);
       this.publish({
         audioEnergy: 0,
@@ -411,10 +505,31 @@ export class ConversationEngine {
     }
   }
 
-  async stopListening(): Promise<void> {
+  async stopListening(reason: EndpointReason = "manual"): Promise<void> {
+    const captureToken = this.capture?.token;
+    if (this.stopPromise) {
+      if (this.stoppingCaptureToken === captureToken) return this.stopPromise;
+      await this.stopPromise;
+      return this.stopListening(reason);
+    }
+    const operation = this.finishListening(reason);
+    this.stopPromise = operation;
+    this.stoppingCaptureToken = captureToken;
+    try {
+      await operation;
+    } finally {
+      if (this.stopPromise === operation) {
+        this.stopPromise = undefined;
+        this.stoppingCaptureToken = undefined;
+      }
+    }
+  }
+
+  private async finishListening(reason: EndpointReason): Promise<void> {
     const capture = this.capture;
     if (!capture || this.state.phase !== "listening") return;
     const epoch = this.eventGeneration;
+    this.clearCaptureTimers();
     this.transition("endpoint");
     this.dependencies.session.setRecording(false);
     this.publish({
@@ -433,14 +548,15 @@ export class ConversationEngine {
         await handle.cancel();
         return;
       }
-      if (duration < 400) {
+      if (
+        duration < HANDS_FREE_ENDPOINT.minimumCaptureMs &&
+        !capture.finalTranscript.trim() &&
+        !this.state.draftTranscript.trim()
+      ) {
         await handle.cancel();
         if (!this.isCaptureCurrent(capture.token, epoch, "endpoint")) return;
         this.capture = undefined;
-        this.dependencies.session.setVoicePhase("idle", {
-          interimTranscript: "",
-        });
-        this.transition("idle");
+        await this.handleNoSpeech(reason, capture.traceTurnId);
         return;
       }
 
@@ -448,21 +564,33 @@ export class ConversationEngine {
       if (!this.isCaptureCurrent(capture.token, epoch, "endpoint")) return;
       this.capture = undefined;
       this.transition("finalizing");
-      await this.finalizeTranscript(
+      const transcript =
         result.fullText ||
-          capture.finalTranscript ||
-          this.state.draftTranscript,
+        capture.finalTranscript ||
+        this.state.draftTranscript;
+      if (!transcript.trim()) {
+        await this.handleNoSpeech(reason, capture.traceTurnId);
+        return;
+      }
+      await this.finalizeTranscript(
+        transcript,
         result.audioUri || undefined,
         capture.traceTurnId,
-        this.dependencies.shouldAutoSend({
-          intro: this.intro,
-          existingTurnCount: this.dependencies.session.snapshot().turns.length,
-          transcript: result.fullText,
-        }),
+        this.state.handsFreeActive ||
+          this.dependencies.shouldAutoSend({
+            intro: this.intro,
+            existingTurnCount:
+              this.dependencies.session.snapshot().turns.length,
+            transcript,
+          }),
       );
     } catch (error) {
       if (!this.isEpochCurrent(epoch)) return;
       this.capture = undefined;
+      if (this.dependencies.classifyError(error) === "noSpeech") {
+        await this.handleNoSpeech(reason, capture.traceTurnId);
+        return;
+      }
       this.reportSpeechFailure(
         error,
         "final",
@@ -647,6 +775,7 @@ export class ConversationEngine {
     this.publish({
       ownership: { ...this.state.ownership, retry: null },
     });
+    if (this.state.handsFreeActive) await this.startListening();
   }
 
   async interrupt(kind: "app" | "audio"): Promise<void> {
@@ -656,7 +785,19 @@ export class ConversationEngine {
       this.disposed
     )
       return;
-    this.resumeListening ||= this.state.phase === "listening";
+    if (this.state.phase === "recovery") return;
+    const session = this.dependencies.session.snapshot();
+    if (
+      (this.state.phase === "idle" || this.state.phase === "start") &&
+      !this.state.handsFreeActive &&
+      !this.capture &&
+      !this.responseRuns.hasActiveRun() &&
+      !session.isRecording &&
+      !session.isStreaming
+    )
+      return;
+    this.resumeListening ||=
+      this.state.handsFreeActive || this.state.phase === "listening";
     ++this.eventGeneration;
     const capture = this.capture;
     this.capture = undefined;
@@ -669,6 +810,7 @@ export class ConversationEngine {
     }
     const queue = this.responseQueue;
     this.responseQueue = undefined;
+    this.clearCaptureTimers();
     this.dependencies.session.setRecording(false);
     this.dependencies.session.setStreaming(false);
     this.transition("recovery");
@@ -693,7 +835,10 @@ export class ConversationEngine {
 
   async resume(): Promise<void> {
     if (this.state.phase !== "recovery" || this.disposed) return;
-    const resumeListening = this.resumeListening;
+    const errorKind = this.dependencies.session.snapshot().voice.errorKind;
+    if (errorKind !== "audioInterruption" && errorKind !== "permissionDenied")
+      return;
+    const resumeListening = this.resumeListening || this.state.handsFreeActive;
     this.resumeListening = false;
     this.transition("resuming");
     this.dependencies.session.setVoicePhase("idle", { interimTranscript: "" });
@@ -709,10 +854,16 @@ export class ConversationEngine {
   async startPronunciationRetry(turnId: string): Promise<void> {
     this.dependencies.haptics.tap();
     ++this.eventGeneration;
+    const capture = this.capture;
+    this.capture = undefined;
+    this.clearCaptureTimers();
+    this.dependencies.session.setRecording(false);
+    await capture?.ready.then((handle) => handle.cancel()).catch(() => {});
     await this.cancelResponse("pronunciation-retry");
     if (
       this.state.phase === "understanding" ||
-      this.state.phase === "speaking"
+      this.state.phase === "speaking" ||
+      this.state.phase === "listening"
     ) {
       this.transition("resuming");
     }
@@ -726,6 +877,7 @@ export class ConversationEngine {
       draftAudioUri: undefined,
       ownership: EMPTY_OWNERSHIP,
     });
+    await this.startListening();
   }
 
   async playAudio(audioUri: string): Promise<void> {
@@ -747,6 +899,7 @@ export class ConversationEngine {
     this.capture = undefined;
     const queue = this.responseQueue;
     this.responseQueue = undefined;
+    this.clearCaptureTimers();
     this.clearSettleTimer();
     this.dependencies.telemetry(
       "session_cancelled",
@@ -758,6 +911,7 @@ export class ConversationEngine {
     this.dependencies.session.setStreaming(false);
     this.transition("ending");
     this.publish({
+      handsFreeActive: false,
       showCoda: true,
       audioEnergy: 0,
       ownership: EMPTY_OWNERSHIP,
@@ -785,8 +939,9 @@ export class ConversationEngine {
     }
     this.transition("resuming");
     this.dependencies.session.setVoicePhase("idle", { interimTranscript: "" });
-    this.publish({ showCoda: false });
+    this.publish({ showCoda: false, handsFreeActive: true });
     this.transition("idle");
+    void this.startListening();
   }
 
   async endImmediately(): Promise<void> {
@@ -822,6 +977,7 @@ export class ConversationEngine {
     this.dependencies.session.setRecording(false);
     this.dependencies.session.setStreaming(false);
     this.clearSettleTimer();
+    this.clearCaptureTimers();
     const capture = this.capture;
     this.capture = undefined;
     void capture?.ready.then((handle) => handle.cancel()).catch(() => {});
@@ -836,8 +992,25 @@ export class ConversationEngine {
     event: TranscriptInputEvent,
   ): void {
     if (!this.isCaptureCurrent(token, epoch)) return;
+    if (event.type === "failure") {
+      void this.failActiveCapture(token, epoch, event.error);
+      return;
+    }
     if (event.type === "endpoint") {
-      void this.stopListening();
+      void this.stopListening("native-endpoint");
+      return;
+    }
+    if (event.type === "speechStart") {
+      this.scheduleEndpoint(
+        token,
+        epoch,
+        HANDS_FREE_ENDPOINT.interimSilenceMs,
+        "audio-silence",
+      );
+      return;
+    }
+    if (event.type === "speechEnd") {
+      this.scheduleTranscriptEndpoint(token, epoch, "speechEnd");
       return;
     }
     const capture = this.capture;
@@ -851,6 +1024,7 @@ export class ConversationEngine {
     }
     this.publish({ draftTranscript: event.text });
     this.dependencies.session.setInterimTranscript(event.text);
+    this.scheduleTranscriptEndpoint(token, epoch, event.type, event.text);
   }
 
   private async finalizeTranscript(
@@ -1061,6 +1235,9 @@ export class ConversationEngine {
       });
       this.responseQueue = undefined;
       this.dependencies.haptics.fail();
+      const failure = this.dependencies.classifyError(error);
+      this.resumeListening =
+        failure === "audioInterruption" && this.state.handsFreeActive;
       this.transition("recovery");
       this.publish({
         audioEnergy: 0,
@@ -1069,7 +1246,13 @@ export class ConversationEngine {
           retry: input.assistantTurnId,
         },
       });
-      this.dependencies.session.setVoice(voiceError("playbackFailure"));
+      this.dependencies.session.setVoice(
+        voiceError(
+          failure === "audioInterruption"
+            ? "audioInterruption"
+            : "playbackFailure",
+        ),
+      );
     };
     const handlePlaybackStarted = () => {
       if (!isCurrent()) return;
@@ -1285,14 +1468,18 @@ export class ConversationEngine {
         streaming: false,
       });
       const failure = this.dependencies.classifyError(error);
+      this.resumeListening =
+        failure === "audioInterruption" && this.state.handsFreeActive;
       this.enterRecovery(
         failure === "providerTimeout"
           ? "providerTimeout"
-          : failure === "audioContract" || failure === "playbackFailure"
-            ? "playbackFailure"
-            : failure === "providerFailure"
-              ? "providerFailure"
-              : "network",
+          : failure === "audioInterruption"
+            ? "audioInterruption"
+            : failure === "audioContract" || failure === "playbackFailure"
+              ? "playbackFailure"
+              : failure === "providerFailure"
+                ? "providerFailure"
+                : "network",
       );
       this.publish({
         ownership: { ...this.state.ownership, retry: input.assistantTurnId },
@@ -1367,6 +1554,7 @@ export class ConversationEngine {
           this.dependencies.session.setVoicePhase("idle");
         }
         this.transition("idle");
+        if (this.state.handsFreeActive) void this.startListening();
       }, 1_400);
     } else {
       this.enterRecovery("sttFailure");
@@ -1425,6 +1613,7 @@ export class ConversationEngine {
           this.dependencies.session.setVoicePhase("idle");
         }
         this.transition("idle");
+        if (this.state.handsFreeActive) void this.startListening();
       }, 1_400);
       return;
     }
@@ -1434,7 +1623,11 @@ export class ConversationEngine {
     } else {
       this.dependencies.session.setVoicePhase("idle");
     }
-    this.transition("idle");
+    if (this.state.handsFreeActive) {
+      void this.startListening();
+    } else {
+      this.transition("idle");
+    }
   }
 
   private async cancelResponse(reason: string): Promise<void> {
@@ -1522,6 +1715,141 @@ export class ConversationEngine {
         retry: this.failedReply?.assistantTurnId ?? null,
       },
     });
+  }
+
+  private scheduleTranscriptEndpoint(
+    token: number,
+    epoch: number,
+    signal: EndpointSignal,
+    transcript = "",
+  ): void {
+    this.scheduleEndpoint(
+      token,
+      epoch,
+      endpointDelayMs(signal, transcript),
+      "transcript-silence",
+    );
+  }
+
+  private scheduleEndpoint(
+    token: number,
+    epoch: number,
+    delayMs: number,
+    reason: "initial-silence" | "audio-silence" | "transcript-silence",
+  ): void {
+    if (this.endpointTimer !== undefined) {
+      this.dependencies.clock.clearTimer(this.endpointTimer);
+    }
+    this.endpointTimer = this.dependencies.clock.setTimer(() => {
+      this.endpointTimer = undefined;
+      if (!this.isCaptureCurrent(token, epoch)) return;
+      this.dependencies.telemetry(
+        "hands_free_endpoint_detected",
+        { sessionId: this.sessionId, turnId: this.capture?.traceTurnId },
+        { reason, delayMs },
+      );
+      void this.stopListening(reason);
+    }, delayMs);
+  }
+
+  private scheduleUtteranceLimit(token: number, epoch: number): void {
+    if (this.utteranceLimitTimer !== undefined) {
+      this.dependencies.clock.clearTimer(this.utteranceLimitTimer);
+    }
+    this.utteranceLimitTimer = this.dependencies.clock.setTimer(() => {
+      this.utteranceLimitTimer = undefined;
+      if (!this.isCaptureCurrent(token, epoch)) return;
+      this.dependencies.telemetry(
+        "hands_free_endpoint_detected",
+        { sessionId: this.sessionId, turnId: this.capture?.traceTurnId },
+        {
+          reason: "utterance-limit",
+          delayMs: HANDS_FREE_ENDPOINT.maximumUtteranceMs,
+        },
+        "warn",
+      );
+      void this.stopListening("utterance-limit");
+    }, HANDS_FREE_ENDPOINT.maximumUtteranceMs);
+  }
+
+  private clearCaptureTimers(): void {
+    if (this.endpointTimer !== undefined) {
+      this.dependencies.clock.clearTimer(this.endpointTimer);
+      this.endpointTimer = undefined;
+    }
+    if (this.utteranceLimitTimer !== undefined) {
+      this.dependencies.clock.clearTimer(this.utteranceLimitTimer);
+      this.utteranceLimitTimer = undefined;
+    }
+  }
+
+  private async failActiveCapture(
+    token: number,
+    epoch: number,
+    error: unknown,
+  ): Promise<void> {
+    if (!this.isCaptureCurrent(token, epoch)) return;
+    const capture = this.capture;
+    if (!capture) return;
+    ++this.eventGeneration;
+    this.capture = undefined;
+    this.clearCaptureTimers();
+    this.dependencies.session.setRecording(false);
+    this.publish({
+      audioEnergy: 0,
+      ownership: EMPTY_OWNERSHIP,
+    });
+    await capture.ready.then((handle) => handle.cancel()).catch(() => {});
+    if (this.dependencies.classifyError(error) === "noSpeech") {
+      this.transition("endpoint");
+      await this.handleNoSpeech("native-endpoint", capture.traceTurnId);
+      return;
+    }
+    this.reportSpeechFailure(error, "final", {
+      sessionId: this.sessionId,
+      turnId: capture.traceTurnId,
+    });
+  }
+
+  private async handleNoSpeech(
+    reason: string,
+    traceTurnId: string,
+  ): Promise<void> {
+    this.capture = undefined;
+    this.dependencies.session.setRecording(false);
+    this.publish({
+      draftTranscript: "",
+      draftAudioUri: undefined,
+      audioEnergy: 0,
+      ownership: EMPTY_OWNERSHIP,
+    });
+    this.dependencies.telemetry(
+      "hands_free_no_speech",
+      { sessionId: this.sessionId, turnId: traceTurnId },
+      { reason, automaticRetry: this.state.handsFreeActive },
+    );
+    this.dependencies.session.setVoicePhase("idle", {
+      interimTranscript: "",
+      message: this.state.handsFreeActive
+        ? "No speech yet. Koe is still listening."
+        : undefined,
+    });
+    if (this.state.phase === "endpoint" || this.state.phase === "finalizing") {
+      this.transition("idle");
+    }
+    if (!this.state.handsFreeActive || this.disposed) return;
+    const epoch = this.eventGeneration;
+    this.endpointTimer = this.dependencies.clock.setTimer(() => {
+      this.endpointTimer = undefined;
+      if (
+        this.disposed ||
+        !this.state.handsFreeActive ||
+        !this.isEpochCurrent(epoch) ||
+        this.state.phase !== "idle"
+      )
+        return;
+      void this.startListening();
+    }, HANDS_FREE_ENDPOINT.noSpeechRetryMs);
   }
 
   private updateLatency(

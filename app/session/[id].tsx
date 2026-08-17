@@ -46,21 +46,32 @@ import {
 export default function SessionScreen() {
   const router = useRouter();
   const palette = useConversationPalette();
-  const { id, intro } = useLocalSearchParams<{
+  const { id, intro, autostart } = useLocalSearchParams<{
     id: string;
     intro?: string;
+    autostart?: string;
   }>();
   const session = useSession();
   const { engine, state: engineState } = useConversationEngine(id, intro);
-  const { draftTranscript, audioEnergy, retryingTurnId, showCoda } =
-    engineState;
+  const {
+    draftTranscript,
+    audioEnergy,
+    retryingTurnId,
+    showCoda,
+    handsFreeActive,
+  } = engineState;
   const [dismissedCorrectionId, setDismissedCorrectionId] = useState<
     string | null
   >(null);
   const diagnosticRunStartedRef = useRef(false);
+  const autoStartAppliedRef = useRef(false);
 
   useEffect(() => {
     void engine.start().then(() => {
+      if (autostart === "1" && !autoStartAppliedRef.current) {
+        autoStartAppliedRef.current = true;
+        void engine.startHandsFree();
+      }
       if (!__DEV__) return;
       const reviewPhase = process.env.EXPO_PUBLIC_KOE_REVIEW_PHASE as
         | VoiceLifecycle["phase"]
@@ -106,27 +117,35 @@ export default function SessionScreen() {
         engine.setReviewState({ showCoda: true });
       }
     });
-  }, [engine]);
+  }, [autostart, engine]);
 
   useEffect(() => {
-    const injectionUri = process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_URI;
-    if (!__DEV__ || !injectionUri || diagnosticRunStartedRef.current) {
+    const injectionUris = (
+      process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_URIS ??
+      process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_URI ??
+      ""
+    )
+      .split("|")
+      .map((uri) => uri.trim())
+      .filter(Boolean);
+    if (!__DEV__ || !injectionUris.length || diagnosticRunStartedRef.current) {
       return;
     }
     diagnosticRunStartedRef.current = true;
-    void engine.injectRecordedAudio({
-      uri: injectionUri,
-      filename: process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_FILENAME,
-      mimeType: process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_MIME_TYPE,
-    });
+    void (async () => {
+      for (const uri of injectionUris) {
+        await engine.injectRecordedAudio({
+          uri,
+          filename:
+            injectionUris.length === 1
+              ? process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_FILENAME
+              : decodeURIComponent(new URL(uri).pathname.split("/").pop()!),
+          mimeType: process.env.EXPO_PUBLIC_KOE_INJECT_AUDIO_MIME_TYPE,
+        });
+      }
+    })();
   }, [engine]);
 
-  const onPressIn = () => {
-    void engine.startListening();
-  };
-  const onPressOut = () => {
-    void engine.stopListening();
-  };
   const submitTranscript = () => {
     void engine.submitTranscript();
   };
@@ -161,6 +180,17 @@ export default function SessionScreen() {
   const canInterrupt = ["understanding", "firstReply", "speaking"].includes(
     session.voice.phase,
   );
+  const handleHandsFreeControl = () => {
+    if (session.voice.phase === "recoverableError") {
+      void engine.recover();
+    } else if (canInterrupt) {
+      void engine.bargeIn();
+    } else if (handsFreeActive) {
+      void engine.pauseHandsFree();
+    } else {
+      void engine.startHandsFree();
+    }
+  };
 
   const latestTurn = [...session.turns]
     .reverse()
@@ -313,16 +343,10 @@ export default function SessionScreen() {
 
       <View style={[styles.speakDock, { borderColor: palette.hairline }]}>
         <MicButton
-          recording={session.isRecording}
-          onPressIn={onPressIn}
-          onPressOut={onPressOut}
-          prompt={
-            retryTarget
-              ? "Hold to retry the highlighted phrase"
-              : canInterrupt
-                ? "Hold to interrupt"
-                : undefined
-          }
+          active={handsFreeActive}
+          phase={engineState.phase}
+          recovery={session.voice.recovery}
+          onPress={handleHandsFreeControl}
           palette={palette}
         />
       </View>
@@ -532,7 +556,7 @@ function FirstExchangePrompt({ palette }: { palette: ConversationPalette }) {
     <View
       accessible
       accessibilityRole="summary"
-      accessibilityLabel="Your first exchange. Hold the microphone, say a line, then release. Koe will answer and show one sound to tune. You can speak Japanese or English. The first hold asks for microphone and speech recognition access."
+      accessibilityLabel="Your first exchange. Tap Start once, then speak naturally. Koe will answer and listen again automatically. You can speak Japanese or English. The first start asks for microphone and speech recognition access."
       style={styles.firstExchange}
     >
       <Text style={[styles.firstExchangeLabel, { color: palette.proof }]}>
@@ -542,7 +566,7 @@ function FirstExchangePrompt({ palette }: { palette: ConversationPalette }) {
         こんにちは
       </Text>
       <Text style={[styles.firstExchangeInstruction, { color: palette.ink }]}>
-        Hold the mic, say a line, then release.
+        Tap Start once, then speak naturally.
       </Text>
       <Text style={[styles.firstExchangeDetail, { color: palette.muted }]}>
         Say this, or start in English. Koe will answer and show one sound to
@@ -550,7 +574,7 @@ function FirstExchangePrompt({ palette }: { palette: ConversationPalette }) {
       </Text>
       <View style={[styles.permissionNote, { borderColor: palette.hairline }]}>
         <Text style={[styles.permissionText, { color: palette.muted }]}>
-          The first hold asks for microphone and speech recognition access.
+          The first start asks for microphone and speech recognition access.
         </Text>
       </View>
     </View>

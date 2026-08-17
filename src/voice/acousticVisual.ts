@@ -29,7 +29,7 @@ export const ACOUSTIC_PRESENTATION: Record<VoicePhase, AcousticPresentation> = {
     eyebrow: "VOICE / 01",
     titleJa: "どうぞ",
     titleEn: "Ready when you are",
-    accessibilityLabel: "Ready. Hold the speak control and talk.",
+    accessibilityLabel: "Ready. Tap Start once, then speak naturally.",
     shape: "resting",
     liveEnergy: false,
     processing: false,
