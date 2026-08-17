@@ -1,0 +1,368 @@
+{
+  "schemaVersion": 1,
+  "suiteVersion": "1.0.0",
+  "provenance": "Approved golden outputs shaped like recorded provider responses. Fixture request IDs are stable replay identities, not claims of a live capture. Semantic quality is graded from reply text; deterministic audio handling uses the checked-in representative PCM speech fixture.",
+  "recordedEvaluator": {
+    "id": "koe-conversation-quality",
+    "model": "OpenAI Codex (GPT-5 family)",
+    "modelVersion": "axis-agent-session-85211854-1129-423C-A809-D845CF91F94E",
+    "promptVersion": "koe-conversation-quality-2026-08-17.v1",
+    "recordedAt": "2026-08-17T01:30:00Z"
+  },
+  "promptContractHashes": {
+    "tutor": "0acc933cf00b38a84cdca2aca7436ef68d609d0dbf87fcfdcc62347f0020e0aa",
+    "feedbackTemplate": "cb4e982650160bd9d3eac035c2116b87342a988f589959b75ee1e95bc1fde39c",
+    "evaluatorTemplate": "33e23ae6ea1538753f73a02d38cb37048da500d54a4b247e0cc5396616c76cbe"
+  },
+  "replyAudioFixture": {
+    "path": "shared/fixtures/inworldAudioContract.json",
+    "jsonPointer": "/routerStream/audioBase64",
+    "sha256": "bc50f3d7136ca44948375b4bab9d1dcd76e0639abf156807e9116f9af24857c9",
+    "encoding": "pcm_s16le",
+    "sampleRate": 48000,
+    "channels": 1,
+    "byteCount": 7680,
+    "provenance": "representative-speech-contract-fixture"
+  },
+  "standardLifecycleTrace": [
+    "recorded_audio_validated",
+    "stt_final",
+    "understanding",
+    "provider_request_started",
+    "provider_response",
+    "speaking",
+    "feedback",
+    "resuming"
+  ],
+  "standardProviderTrace": [
+    {
+      "stage": "transcription",
+      "provider": "Soniox",
+      "model": "stt-async-v5",
+      "status": 200,
+      "mode": "recorded-fixture"
+    },
+    {
+      "stage": "conversation",
+      "provider": "Inworld Router",
+      "model": "auto",
+      "status": 200,
+      "mode": "recorded-fixture"
+    },
+    {
+      "stage": "feedback",
+      "provider": "Gemini",
+      "model": "gemini-3.1-flash-lite-preview",
+      "status": 200,
+      "mode": "recorded-fixture"
+    }
+  ],
+  "defaultPassingScores": {
+    "responseRelevance": 5,
+    "naturalness": 5,
+    "languageChoice": 5,
+    "conversationalContinuity": 5,
+    "tutoringJudgment": 5,
+    "transcriptGrounding": 5,
+    "contextStability": 5
+  },
+  "results": [
+    {
+      "scenarioId": "getting-acquainted",
+      "turns": [
+        {
+          "replyText": "緊張しているんですね。無理せず、今日はどんな一日でしたか？",
+          "feedback": {
+            "translations": {
+              "user": "Hello. I'm a little nervous today.",
+              "tutor": "You're feeling nervous. No pressure—what kind of day have you had?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Acknowledges the learner's nervousness in Japanese and offers one low-pressure conversational opening without correction."
+        },
+        {
+          "replyText": "川の花びらと静かな喫茶店、素敵な朝ですね。今年やってみたいことの中で、一番楽しみなのは何ですか？",
+          "feedback": {
+            "translations": {
+              "user": "Last Sunday I walked by the river, stopped at a quiet cafe, and wrote what I want to try this year.",
+              "tutor": "The petals on the river and the quiet cafe sound like a lovely morning. Which thing you wrote down are you most excited about?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Selects concrete details from the long story and asks one relevant follow-up with no lesson detour."
+        },
+        {
+          "replyText": "大阪で友達とお好み焼きを食べたんですね。どんなお好み焼きが好きですか？",
+          "feedback": {
+            "translations": {
+              "user": "Um, yesterday I went to Kyoto—no, Osaka—and met a friend around three, then ate okonomiyaki.",
+              "tutor": "So you ate okonomiyaki with your friend in Osaka. What kind of okonomiyaki do you like?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Uses the learner's final Osaka self-correction and continues naturally without claiming a cleaner transcript than was supplied."
+        }
+      ]
+    },
+    {
+      "scenarioId": "learner-directed-support",
+      "turns": [
+        {
+          "replyText": "友達と映画を見たんですね。どんな映画でしたか？",
+          "feedback": {
+            "translations": {
+              "user": "Yesterday I met a friend and we watched a movie together. It was a lot of fun.",
+              "tutor": "You watched a movie with your friend. What kind of movie was it?"
+            },
+            "corrections": {
+              "particles": [
+                {
+                  "original": "友達を会って",
+                  "corrected": "友達に会って",
+                  "explanation": "会う相手には助詞「に」を使います。"
+                }
+              ],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "The spoken reply responds to the movie story while the separate feedback selects exactly one meaningfully useful particle correction."
+        },
+        {
+          "replyText": "わかりました。これからは助詞と敬語の間違いを見つけたら、会話を止めて短く直します。",
+          "feedback": {
+            "translations": {
+              "user": "From now on, don't overlook my mistakes. You can stop the conversation to strictly correct particles and honorifics.",
+              "tutor": "Understood. From now on, when I notice particle or honorific mistakes, I'll pause and correct them briefly."
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Acknowledges the explicit correction preference without inventing an error in the preference request itself."
+        },
+        {
+          "replyText": "「わけではない」は、全部を否定せず『そう見えるけれど、実際は少し違う』と説明するときに使います。たとえば「嫌いなわけではない」と「行きたくないわけではない」です。",
+          "feedback": {
+            "translations": {
+              "user": "I still don't understand how to use wake dewa nai. Please teach me with two short examples.",
+              "tutor": "Wake dewa nai is used to avoid denying everything and explain that the reality is a little different. For example, it isn't that I dislike it, and it isn't that I don't want to go."
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Directly resolves the stated confusion with the requested concise explanation and exactly two examples."
+        },
+        {
+          "replyText": "会話では「結局、家にいることになった」が自然です。自分でそう決めた感じなら「結局、家にいることにした」と言えます。",
+          "feedback": {
+            "translations": {
+              "user": "How do you naturally say 'I ended up staying home' in Japanese? Please give me a conversational expression, not a literal translation.",
+              "tutor": "In conversation, 'kekkyoku, ie ni iru koto ni natta' is natural. If it feels like your own decision, you can say 'kekkyoku, ie ni iru koto ni shita.'"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Answers the explicit translation request in Japanese and distinguishes circumstance from personal choice without starting a drill."
+        }
+      ]
+    },
+    {
+      "scenarioId": "station-roleplay",
+      "turns": [
+        {
+          "replyText": "かしこまりました。ご希望の行き先はどちらですか？",
+          "feedback": {
+            "translations": {
+              "user": "I'd like to practice buying a Shinkansen ticket at a station. Be the station clerk and ask my destination first.",
+              "tutor": "Certainly. What is your desired destination?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Immediately enters only the requested station role and asks the requested first question."
+        },
+        {
+          "replyText": "京都駅まで、大人三名と子ども二名、二〇二六年八月二十三日の切符を五枚ですね。片道でよろしいですか？",
+          "feedback": {
+            "translations": {
+              "user": "I'll meet Mari Tanaka on August 23, 2026. Five tickets to Kyoto Station for three adults and two children, please.",
+              "tutor": "Five tickets to Kyoto Station on August 23, 2026, for three adults and two children. One way?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Keeps the clerk role and accurately preserves the destination, date, passenger counts, and ticket count."
+        },
+        {
+          "replyText": "お仕事のあとでお疲れのところ、ありがとうございます。では、京都駅までの切符は片道でお取りしてよろしいですか？",
+          "feedback": {
+            "translations": {
+              "user": "Work was really busy today, but eating ramen with a friend after work made me feel a little better.",
+              "tutor": "Thank you for coming after such a tiring workday. May I book the tickets to Kyoto Station as one-way?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Understands the code-switched aside, responds tactfully, and returns to the still-active station context."
+        }
+      ]
+    },
+    {
+      "scenarioId": "english-meta-request",
+      "turns": [
+        {
+          "replyText": "That sounds like a busy morning. We can keep the Japanese low-pressure—what would you like to talk about?",
+          "feedback": {
+            "translations": {
+              "user": "I had a busy morning, but I would still like to practice Japanese for a few minutes.",
+              "tutor": "That sounds like a busy morning. We can keep the Japanese low-pressure—what would you like to talk about?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Replies in the learner's English, acknowledges the morning, and offers conversation rather than assigning an exercise."
+        }
+      ]
+    },
+    {
+      "scenarioId": "ambiguous-self-correction",
+      "turns": [
+        {
+          "replyText": "大阪でお好み焼きを食べたんですね。友達とは久しぶりに会ったんですか？",
+          "feedback": {
+            "translations": {
+              "user": "Um, yesterday I went to Kyoto—no, Osaka—and met a friend around three, then ate okonomiyaki.",
+              "tutor": "So you ate okonomiyaki in Osaka. Had it been a while since you saw your friend?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Grounds the reply in the final Osaka correction and makes no fabricated claim about what the recognizer heard."
+        }
+      ]
+    },
+    {
+      "scenarioId": "tactful-beginner-correction",
+      "turns": [
+        {
+          "replyText": "友達と映画を見て、楽しい一日だったんですね。特に面白かった場面はありましたか？",
+          "feedback": {
+            "translations": {
+              "user": "Yesterday I met a friend and we watched a movie together. It was a lot of fun.",
+              "tutor": "It sounds like you had a fun day watching a movie with your friend. Was there a particularly interesting scene?"
+            },
+            "corrections": {
+              "particles": [
+                {
+                  "original": "友達を会って",
+                  "corrected": "友達に会って",
+                  "explanation": "会う相手には「に」を使うと自然です。"
+                }
+              ],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Keeps the reply warm and content-focused while placing one tactful, compact particle correction in quiet feedback."
+        }
+      ]
+    },
+    {
+      "scenarioId": "life-story-not-a-lesson",
+      "turns": [
+        {
+          "replyText": "川に流れる花びらを見たあと、静かな喫茶店で今年やってみたいことを書いたんですね。その中で、まず始めたいことは何ですか？",
+          "feedback": {
+            "translations": {
+              "user": "Last Sunday I walked by the river, stopped at a quiet cafe, and wrote what I want to try this year.",
+              "tutor": "After watching petals float down the river, you wrote what you'd like to try this year in a quiet cafe. Which would you like to start first?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Treats the life story as the conversation itself and never redirects it into language curriculum."
+        }
+      ]
+    },
+    {
+      "scenarioId": "silence-then-recovery",
+      "turns": [
+        {
+          "replyText": "",
+          "replyAudio": null,
+          "providerTrace": [],
+          "lifecycleTrace": [
+            "recorded_audio_validated",
+            "no_speech",
+            "resuming",
+            "listening"
+          ],
+          "feedback": {
+            "translations": {},
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "Silence creates no transcript, model request, reply, correction, or invented conversational turn."
+        },
+        {
+          "replyText": "緊張しているんですね。ゆっくりで大丈夫ですから、今日はどんな一日でしたか？",
+          "feedback": {
+            "translations": {
+              "user": "Hello. I'm a little nervous today.",
+              "tutor": "You're feeling nervous. Taking it slowly is fine, so what kind of day have you had?"
+            },
+            "corrections": {
+              "particles": [],
+              "register": { "consistent": true },
+              "other": []
+            }
+          },
+          "gradeEvidence": "The first real utterance recovers into a normal Japanese conversation without mentioning or punishing the preceding silence."
+        }
+      ]
+    }
+  ]
+}

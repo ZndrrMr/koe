@@ -26,6 +26,13 @@ import {
   type RecordedAudioFailureKind,
   type RecordedAudioMetadata,
 } from "../../shared/recordedAudio";
+import { feedbackPrompt } from "../../shared/conversationPrompts";
+import {
+  QUALITY_EVALUATOR_ID,
+  QUALITY_EVALUATOR_PROMPT_VERSION,
+  qualityEvaluatorPrompt,
+  type QualityEvaluationInput,
+} from "../../shared/conversationQuality";
 import {
   inspectRouterStream,
   routerResponseHeaders,
@@ -829,32 +836,11 @@ app.post("/llm/flash", async (c) => {
   let prompt: string;
 
   if (task === "feedback") {
-    prompt = `You are Koe's quiet feedback layer. Analyze the learner's latest utterance silently and never write the conversational response.
-
-Prior dialogue: ${JSON.stringify(body.history ?? [])}
-User's utterance: ${JSON.stringify(body.userTurn ?? "")}
-Conversation reply: ${JSON.stringify(body.tutorReply ?? "")}
-
-ESSENTIAL FEEDBACK CONTRACT:
-- Never praise, score, teach, or manufacture a problem for a natural understandable utterance.
-- Return at most one compact correction, and only when one issue materially changes the meaning or makes the utterance notably unnatural.
-- Prefer the smallest useful replacement and a one-sentence explanation.
-- A compact note supplements the separate conversation reply; it must never demand a retry or assign an exercise.
-- If the learner explicitly asks for strict correction, translation, or teaching, analyze as requested. Even then, keep this payload to corrections only; the conversation reply handles the direct answer.
-
-Return ONLY valid JSON:
-{
-  "translations": {
-    "user": "a concise natural English translation of the user's utterance",
-    "tutor": "a concise natural English translation of the conversation reply"
-  },
-  "corrections": {
-    "particles": [{"original":"は","corrected":"が","explanation":"one sentence"}],
-    "register": {"consistent": true, "note": null},
-    "other": [{"original":"行きます","corrected":"参ります","explanation":"one sentence"}]
-  }
-}
-Always translate both nonempty utterances. Unless correction is clearly useful under the contract, return empty arrays and register.consistent=true.`;
+    prompt = feedbackPrompt({
+      history: body.history ?? [],
+      userTurn: body.userTurn ?? "",
+      tutorReply: body.tutorReply ?? "",
+    });
   } else {
     return c.text(`unknown task: ${task}`, 400);
   }
@@ -898,6 +884,91 @@ Always translate both nonempty utterances. Unless correction is clearly useful u
   } catch {
     return c.json({ error: "gemini returned non-JSON", raw: text }, 502);
   }
+});
+
+// ---- Conversation quality evaluator (explicit live regression lane) ---
+
+app.post("/llm/quality", async (c) => {
+  const trace = workerTrace(c.req.raw.headers);
+  const body = await c.req.json<QualityEvaluationInput>();
+  if (
+    !body ||
+    typeof body.scenarioId !== "string" ||
+    typeof body.transcript !== "string" ||
+    typeof body.replyText !== "string" ||
+    !Array.isArray(body.history) ||
+    !Array.isArray(body.coverage)
+  ) {
+    return c.text("invalid quality evaluation input", 400);
+  }
+
+  const dev = deviceId(c);
+  const ok = await bumpCounter(
+    c.env.KOE_KV,
+    `rl:quality:${dev}:${today()}`,
+    1,
+    Number(c.env.RATE_LIMIT_LLM),
+  );
+  if (!ok) return c.text("rate limit", 429);
+
+  const prompt = qualityEvaluatorPrompt(body);
+  const evaluatorPromptSha256 = await sha256Hex(prompt);
+  const evaluatorModel = c.env.GEMINI_FLASH_MODEL;
+  const gemRes = await fetch(
+    `${c.env.GEMINI_API_BASE_URL}/v1beta/models/${evaluatorModel}:generateContent?key=${c.env.GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0,
+        },
+      }),
+    },
+  );
+  const evaluatorRequestId = providerRequestId(gemRes);
+  workerEvent(
+    "provider_response",
+    trace,
+    {
+      endpoint: "conversation-quality",
+      status: gemRes.status,
+      providerRequestId: evaluatorRequestId,
+      contentType: gemRes.headers.get("Content-Type") ?? "none",
+      evaluatorModel,
+      evaluatorPromptVersion: QUALITY_EVALUATOR_PROMPT_VERSION,
+    },
+    gemRes.ok ? "info" : "error",
+  );
+  if (!gemRes.ok) return c.text("gemini quality evaluation failed", 502);
+
+  const data = (await gemRes.json()) as {
+    candidates?: Array<{
+      content?: { parts?: Array<{ text?: string }> };
+    }>;
+  };
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) return c.text("gemini quality evaluation was empty", 502);
+
+  let verdict: unknown;
+  try {
+    verdict = JSON.parse(text);
+  } catch {
+    return c.text("gemini quality evaluation was not JSON", 502);
+  }
+
+  return c.json({
+    evaluator: {
+      id: QUALITY_EVALUATOR_ID,
+      model: evaluatorModel,
+      promptVersion: QUALITY_EVALUATOR_PROMPT_VERSION,
+      promptSha256: evaluatorPromptSha256,
+      providerRequestId: evaluatorRequestId ?? "unavailable",
+    },
+    verdict,
+  });
 });
 
 // ---- Furigana (Gemini, KV-cached) --------------------------------------

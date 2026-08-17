@@ -126,7 +126,7 @@ export default function SessionScreen() {
       ""
     )
       .split("|")
-      .map((uri) => uri.trim())
+      .map((uri: string) => uri.trim())
       .filter(Boolean);
     if (!__DEV__ || !injectionUris.length || diagnosticRunStartedRef.current) {
       return;

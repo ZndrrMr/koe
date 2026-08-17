@@ -415,6 +415,136 @@ test("feedback ignores obsolete preferences and applies one essential contract",
   }
 });
 
+test("live quality evaluation is versioned, deterministic, and server-prompted", async () => {
+  const originalFetch = globalThis.fetch;
+  let upstreamBody:
+    | {
+        contents?: Array<{ parts?: Array<{ text?: string }> }>;
+        generationConfig?: { temperature?: number };
+      }
+    | undefined;
+  globalThis.fetch = async (_input, init) => {
+    upstreamBody = JSON.parse(String(init?.body));
+    return new Response(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    scores: {
+                      responseRelevance: 5,
+                      naturalness: 5,
+                      languageChoice: 5,
+                      conversationalContinuity: 5,
+                      tutoringJudgment: 5,
+                      transcriptGrounding: 5,
+                      contextStability: 5,
+                    },
+                    criticalViolations: [],
+                    evidence: "The reply acknowledges the stated feeling.",
+                    pass: true,
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      {
+        headers: {
+          "Content-Type": "application/json",
+          "X-Request-Id": "quality-grade-request",
+        },
+      },
+    );
+  };
+
+  try {
+    const response = await app.request(
+      "/llm/quality",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Koe-Session-Id": "quality-session",
+          "X-Koe-Turn-Id": "quality-turn",
+        },
+        body: JSON.stringify({
+          scenarioId: "neutral",
+          scenarioDescription: "ordinary conversation",
+          coverage: ["neutral-conversation"],
+          history: [],
+          transcript: "今日は疲れました。",
+          replyText: "そうなんですね。今日は忙しかったですか？",
+          feedback: {
+            corrections: {
+              particles: [],
+              register: { consistent: true },
+              other: [],
+            },
+          },
+          expectedLanguage: "ja",
+          teachingRequested: false,
+          correctionPolicy: "none",
+          transcriptUncertain: false,
+        }),
+      },
+      testEnv(),
+    );
+
+    assert.equal(response.status, 200);
+    const payload = (await response.json()) as {
+      evaluator: {
+        id: string;
+        model: string;
+        promptVersion: string;
+        promptSha256: string;
+        providerRequestId: string;
+      };
+      verdict: { pass: boolean };
+    };
+    assert.equal(payload.evaluator.id, "koe-conversation-quality");
+    assert.equal(payload.evaluator.model, "gemini-test");
+    assert.match(payload.evaluator.promptVersion, /2026-08-17\.v1/);
+    assert.match(payload.evaluator.promptSha256, /^[a-f0-9]{64}$/);
+    assert.equal(payload.evaluator.providerRequestId, "quality-grade-request");
+    assert.equal(payload.verdict.pass, true);
+    const prompt = upstreamBody?.contents?.[0]?.parts?.[0]?.text ?? "";
+    assert.match(prompt, /responseRelevance/);
+    assert.match(prompt, /Forced retries, unsolicited drills/);
+    assert.match(prompt, /今日は疲れました/);
+    assert.equal(upstreamBody?.generationConfig?.temperature, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("quality evaluation rejects malformed input before provider spend", async () => {
+  const originalFetch = globalThis.fetch;
+  let providerRequests = 0;
+  globalThis.fetch = async () => {
+    providerRequests += 1;
+    throw new Error("malformed quality input must not reach Gemini");
+  };
+  try {
+    const response = await app.request(
+      "/llm/quality",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenarioId: "missing-fields" }),
+      },
+      testEnv(),
+    );
+    assert.equal(response.status, 400);
+    assert.equal(providerRequests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("stream inspection rejects empty audio and a missing DONE event", async () => {
   const originalFetch = globalThis.fetch;
   try {

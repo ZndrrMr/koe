@@ -1,0 +1,286 @@
+{
+  "schemaVersion": 1,
+  "suiteVersion": "1.0.0",
+  "requiredCoverage": [
+    "neutral-conversation",
+    "confusion",
+    "explicit-teaching",
+    "explicit-correction",
+    "translation",
+    "roleplay-meta",
+    "beginner-grammar-errors",
+    "natural-fluent-japanese",
+    "english",
+    "code-switching",
+    "transcript-ambiguity",
+    "sensitive-tactful-correction",
+    "off-topic-input",
+    "silence",
+    "recovery",
+    "short-flow",
+    "multi-turn-flow"
+  ],
+  "scenarios": [
+    {
+      "id": "getting-acquainted",
+      "description": "Three ordinary Japanese turns remain a conversation while preserving a self-correction.",
+      "coverage": [
+        "neutral-conversation",
+        "natural-fluent-japanese",
+        "transcript-ambiguity",
+        "multi-turn-flow"
+      ],
+      "turns": [
+        {
+          "fixtureId": "natural-short-ja",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["緊張"]
+          }
+        },
+        {
+          "fixtureId": "natural-long-ja",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["花びら", "喫茶店"],
+            "requiredHistoryTerms": ["緊張"]
+          }
+        },
+        {
+          "fixtureId": "hesitation-self-correction",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": true,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["大阪", "お好み焼き"],
+            "requiredHistoryTerms": ["花びら", "喫茶店"],
+            "forbiddenReplyTerms": ["京都に行った"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "learner-directed-support",
+      "description": "A beginner error, correction preference, teaching request, and translation request are handled without making every turn a drill.",
+      "coverage": [
+        "beginner-grammar-errors",
+        "explicit-correction",
+        "explicit-teaching",
+        "confusion",
+        "translation",
+        "multi-turn-flow"
+      ],
+      "turns": [
+        {
+          "fixtureId": "beginner-particle-errors",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "required-single",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["映画"]
+          }
+        },
+        {
+          "fixtureId": "request-strict-correction",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": true,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["助詞", "敬語"],
+            "requiredHistoryTerms": ["映画"]
+          }
+        },
+        {
+          "fixtureId": "request-teaching",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": true,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["わけではない", "嫌いなわけではない"],
+            "requiredHistoryTerms": ["助詞", "敬語"]
+          }
+        },
+        {
+          "fixtureId": "request-translation",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": true,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["結局", "家にいることになった"],
+            "requiredHistoryTerms": ["わけではない"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "station-roleplay",
+      "description": "An explicit station role survives names, dates, counters, and later code-switching.",
+      "coverage": ["roleplay-meta", "code-switching", "multi-turn-flow"],
+      "turns": [
+        {
+          "fixtureId": "request-roleplay",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["行き先"]
+          }
+        },
+        {
+          "fixtureId": "numbers-names-counters",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["京都駅", "大人三名", "子ども二名", "五枚"],
+            "requiredHistoryTerms": ["行き先"]
+          }
+        },
+        {
+          "fixtureId": "japanese-english-code-switch",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["お仕事", "京都駅"],
+            "requiredHistoryTerms": ["京都駅", "五枚"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "english-meta-request",
+      "description": "An English request receives a natural English response rather than an unsolicited Japanese lesson.",
+      "coverage": ["english", "short-flow"],
+      "turns": [
+        {
+          "fixtureId": "english-only",
+          "contracts": {
+            "expectedLanguage": "en",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["busy morning", "Japanese"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "ambiguous-self-correction",
+      "description": "The response follows the learner's final self-correction and never fabricates a clean transcript claim.",
+      "coverage": ["transcript-ambiguity", "short-flow"],
+      "turns": [
+        {
+          "fixtureId": "hesitation-self-correction",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": true,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["大阪", "お好み焼き"],
+            "forbiddenReplyTerms": [
+              "京都に行った",
+              "聞き取れました",
+              "あなたは言いました"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "tactful-beginner-correction",
+      "description": "A meaningful beginner error receives one compact private correction while the spoken reply stays tactful and conversational.",
+      "coverage": [
+        "sensitive-tactful-correction",
+        "beginner-grammar-errors",
+        "short-flow"
+      ],
+      "turns": [
+        {
+          "fixtureId": "beginner-particle-errors",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "required-single",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["友達", "映画"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "life-story-not-a-lesson",
+      "description": "Content unrelated to language study is accepted as ordinary conversation and not redirected into curriculum.",
+      "coverage": ["off-topic-input", "natural-fluent-japanese", "short-flow"],
+      "turns": [
+        {
+          "fixtureId": "natural-long-ja",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["川", "今年やってみたいこと"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "silence-then-recovery",
+      "description": "Silence creates no invented turn or reply; the next spoken utterance recovers into the same conversation.",
+      "coverage": ["silence", "recovery", "multi-turn-flow"],
+      "turns": [
+        {
+          "fixtureId": "failure-silence",
+          "contracts": {
+            "expectedLanguage": "none",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": true,
+            "expectedAction": "no-reply",
+            "requiredReplyTerms": []
+          }
+        },
+        {
+          "fixtureId": "natural-short-ja",
+          "contracts": {
+            "expectedLanguage": "ja",
+            "teachingRequested": false,
+            "correctionPolicy": "none",
+            "transcriptUncertain": false,
+            "expectedAction": "reply",
+            "requiredReplyTerms": ["緊張"]
+          }
+        }
+      ]
+    }
+  ]
+}

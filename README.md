@@ -95,6 +95,17 @@ npm run test:product
 npm run test:prompts
 npm run test:voice
 npm run test:sessions
+npm run test:spoken-fixtures
+npm run test:quality
+npm run test:acceptance
 npm run ios
 npm run worker:dev
 ```
+
+The conversation-quality suite replays the checked-in spoken corpus through
+neutral conversation, confusion, explicit teaching/correction/translation,
+roleplay, grammar errors, fluent Japanese, English, code-switching, transcript
+ambiguity, tactful correction, off-topic conversation, silence, and recovery.
+Its recorded lane is the default zero-network gate; the guarded live-provider
+lane and complete artifact contract are documented in
+`shared/fixtures/conversation-quality/README.md`.
