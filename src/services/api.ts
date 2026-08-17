@@ -42,7 +42,10 @@ export async function postJson<T>(
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    log.error(`POST ${path} -> ${res.status}`);
+    log.info("Worker request returned a non-success response", {
+      path,
+      status: res.status,
+    });
     throw new WorkerError(
       res.statusText || "Worker request failed",
       res.status,

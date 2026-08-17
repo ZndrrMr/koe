@@ -437,7 +437,9 @@ export async function* streamConversation(opts: {
       translations: result.translations ?? {},
     }))
     .catch((error) => {
-      log.warn("feedback fetch failed", error);
+      log.info("feedback unavailable; continuing without enrichment", {
+        errorName: error instanceof Error ? error.name : "unknown",
+      });
       return { corrections: EMPTY_CORRECTIONS, translations: {} };
     });
 
