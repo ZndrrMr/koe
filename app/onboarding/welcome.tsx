@@ -1,7 +1,6 @@
 import React, { useRef } from "react";
 import {
   Image,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -10,11 +9,13 @@ import {
 } from "react-native";
 import { randomUUID } from "expo-crypto";
 import { useRouter } from "expo-router";
-import { SafeAreaView } from "react-native-safe-area-context";
 
+import { SafeAreaScreen } from "@/components/SafeAreaScreen";
+import { WholeAffordancePressable } from "@/components/WholeAffordancePressable";
 import { useKoeIllustration } from "@/art/koeIllustrations";
 import { useFirstUse } from "@/stores/useFirstUse";
 import { useConversationPalette } from "@/theme/conversation";
+import { CONTROL_MAX_FONT_SIZE_MULTIPLIER } from "@/theme/interaction";
 
 /** The only onboarding state: explain why the microphone is needed. */
 export default function WelcomeScreen() {
@@ -35,7 +36,7 @@ export default function WelcomeScreen() {
   };
 
   return (
-    <SafeAreaView
+    <SafeAreaScreen
       style={[styles.safeArea, { backgroundColor: palette.canvas }]}
     >
       <ScrollView
@@ -72,7 +73,7 @@ export default function WelcomeScreen() {
           Microphone access keeps one open conversation moving. Speak Japanese
           or English; Koe answers aloud and listens again automatically.
         </Text>
-        <Pressable
+        <WholeAffordancePressable
           testID="continue-microphone-education"
           accessibilityRole="button"
           accessibilityLabel="Continue"
@@ -87,14 +88,22 @@ export default function WelcomeScreen() {
           ]}
         >
           <View style={styles.actionContent}>
-            <Text style={[styles.actionText, { color: palette.ink }]}>
+            <Text
+              maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+              style={[styles.actionText, { color: palette.ink }]}
+            >
               Continue
             </Text>
-            <Text style={[styles.actionArrow, { color: palette.seam }]}>→</Text>
+            <Text
+              maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+              style={[styles.actionArrow, { color: palette.seam }]}
+            >
+              →
+            </Text>
           </View>
-        </Pressable>
+        </WholeAffordancePressable>
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaScreen>
   );
 }
 

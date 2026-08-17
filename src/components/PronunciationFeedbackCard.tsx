@@ -1,10 +1,14 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { Mic2, RotateCcw, Volume2 } from "lucide-react-native";
 
+import { WholeAffordancePressable } from "@/components/WholeAffordancePressable";
 import type { PronunciationFeedback } from "@/services/pitch";
 import type { ConversationPalette } from "@/theme/conversation";
-import { CONVERSATION_TARGET } from "@/theme/interaction";
+import {
+  CONTROL_MAX_FONT_SIZE_MULTIPLIER,
+  CONVERSATION_TARGET,
+} from "@/theme/interaction";
 
 type Props = {
   feedback: PronunciationFeedback;
@@ -88,9 +92,11 @@ export function PronunciationFeedbackCard({
       ) : null}
 
       {onRetry ? (
-        <Pressable
+        <WholeAffordancePressable
+          testID="retry-pronunciation"
           accessibilityRole="button"
           accessibilityLabel="Retry this phrase"
+          accessibilityHint="Starts one new pronunciation attempt"
           onPress={onRetry}
           style={({ pressed }) => [
             styles.retryAction,
@@ -100,11 +106,14 @@ export function PronunciationFeedbackCard({
             },
           ]}
         >
-          <Text style={[styles.retryActionText, { color: palette.ink }]}>
+          <Text
+            maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+            style={[styles.retryActionText, { color: palette.ink }]}
+          >
             Try this phrase once
           </Text>
           <RotateCcw color={palette.seam} size={18} />
-        </Pressable>
+        </WholeAffordancePressable>
       ) : null}
     </View>
   );
@@ -122,9 +131,11 @@ function AudioAction({
   onPress: () => void;
 }) {
   return (
-    <Pressable
+    <WholeAffordancePressable
+      testID={`play-${label.toLowerCase().replaceAll(" ", "-")}`}
       accessibilityRole="button"
       accessibilityLabel={`Play ${label.toLowerCase()}`}
+      accessibilityHint="Plays this pronunciation recording"
       onPress={onPress}
       style={({ pressed }) => [
         styles.audioAction,
@@ -135,8 +146,13 @@ function AudioAction({
       ]}
     >
       {icon}
-      <Text style={[styles.audioLabel, { color: palette.ink }]}>{label}</Text>
-    </Pressable>
+      <Text
+        maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+        style={[styles.audioLabel, { color: palette.ink }]}
+      >
+        {label}
+      </Text>
+    </WholeAffordancePressable>
   );
 }
 

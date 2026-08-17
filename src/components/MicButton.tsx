@@ -1,10 +1,14 @@
 import React from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { Mic } from "lucide-react-native";
 
+import { WholeAffordancePressable } from "@/components/WholeAffordancePressable";
 import { press as pressHaptic } from "@/utils/haptics";
 import type { ConversationPalette } from "@/theme/conversation";
-import { CONVERSATION_TARGET } from "@/theme/interaction";
+import {
+  CONTROL_MAX_FONT_SIZE_MULTIPLIER,
+  CONVERSATION_TARGET,
+} from "@/theme/interaction";
 import type { ConversationPhase } from "@/voice/conversationEngine";
 import type { VoiceLifecycle } from "@/voice/lifecycle";
 
@@ -48,7 +52,7 @@ export function MicButton({
           : "One tap starts continuous turn-taking";
 
   return (
-    <Pressable
+    <WholeAffordancePressable
       testID="hands-free-control"
       disabled={disabled}
       accessibilityRole="button"
@@ -72,15 +76,28 @@ export function MicButton({
         <View style={styles.copy}>
           <Mic color={palette.seam} size={20} strokeWidth={1.5} />
           <View style={styles.labels}>
-            <Text style={[styles.title, { color: palette.ink }]}>{title}</Text>
-            <Text style={[styles.detail, { color: palette.muted }]}>
+            <Text
+              maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+              style={[styles.title, { color: palette.ink }]}
+            >
+              {title}
+            </Text>
+            <Text
+              maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+              style={[styles.detail, { color: palette.muted }]}
+            >
               {detail}
             </Text>
           </View>
         </View>
-        <Text style={[styles.glyph, { color: palette.seam }]}>声</Text>
+        <Text
+          maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+          style={[styles.glyph, { color: palette.seam }]}
+        >
+          声
+        </Text>
       </View>
-    </Pressable>
+    </WholeAffordancePressable>
   );
 }
 

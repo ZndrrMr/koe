@@ -1,18 +1,18 @@
 import React, { useCallback, useState } from "react";
 import {
   Image,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { Redirect, useFocusEffect, useRouter } from "expo-router";
 import { randomUUID } from "expo-crypto";
 
 import ArtFamilyProofScreen from "@/art/ArtFamilyProofScreen";
+import { SafeAreaScreen } from "@/components/SafeAreaScreen";
+import { WholeAffordancePressable } from "@/components/WholeAffordancePressable";
 import { useKoeIllustration } from "@/art/koeIllustrations";
 import { getLatestActiveSession, type SessionSummary } from "@/db";
 import { useFirstUse } from "@/stores/useFirstUse";
@@ -20,7 +20,10 @@ import {
   type ConversationPalette,
   useConversationPalette,
 } from "@/theme/conversation";
-import { CONVERSATION_TARGET } from "@/theme/interaction";
+import {
+  CONTROL_MAX_FONT_SIZE_MULTIPLIER,
+  CONVERSATION_TARGET,
+} from "@/theme/interaction";
 import { tap } from "@/utils/haptics";
 
 export default function IndexScreen() {
@@ -73,7 +76,7 @@ function ConversationHome() {
   };
 
   return (
-    <SafeAreaView
+    <SafeAreaScreen
       style={[styles.safeArea, { backgroundColor: palette.canvas }]}
     >
       <ScrollView
@@ -131,7 +134,9 @@ function ConversationHome() {
           />
           {recoverable ? (
             <RuledAction
+              testID="start-new-conversation"
               label="Start a new conversation"
+              hint="Starts separately instead of restoring the saved conversation"
               palette={palette}
               onPress={startConversation}
               secondary
@@ -139,7 +144,7 @@ function ConversationHome() {
           ) : null}
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </SafeAreaScreen>
   );
 }
 
@@ -168,7 +173,7 @@ function RuledAction({
   secondary?: boolean;
 }) {
   return (
-    <Pressable
+    <WholeAffordancePressable
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -189,12 +194,22 @@ function RuledAction({
           secondary && styles.secondaryActionContent,
         ]}
       >
-        <Text style={[styles.actionText, { color: palette.ink }]}>{label}</Text>
+        <Text
+          maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+          style={[styles.actionText, { color: palette.ink }]}
+        >
+          {label}
+        </Text>
         {!secondary ? (
-          <Text style={[styles.actionArrow, { color: palette.seam }]}>→</Text>
+          <Text
+            maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+            style={[styles.actionArrow, { color: palette.seam }]}
+          >
+            →
+          </Text>
         ) : null}
       </View>
-    </Pressable>
+    </WholeAffordancePressable>
   );
 }
 

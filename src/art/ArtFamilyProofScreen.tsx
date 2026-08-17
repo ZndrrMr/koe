@@ -1,16 +1,11 @@
 import React from "react";
-import {
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import Svg, { Circle, Line, Path } from "react-native-svg";
 
 import { koeIllustrations } from "@/art/koeIllustrations";
+import { WholeAffordancePressable } from "@/components/WholeAffordancePressable";
+import { CONTROL_MAX_FONT_SIZE_MULTIPLIER } from "@/theme/interaction";
 
 type ThemeName = "light" | "dark";
 type ScreenName =
@@ -370,15 +365,26 @@ function PrimaryAction({
   palette: ProofPalette;
 }) {
   return (
-    <Pressable
+    <WholeAffordancePressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint="Shows this proof action in the art-family preview"
       onPress={() => undefined}
       style={[styles.primaryAction, { borderColor: palette.control }]}
     >
-      <Text style={[styles.actionText, { color: palette.ink }]}>{label}</Text>
-      <Text style={[styles.actionArrow, { color: palette.blue }]}>→</Text>
-    </Pressable>
+      <Text
+        maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+        style={[styles.actionText, { color: palette.ink }]}
+      >
+        {label}
+      </Text>
+      <Text
+        maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+        style={[styles.actionArrow, { color: palette.blue }]}
+      >
+        →
+      </Text>
+    </WholeAffordancePressable>
   );
 }
 
@@ -390,16 +396,20 @@ function SecondaryAction({
   palette: ProofPalette;
 }) {
   return (
-    <Pressable
+    <WholeAffordancePressable
       accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint="Shows this secondary action in the art-family preview"
       onPress={() => undefined}
       style={[styles.secondaryAction, { borderColor: palette.hairline }]}
     >
-      <Text style={[styles.secondaryActionText, { color: palette.ink }]}>
+      <Text
+        maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+        style={[styles.secondaryActionText, { color: palette.ink }]}
+      >
         {label}
       </Text>
-    </Pressable>
+    </WholeAffordancePressable>
   );
 }
 

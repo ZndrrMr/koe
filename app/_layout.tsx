@@ -2,7 +2,10 @@ import "../global.css";
 import React, { useEffect, useRef, useState } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import {
+  initialWindowMetrics,
+  SafeAreaProvider,
+} from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { openDb } from "@/db";
 import { useFirstUse } from "@/stores/useFirstUse";
@@ -88,7 +91,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
+      <SafeAreaProvider initialMetrics={initialWindowMetrics}>
         <StatusBar style={reviewStatusBarStyle} />
         <Stack
           screenOptions={{

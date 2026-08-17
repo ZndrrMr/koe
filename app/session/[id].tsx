@@ -3,7 +3,6 @@ import {
   Alert,
   Image,
   Modal,
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,7 +10,6 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { RotateCcw, Send, Volume2, X } from "lucide-react-native";
 
@@ -19,6 +17,8 @@ import { useKoeIllustration } from "@/art/koeIllustrations";
 import { AcousticVoiceForm } from "@/components/AcousticVoiceForm";
 import { MicButton } from "@/components/MicButton";
 import { PronunciationFeedbackCard } from "@/components/PronunciationFeedbackCard";
+import { SafeAreaScreen } from "@/components/SafeAreaScreen";
+import { WholeAffordancePressable } from "@/components/WholeAffordancePressable";
 import {
   buildSessionCloseout,
   type SessionCloseout,
@@ -28,7 +28,10 @@ import {
   type ConversationPalette,
   useConversationPalette,
 } from "@/theme/conversation";
-import { CONVERSATION_TARGET } from "@/theme/interaction";
+import {
+  CONTROL_MAX_FONT_SIZE_MULTIPLIER,
+  CONVERSATION_TARGET,
+} from "@/theme/interaction";
 import type { ConversationPhase } from "@/voice/conversationEngine";
 import { VOICE_PHASE_COPY, type VoiceLifecycle } from "@/voice/lifecycle";
 import { useConversationEngine } from "@/voice/useConversationEngine";
@@ -278,7 +281,7 @@ export default function SessionScreen() {
     );
 
   return (
-    <SafeAreaView
+    <SafeAreaScreen
       style={[styles.safeArea, { backgroundColor: palette.canvas }]}
     >
       <SessionHeader
@@ -312,7 +315,10 @@ export default function SessionScreen() {
         ) : (
           <>
             <View style={[styles.stage, compact && styles.compactStage]}>
-              <AcousticVoiceForm phase={session.voice.phase} compact={compact} />
+              <AcousticVoiceForm
+                phase={session.voice.phase}
+                compact={compact}
+              />
               <Text style={[styles.stateDetail, { color: palette.muted }]}>
                 {VOICE_PHASE_COPY[session.voice.phase].detail}
               </Text>
@@ -400,7 +406,7 @@ export default function SessionScreen() {
         onShowCoda={() => setCloseoutStage("coda")}
         onFinish={() => void finishSession()}
       />
-    </SafeAreaView>
+    </SafeAreaScreen>
   );
 }
 
@@ -416,11 +422,16 @@ function SessionHeader({
   const label = firstExchange ? "Not now" : "End";
   return (
     <View style={styles.header}>
-      <Pressable
+      <WholeAffordancePressable
         testID="end-session"
         accessibilityRole="button"
         accessibilityLabel={
           firstExchange ? "Explore Koe without speaking" : "End conversation"
+        }
+        accessibilityHint={
+          firstExchange
+            ? "Returns home without using the microphone"
+            : "Opens the end conversation choices"
         }
         onPress={onEnd}
         style={({ pressed }) => [
@@ -429,13 +440,26 @@ function SessionHeader({
         ]}
       >
         <X color={palette.ink} size={17} strokeWidth={1.5} />
-        <Text style={[styles.headerActionText, { color: palette.ink }]}>
+        <Text
+          maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+          style={[styles.headerActionText, { color: palette.ink }]}
+        >
           {label}
         </Text>
-      </Pressable>
+      </WholeAffordancePressable>
       <View style={styles.lockup} accessibilityRole="header">
-        <Text style={[styles.lockupKanji, { color: palette.ink }]}>声</Text>
-        <Text style={[styles.lockupLatin, { color: palette.muted }]}>KOE</Text>
+        <Text
+          maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+          style={[styles.lockupKanji, { color: palette.ink }]}
+        >
+          声
+        </Text>
+        <Text
+          maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+          style={[styles.lockupLatin, { color: palette.muted }]}
+        >
+          KOE
+        </Text>
       </View>
       <View style={styles.headerBalance} accessibilityElementsHidden />
     </View>
@@ -505,6 +529,7 @@ function TranscriptCheckPanel({
       </Text>
       <TextInput
         accessibilityLabel="Correct transcript"
+        accessibilityHint="Edits the line Koe heard before sending"
         value={draftTranscript}
         onChangeText={onChangeTranscript}
         multiline
@@ -515,10 +540,11 @@ function TranscriptCheckPanel({
         ]}
       />
       <View style={styles.transcriptActions}>
-        <Pressable
+        <WholeAffordancePressable
           testID="discard-transcript"
           accessibilityRole="button"
           accessibilityLabel="Try recording again"
+          accessibilityHint="Discards this transcript and starts a new recording"
           onPress={onDiscard}
           style={({ pressed }) => [
             styles.transcriptAction,
@@ -529,14 +555,18 @@ function TranscriptCheckPanel({
           ]}
         >
           <RotateCcw color={palette.ink} size={17} />
-          <Text style={[styles.transcriptActionText, { color: palette.ink }]}>
+          <Text
+            maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+            style={[styles.transcriptActionText, { color: palette.ink }]}
+          >
             Try again
           </Text>
-        </Pressable>
-        <Pressable
+        </WholeAffordancePressable>
+        <WholeAffordancePressable
           testID="send-transcript"
           accessibilityRole="button"
           accessibilityLabel="Send corrected transcript"
+          accessibilityHint="Sends the edited line to Koe"
           onPress={onSubmit}
           style={({ pressed }) => [
             styles.transcriptAction,
@@ -547,10 +577,13 @@ function TranscriptCheckPanel({
           ]}
         >
           <Send color={palette.seam} size={17} />
-          <Text style={[styles.transcriptActionText, { color: palette.ink }]}>
+          <Text
+            maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+            style={[styles.transcriptActionText, { color: palette.ink }]}
+          >
             Send line
           </Text>
-        </Pressable>
+        </WholeAffordancePressable>
       </View>
     </View>
   );
@@ -605,11 +638,14 @@ function RecoveryState({
         <RuledSessionAction
           testID="recover-voice"
           label={label}
+          hint="Attempts the available recovery and keeps this conversation open"
           palette={palette}
           onPress={onRecover}
         />
         <RuledSessionAction
+          testID="recovery-end-conversation"
           label="End conversation"
+          hint="Opens the end conversation choices"
           palette={palette}
           onPress={onEnd}
           secondary
@@ -673,9 +709,11 @@ function CorrectionMoment({
       </View>
       <View style={styles.noteActions}>
         {onReplay ? (
-          <Pressable
+          <WholeAffordancePressable
+            testID="replay-correction"
             accessibilityRole="button"
             accessibilityLabel="Replay your line"
+            accessibilityHint="Plays the recording for this correction note"
             onPress={onReplay}
             style={({ pressed }) => [
               styles.inlineAction,
@@ -686,11 +724,13 @@ function CorrectionMoment({
             ]}
           >
             <Volume2 color={palette.seam} size={18} />
-          </Pressable>
+          </WholeAffordancePressable>
         ) : null}
-        <Pressable
+        <WholeAffordancePressable
+          testID="dismiss-correction"
           accessibilityRole="button"
           accessibilityLabel="Dismiss note"
+          accessibilityHint="Removes this note from the conversation screen"
           onPress={onDismiss}
           style={({ pressed }) => [
             styles.inlineAction,
@@ -701,7 +741,7 @@ function CorrectionMoment({
           ]}
         >
           <X color={palette.ink} size={18} />
-        </Pressable>
+        </WholeAffordancePressable>
       </View>
     </View>
   );
@@ -737,7 +777,8 @@ function SessionCloseout({
       animationType="none"
       onRequestClose={stage === "ending" ? onContinue : onFinish}
     >
-      <SafeAreaView
+      <SafeAreaScreen
+        accessibilityViewIsModal
         style={[styles.closeoutSafeArea, { backgroundColor: palette.canvas }]}
       >
         <View style={styles.closeoutHeader}>
@@ -835,12 +876,14 @@ function SessionCloseout({
               <RuledSessionAction
                 testID="resume-conversation"
                 label="Keep talking"
+                hint="Closes these choices and returns to the conversation"
                 palette={palette}
                 onPress={onContinue}
               />
               <RuledSessionAction
                 testID="finish-session"
                 label="Finish session"
+                hint="Ends voice capture and shows the conversation coda"
                 palette={palette}
                 onPress={onShowCoda}
                 secondary
@@ -850,12 +893,13 @@ function SessionCloseout({
             <RuledSessionAction
               testID="return-home"
               label="Return home"
+              hint="Closes this conversation and returns to Koe home"
               palette={palette}
               onPress={onFinish}
             />
           )}
         </View>
-      </SafeAreaView>
+      </SafeAreaScreen>
     </Modal>
   );
 }
@@ -876,7 +920,7 @@ function RuledSessionAction({
   secondary?: boolean;
 }) {
   return (
-    <Pressable
+    <WholeAffordancePressable
       testID={testID}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -897,16 +941,22 @@ function RuledSessionAction({
           secondary && styles.secondaryRuledActionContent,
         ]}
       >
-        <Text style={[styles.ruledActionText, { color: palette.ink }]}>
+        <Text
+          maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+          style={[styles.ruledActionText, { color: palette.ink }]}
+        >
           {label}
         </Text>
         {!secondary ? (
-          <Text style={[styles.ruledActionArrow, { color: palette.seam }]}>
+          <Text
+            maxFontSizeMultiplier={CONTROL_MAX_FONT_SIZE_MULTIPLIER}
+            style={[styles.ruledActionArrow, { color: palette.seam }]}
+          >
             →
           </Text>
         ) : null}
       </View>
-    </Pressable>
+    </WholeAffordancePressable>
   );
 }
 
@@ -961,7 +1011,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   headerAction: {
-    width: 76,
+    width: 96,
     minHeight: CONVERSATION_TARGET.minimum,
     flexDirection: "row",
     alignItems: "center",
@@ -972,7 +1022,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
-  headerBalance: { width: 76, height: CONVERSATION_TARGET.minimum },
+  headerBalance: { width: 96, height: CONVERSATION_TARGET.minimum },
   lockup: {
     flex: 1,
     minHeight: CONVERSATION_TARGET.minimum,
