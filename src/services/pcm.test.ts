@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  pcm16EnergyFromBase64,
   pcmBase64ChunksToWavBase64,
   pcmBase64ToWavBase64,
 } from "./pcm";
@@ -36,25 +35,4 @@ test("pcmBase64ChunksToWavBase64 preserves every streamed chunk in order", () =>
   assert.equal(wav.readUInt32LE(24), 24_000);
   assert.equal(wav.readUInt32LE(40), first.length + second.length);
   assert.deepEqual(wav.subarray(44), Buffer.concat([first, second]));
-});
-
-test("pcm16EnergyFromBase64 follows actual PCM amplitude", () => {
-  const encode = (samples: number[]) => {
-    const pcm = Buffer.alloc(samples.length * 2);
-    samples.forEach((sample, index) => pcm.writeInt16LE(sample, index * 2));
-    return pcm.toString("base64");
-  };
-
-  const silence = pcm16EnergyFromBase64(encode([0, 0, 0, 0]));
-  const conversational = pcm16EnergyFromBase64(
-    encode([0, 4_000, -4_000, 8_000, -8_000, 0]),
-  );
-  const loud = pcm16EnergyFromBase64(
-    encode([0, 20_000, -20_000, 28_000, -28_000, 0]),
-  );
-
-  assert.equal(silence, 0);
-  assert.ok(conversational > silence);
-  assert.ok(loud > conversational);
-  assert.ok(loud <= 1);
 });

@@ -38,7 +38,6 @@ export type ConversationEngineState = {
   ownership: ConversationOwnership;
   draftTranscript: string;
   draftAudioUri?: string;
-  audioEnergy: number;
   retryingTurnId: string | null;
   showCoda: boolean;
 };
@@ -156,7 +155,6 @@ export type ConversationDependencies = {
       onStarted: () => void;
       onFinished: () => void;
       onError: (error: Error) => void;
-      onEnergy: (energy: number) => void;
     }) => PlaybackQueue;
     save: (
       audioBase64: string,
@@ -303,7 +301,6 @@ export class ConversationEngine {
     handsFreeActive: false,
     ownership: EMPTY_OWNERSHIP,
     draftTranscript: "",
-    audioEnergy: 0,
     retryingTurnId: null,
     showCoda: false,
   };
@@ -418,7 +415,6 @@ export class ConversationEngine {
     this.publish({
       draftTranscript: "",
       draftAudioUri: undefined,
-      audioEnergy: 0,
       ownership: EMPTY_OWNERSHIP,
     });
     await capture.ready.then((handle) => handle.cancel()).catch(() => {});
@@ -471,7 +467,6 @@ export class ConversationEngine {
     this.publish({
       draftTranscript: "",
       draftAudioUri: undefined,
-      audioEnergy: 0,
       ownership: {
         ...this.state.ownership,
         audioSession: "microphone",
@@ -483,7 +478,6 @@ export class ConversationEngine {
       trace,
       onAudioEnergy: (energy) => {
         if (this.isCaptureCurrent(token, epoch)) {
-          this.publish({ audioEnergy: energy });
           if (energy >= HANDS_FREE_ENDPOINT.audibleEnergy) {
             this.scheduleEndpoint(
               token,
@@ -524,7 +518,6 @@ export class ConversationEngine {
       this.clearCaptureTimers();
       this.dependencies.session.setRecording(false);
       this.publish({
-        audioEnergy: 0,
         ownership: {
           ...this.state.ownership,
           audioSession: "none",
@@ -563,7 +556,6 @@ export class ConversationEngine {
     this.transition("endpoint");
     this.dependencies.session.setRecording(false);
     this.publish({
-      audioEnergy: 0,
       ownership: {
         ...this.state.ownership,
         audioSession: "none",
@@ -692,7 +684,6 @@ export class ConversationEngine {
     this.publish({
       draftTranscript: "",
       draftAudioUri: undefined,
-      audioEnergy: 0,
       ownership: EMPTY_OWNERSHIP,
     });
     this.dependencies.telemetry("recorded_audio_injection_started", trace, {
@@ -767,7 +758,6 @@ export class ConversationEngine {
     this.publish({
       draftTranscript: "",
       draftAudioUri: undefined,
-      audioEnergy: 0,
       retryingTurnId: null,
       ownership: EMPTY_OWNERSHIP,
     });
@@ -848,7 +838,6 @@ export class ConversationEngine {
     this.dependencies.session.setStreaming(false);
     this.transition("recovery");
     this.publish({
-      audioEnergy: 0,
       ownership: EMPTY_OWNERSHIP,
     });
     this.dependencies.session.setVoice(
@@ -947,7 +936,6 @@ export class ConversationEngine {
     this.publish({
       handsFreeActive: false,
       showCoda: true,
-      audioEnergy: 0,
       ownership: EMPTY_OWNERSHIP,
     });
     this.closeoutPreparation = Promise.allSettled([
@@ -985,13 +973,11 @@ export class ConversationEngine {
   setReviewState(options: {
     phase?: VoicePhase;
     draftTranscript?: string;
-    audioEnergy?: number;
     showCoda?: boolean;
   }): void {
     if (options.phase) this.dependencies.session.setVoicePhase(options.phase);
     this.publish({
       draftTranscript: options.draftTranscript ?? this.state.draftTranscript,
-      audioEnergy: options.audioEnergy ?? this.state.audioEnergy,
       showCoda: options.showCoda ?? this.state.showCoda,
     });
   }
@@ -1275,7 +1261,6 @@ export class ConversationEngine {
         failure === "audioInterruption" && this.state.handsFreeActive;
       this.transition("recovery");
       this.publish({
-        audioEnergy: 0,
         ownership: {
           ...EMPTY_OWNERSHIP,
           retry: input.assistantTurnId,
@@ -1318,9 +1303,6 @@ export class ConversationEngine {
         onStarted: handlePlaybackStarted,
         onFinished: handlePlaybackFinished,
         onError: handlePlaybackFailure,
-        onEnergy: (energy) => {
-          if (isCurrent()) this.publish({ audioEnergy: energy });
-        },
       });
       this.responseQueue = queue;
       return queue;
@@ -1655,7 +1637,6 @@ export class ConversationEngine {
     this.dependencies.session.setStreaming(false);
     this.transition("resuming");
     this.publish({
-      audioEnergy: 0,
       ownership: EMPTY_OWNERSHIP,
     });
     if (successfulRetry) {
@@ -1704,7 +1685,6 @@ export class ConversationEngine {
     ]);
     this.dependencies.session.setStreaming(false);
     this.publish({
-      audioEnergy: 0,
       ownership: { ...EMPTY_OWNERSHIP, retry: this.state.ownership.retry },
     });
     this.dependencies.telemetry(
@@ -1767,7 +1747,6 @@ export class ConversationEngine {
       voiceError(semantic === "silence" ? "silence" : failure),
     );
     this.publish({
-      audioEnergy: 0,
       ownership: {
         ...EMPTY_OWNERSHIP,
         retry: this.failedReply?.assistantTurnId ?? null,
@@ -1854,7 +1833,6 @@ export class ConversationEngine {
     this.clearCaptureTimers();
     this.dependencies.session.setRecording(false);
     this.publish({
-      audioEnergy: 0,
       ownership: EMPTY_OWNERSHIP,
     });
     await capture.ready.then((handle) => handle.cancel()).catch(() => {});
@@ -1878,7 +1856,6 @@ export class ConversationEngine {
     this.publish({
       draftTranscript: "",
       draftAudioUri: undefined,
-      audioEnergy: 0,
       ownership: EMPTY_OWNERSHIP,
     });
     this.dependencies.telemetry(

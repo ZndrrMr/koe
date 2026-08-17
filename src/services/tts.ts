@@ -27,10 +27,7 @@ import {
   INWORLD_STANDALONE_AUDIO_CONTRACT,
   KOE_V1_VOICE_ID,
 } from "../../shared/inworld";
-import {
-  pcm16EnergyFromBase64,
-  pcmBase64ChunksToWavBase64,
-} from "@/services/pcm";
+import { pcmBase64ChunksToWavBase64 } from "@/services/pcm";
 
 export type SynthesizeResult = {
   audioUri: string;
@@ -407,7 +404,6 @@ type PCMPlaybackQueueOptions = {
   onStarted?: () => void;
   onFinished?: () => void;
   onError?: (error: Error) => void;
-  onEnergy?: (energy: number) => void;
   captureKey?: string;
   onCaptured?: (audioUri: string) => void;
   trace?: VoiceTraceContext;
@@ -458,7 +454,6 @@ export class PCMPlaybackQueue {
     this.captureChunks.push(audioBase64);
     this.captureSampleRate = sampleRate;
     this.captureChannels = channels;
-    this.options.onEnergy?.(pcm16EnergyFromBase64(audioBase64));
     voiceEvent("playback_chunk_queued", this.options.trace, {
       path: "stream",
       byteCount,
@@ -565,7 +560,6 @@ export class PCMPlaybackQueue {
     );
     await this.releaseAudioGraph();
     if (currentStream === this) currentStream = null;
-    this.options.onEnergy?.(0);
     this.settleDone();
     return this.done;
   }
@@ -674,7 +668,6 @@ export class PCMPlaybackQueue {
     void this.releaseAudioGraph()
       .then(() => {
         if (currentStream === this) currentStream = null;
-        this.options.onEnergy?.(0);
         voiceEvent("playback_ended", this.options.trace, {
           path: "stream",
           queueDepth: 0,
@@ -703,7 +696,6 @@ export class PCMPlaybackQueue {
     this.pendingBufferIds.clear();
     await this.releaseAudioGraph().catch(() => {});
     if (currentStream === this) currentStream = null;
-    this.options.onEnergy?.(0);
     this.options.onError?.(error);
     this.settleDone();
   }

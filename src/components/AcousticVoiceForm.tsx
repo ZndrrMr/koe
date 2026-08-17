@@ -4,48 +4,24 @@ import Svg, { Circle, G, Line, Path } from "react-native-svg";
 
 import { useConversationPalette } from "@/theme/conversation";
 import type { VoicePhase } from "@/voice/lifecycle";
-import { ACOUSTIC_PRESENTATION } from "@/voice/acousticVisual";
+import {
+  ACOUSTIC_PRESENTATION,
+  type AcousticPlateKind,
+} from "@/voice/acousticVisual";
 
 type Props = {
   phase: VoicePhase;
-  energy: number;
   compact?: boolean;
   showLabels?: boolean;
   testID?: string;
-};
-
-type PlateKind =
-  | "ready"
-  | "listening"
-  | "understanding"
-  | "speaking"
-  | "note"
-  | "recovery";
-
-const PLATE_BY_PHASE: Record<VoicePhase, PlateKind> = {
-  idle: "ready",
-  listening: "listening",
-  interimTranscript: "listening",
-  understanding: "understanding",
-  firstReply: "understanding",
-  speaking: "speaking",
-  interrupted: "listening",
-  transcriptCheck: "note",
-  feedback: "note",
-  retryListening: "listening",
-  comparing: "understanding",
-  responseRetry: "understanding",
-  success: "ready",
-  recoverableError: "recovery",
 };
 
 /**
  * The production voice plate is intentionally static. State, copy, and the
  * current action carry meaning without relying on animation or audio energy.
  */
-export function AcousticVoiceForm({
+export const AcousticVoiceForm = React.memo(function AcousticVoiceForm({
   phase,
-  energy: _energy,
   compact = false,
   showLabels = true,
   testID = "acoustic-voice-form",
@@ -71,7 +47,7 @@ export function AcousticVoiceForm({
         ]}
       >
         <VoiceStatePlate
-          kind={PLATE_BY_PHASE[phase]}
+          kind={presentation.plate}
           color={phase === "recoverableError" ? palette.error : palette.seam}
           size={plateSize}
         />
@@ -92,14 +68,14 @@ export function AcousticVoiceForm({
       ) : null}
     </View>
   );
-}
+});
 
 function VoiceStatePlate({
   kind,
   color,
   size,
 }: {
-  kind: PlateKind;
+  kind: AcousticPlateKind;
   color: string;
   size: number;
 }) {

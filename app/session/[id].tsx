@@ -51,13 +51,8 @@ export default function SessionScreen() {
   }>();
   const session = useSession();
   const { engine, state: engineState } = useConversationEngine(id, intro);
-  const {
-    draftTranscript,
-    audioEnergy,
-    retryingTurnId,
-    showCoda,
-    handsFreeActive,
-  } = engineState;
+  const { draftTranscript, retryingTurnId, showCoda, handsFreeActive } =
+    engineState;
   const [dismissedCorrectionId, setDismissedCorrectionId] = useState<
     string | null
   >(null);
@@ -109,10 +104,6 @@ export default function SessionScreen() {
           draftTranscript:
             reviewPhase === "transcriptCheck"
               ? "明日は友達と京都へ行きます。"
-              : undefined,
-          audioEnergy:
-            reviewPhase === "listening" || reviewPhase === "speaking"
-              ? 0.62
               : undefined,
         });
         if (reviewPhase === "recoverableError") {
@@ -321,11 +312,7 @@ export default function SessionScreen() {
         ) : (
           <>
             <View style={[styles.stage, compact && styles.compactStage]}>
-              <AcousticVoiceForm
-                phase={session.voice.phase}
-                energy={audioEnergy}
-                compact={compact}
-              />
+              <AcousticVoiceForm phase={session.voice.phase} compact={compact} />
               <Text style={[styles.stateDetail, { color: palette.muted }]}>
                 {VOICE_PHASE_COPY[session.voice.phase].detail}
               </Text>

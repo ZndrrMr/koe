@@ -1,49 +1,47 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+
 import {
+  ACOUSTIC_MOTION_POLICY,
   ACOUSTIC_PRESENTATION,
-  advanceEnergyTrace,
-  INITIAL_ENERGY_TRACE,
-  voiceSeamPaths,
 } from "./acousticVisual";
 
-test("muted lifecycle states retain distinct visible meanings", () => {
-  assert.equal(ACOUSTIC_PRESENTATION.listening.shape, "open");
-  assert.equal(ACOUSTIC_PRESENTATION.understanding.shape, "compressed");
-  assert.equal(ACOUSTIC_PRESENTATION.speaking.shape, "open");
-  assert.notEqual(
-    ACOUSTIC_PRESENTATION.listening.eyebrow,
-    ACOUSTIC_PRESENTATION.speaking.eyebrow,
+test("the six voice plates carry distinct static meanings", () => {
+  const primaryPhases = [
+    "idle",
+    "listening",
+    "understanding",
+    "speaking",
+    "feedback",
+    "recoverableError",
+  ] as const;
+
+  assert.equal(
+    new Set(primaryPhases.map((phase) => ACOUSTIC_PRESENTATION[phase].plate))
+      .size,
+    primaryPhases.length,
   );
-  assert.equal(ACOUSTIC_PRESENTATION.transcriptCheck.shape, "split");
-  assert.equal(ACOUSTIC_PRESENTATION.feedback.shape, "split");
-  assert.equal(ACOUSTIC_PRESENTATION.retryListening.shape, "open");
-  assert.equal(ACOUSTIC_PRESENTATION.comparing.shape, "comparing");
-  assert.equal(ACOUSTIC_PRESENTATION.responseRetry.shape, "answering");
-  assert.equal(ACOUSTIC_PRESENTATION.interrupted.shape, "broken");
-  assert.equal(ACOUSTIC_PRESENTATION.success.shape, "resolved");
+  assert.equal(ACOUSTIC_PRESENTATION.success.plate, "ready");
+  assert.notEqual(
+    ACOUSTIC_PRESENTATION.success.titleEn,
+    ACOUSTIC_PRESENTATION.idle.titleEn,
+  );
 });
 
-test("live trace width follows measured energy and non-live states decay", () => {
-  const quiet = advanceEnergyTrace(INITIAL_ENERGY_TRACE, "listening", 0.05);
-  const loud = advanceEnergyTrace(quiet, "listening", 0.9);
-  const compressed = advanceEnergyTrace(loud, "understanding", 0.9);
-
-  assert.ok(loud.at(-1)! > quiet.at(-1)!);
-  assert.ok(compressed.every((sample, index) => sample <= loud[index]));
+test("every lifecycle state remains understandable without motion", () => {
+  for (const presentation of Object.values(ACOUSTIC_PRESENTATION)) {
+    assert.ok(presentation.eyebrow.length > 0);
+    assert.ok(presentation.titleJa.length > 0);
+    assert.ok(presentation.titleEn.length > 0);
+    assert.ok(presentation.accessibilityLabel.length > 0);
+    assert.doesNotMatch(presentation.accessibilityLabel, /energy|responds/i);
+  }
 });
 
-test("voice seam geometry is finite and preserves energy differences", () => {
-  const quiet = voiceSeamPaths(Array(15).fill(0.05), {
-    width: 240,
-    height: 320,
+test("the acoustic surface has a zero continuous-update motion budget", () => {
+  assert.deepEqual(ACOUSTIC_MOTION_POLICY, {
+    mode: "static",
+    continuousVisualUpdates: 0,
+    transitionDurationMs: 0,
   });
-  const loud = voiceSeamPaths(Array(15).fill(0.8), {
-    width: 240,
-    height: 320,
-  });
-
-  assert.equal(quiet.envelope.includes("NaN"), false);
-  assert.equal(loud.center.includes("NaN"), false);
-  assert.ok(Math.max(...loud.halfWidths) > Math.max(...quiet.halfWidths));
 });

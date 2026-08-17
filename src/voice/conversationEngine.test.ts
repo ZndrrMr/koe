@@ -178,6 +178,7 @@ function createHarness(
   let queueCreated = 0;
   let queueFinished = 0;
   let queueStopped = 0;
+  let queueRequestedEnergy = false;
   let activeQueues = 0;
   let maximumActiveQueues = 0;
   let playbackBehavior:
@@ -278,6 +279,7 @@ function createHarness(
     },
     audio: {
       createQueue: (queueOptions) => {
+        queueRequestedEnergy ||= "onEnergy" in queueOptions;
         queueCreated += 1;
         activeQueues += 1;
         maximumActiveQueues = Math.max(maximumActiveQueues, activeQueues);
@@ -494,6 +496,9 @@ function createHarness(
     get queueStopped() {
       return queueStopped;
     },
+    get queueRequestedEnergy() {
+      return queueRequestedEnergy;
+    },
     get activeQueues() {
       return activeQueues;
     },
@@ -706,6 +711,32 @@ test("backgrounding before hands-free starts does not invent an interruption", a
   assert.equal(harness.engine.getState().phase, "idle");
   assert.equal(harness.state.voice.errorKind, undefined);
   assert.equal(harness.transcriptInputs.length, 0);
+});
+
+test("meter samples do not publish visual updates while listening", async () => {
+  const harness = createHarness();
+  await harness.engine.startListening();
+  let publishedUpdates = 0;
+  const unsubscribe = harness.engine.subscribe(() => {
+    publishedUpdates += 1;
+  });
+
+  for (let sample = 0; sample < 1_000; sample += 1) {
+    harness.transcriptInputs[0]!.onAudioEnergy((sample % 10) / 10);
+  }
+
+  unsubscribe();
+  assert.equal(publishedUpdates, 0);
+});
+
+test("streamed playback does not request acoustic meter work", async () => {
+  const harness = createHarness();
+
+  await harness.injectRecorded("音声で答えてください");
+  await flush();
+
+  assert.equal(harness.queueCreated, 1);
+  assert.equal(harness.queueRequestedEnergy, false);
 });
 
 test("intentional barge-in transfers playback to listening without an error state", async () => {

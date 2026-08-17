@@ -26,11 +26,12 @@ test("the production surface implements the approved Blue Marginalia tokens", as
 });
 
 test("only the four approved production states use generated artwork", async () => {
-  const [onboarding, home, session, plate] = await Promise.all([
+  const [onboarding, home, session, plate, presentation] = await Promise.all([
     source("app/onboarding/welcome.tsx"),
     source("app/index.tsx"),
     source("app/session/[id].tsx"),
     source("src/components/AcousticVoiceForm.tsx"),
+    source("src/voice/acousticVisual.ts"),
   ]);
 
   assert.match(onboarding, /useKoeIllustration\("microphoneEducation"\)/);
@@ -38,7 +39,11 @@ test("only the four approved production states use generated artwork", async () 
   assert.match(session, /useKoeIllustration\("recovery"\)/);
   assert.match(session, /useKoeIllustration\("coda"\)/);
   assert.doesNotMatch(plate, /Image|useKoeIllustration|\.webp/);
-  assert.match(plate, /Record<VoicePhase, PlateKind>/);
+  assert.match(plate, /kind=\{presentation\.plate\}/);
+  assert.match(
+    presentation,
+    /Record<VoicePhase, AcousticPresentation>/,
+  );
 });
 
 test("production UI stays calm and review state injection stays development-only", async () => {
