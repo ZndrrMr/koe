@@ -1,0 +1,109 @@
+{
+  "family": "Blue Marginalia / 声の余白",
+  "version": 1,
+  "colorSpace": "sRGB",
+  "alpha": "straight",
+  "format": "lossless WebP",
+  "runtimeBytes": 359604,
+  "palette": {
+    "lightInk": "#2F5F8F",
+    "lightCanvas": "#F4EFE4",
+    "darkInk": "#A9C6D5",
+    "darkCanvas": "#111B25"
+  },
+  "runtimeBoundary": {
+    "generatedRasterScreens": [
+      "fresh microphone education",
+      "home / start",
+      "recoverable error",
+      "ended / coda"
+    ],
+    "generatedRasterExcluded": [
+      "listening",
+      "understanding",
+      "tutor speaking",
+      "compact feedback"
+    ],
+    "endingReuse": "homeStart at 120×96 pt"
+  },
+  "assets": {
+    "microphoneEducation": {
+      "files": {
+        "light": "microphone-education-light.webp",
+        "dark": "microphone-education-dark.webp"
+      },
+      "pixelSize": [1200, 960],
+      "masterAspectRatio": "5:4",
+      "placementPoints": [310, 240],
+      "resizeMode": "contain",
+      "crop": "none",
+      "focalRegion": "central 62% width; 18–65% height",
+      "clearEdgeMinimum": "18%",
+      "calmLowerField": "35%",
+      "screens": ["launch / unresolved microphone permission"],
+      "accessibility": {
+        "role": "image",
+        "label": "Two engraved voice contours turn toward one another."
+      }
+    },
+    "homeStart": {
+      "files": {
+        "light": "home-start-light.webp",
+        "dark": "home-start-dark.webp"
+      },
+      "pixelSize": [1200, 960],
+      "masterAspectRatio": "5:4",
+      "placementPoints": [310, 248],
+      "resizeMode": "contain",
+      "crop": "none",
+      "focalRegion": "central 62% width; 18–65% height",
+      "clearEdgeMinimum": "18%",
+      "calmLowerField": "35%",
+      "screens": ["home / start", "ending confirmation at 120×96 pt"],
+      "accessibility": {
+        "role": "image",
+        "label": "Two engraved voice contours exchange a single thread."
+      }
+    },
+    "recovery": {
+      "files": {
+        "light": "recovery-light.webp",
+        "dark": "recovery-dark.webp"
+      },
+      "pixelSize": [600, 600],
+      "masterAspectRatio": "1:1",
+      "placementPoints": [144, 144],
+      "resizeMode": "contain",
+      "crop": "none",
+      "focalRegion": "central 62% width and height",
+      "clearEdgeMinimum": "18%",
+      "screens": ["recoverable error"],
+      "accessibility": {
+        "role": "decorative",
+        "reason": "The live cause, Try again action, and safe exit fully communicate recovery."
+      }
+    },
+    "coda": {
+      "files": {
+        "light": "coda-light.webp",
+        "dark": "coda-dark.webp"
+      },
+      "pixelSize": [1200, 960],
+      "masterAspectRatio": "5:4",
+      "placementPoints": [280, 180],
+      "resizeMode": "cover",
+      "crop": {
+        "anchor": "center",
+        "visibleSourceRectNormalized": [0, 0.0982, 1, 0.8036],
+        "resultAspectRatio": "14:9"
+      },
+      "focalRegion": "central 54.5% width; 39.2–60.8% height",
+      "clearEdgeMinimum": "18% in the master and after the 14:9 crop",
+      "screens": ["ended / coda with one or more saved moments"],
+      "accessibility": {
+        "role": "decorative",
+        "reason": "Saved moments remain live text in the same reading order."
+      }
+    }
+  }
+}

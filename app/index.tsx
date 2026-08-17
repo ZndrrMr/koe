@@ -13,9 +13,13 @@ import {
 } from "@/theme/conversation";
 import { CONVERSATION_TARGET } from "@/theme/interaction";
 import { useFirstUse } from "@/stores/useFirstUse";
+import ArtFamilyProofScreen from "@/art/ArtFamilyProofScreen";
 
 export default function IndexScreen() {
   const onboardingDone = useFirstUse((state) => state.onboardingDone);
+  if (__DEV__ && process.env.EXPO_PUBLIC_KOE_REVIEW_ROUTE === "art-family") {
+    return <ArtFamilyProofScreen />;
+  }
   return onboardingDone ? (
     <ConversationHome />
   ) : (

@@ -65,6 +65,7 @@ export default function RootLayout() {
       });
       return;
     }
+    if (reviewRoute === "art-family") return;
     if (!onboardingDone && first !== "onboarding") {
       router.replace("/onboarding/welcome");
     }

@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Koe image family proof</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f4efe4;
+        --raised: #fbf8f0;
+        --ink: #191d20;
+        --muted: #5c5b55;
+        --blue: #2f5f8f;
+        --ochre: #d7ad4b;
+        --hairline: #b7ab96;
+        --error: #8e3f34;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #e7dfd1;
+        color: var(--ink);
+        font-family: "Avenir Next", Avenir, sans-serif;
+      }
+
+      main {
+        width: min(2380px, calc(100vw - 48px));
+        margin: 24px auto 80px;
+      }
+
+      header.page-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 48px;
+        align-items: end;
+        padding: 36px 40px;
+        border: 1px solid var(--hairline);
+        background: var(--raised);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font:
+          52px/1.05 "Iowan Old Style",
+          Georgia,
+          serif;
+      }
+
+      h2 {
+        font:
+          34px/1.1 "Iowan Old Style",
+          Georgia,
+          serif;
+      }
+
+      .kicker {
+        margin-bottom: 12px;
+        color: var(--blue);
+        font:
+          700 11px/1.2 ui-monospace,
+          monospace;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .intro {
+        max-width: 780px;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.55;
+      }
+
+      .section {
+        margin-top: 24px;
+        padding: 32px;
+        border: 1px solid var(--hairline);
+        background: var(--raised);
+      }
+
+      .section-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 32px;
+        align-items: end;
+        margin-bottom: 28px;
+      }
+
+      .section-note {
+        max-width: 680px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .candidate-groups {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+      }
+
+      .candidate-group {
+        padding: 24px;
+        border: 1px solid var(--hairline);
+        background: var(--paper);
+      }
+
+      .candidate-group-head {
+        min-height: 122px;
+        display: grid;
+        grid-template-columns: 1fr 1.4fr;
+        gap: 20px;
+        margin-bottom: 18px;
+      }
+
+      .candidate-group h3 {
+        font:
+          27px/1.12 "Iowan Old Style",
+          Georgia,
+          serif;
+      }
+
+      .candidate-group p {
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .candidate-row,
+      .final-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: flex-start;
+      }
+
+      .proof-device {
+        --device-width: 390px;
+        --device-height: 844px;
+        --scale: 0.42;
+        width: calc(var(--device-width) * var(--scale));
+      }
+
+      .proof-device.final {
+        --scale: 0.45;
+      }
+
+      .proof-device.compact {
+        --device-width: 375px;
+        --device-height: 667px;
+        --scale: 0.45;
+      }
+
+      .device-viewport {
+        width: calc(var(--device-width) * var(--scale));
+        height: calc(var(--device-height) * var(--scale));
+        overflow: hidden;
+        border: calc(7px * var(--scale)) solid #111;
+        border-radius: calc(34px * var(--scale));
+        background: #111;
+      }
+
+      .device {
+        width: var(--device-width);
+        height: var(--device-height);
+        transform: scale(var(--scale));
+        transform-origin: 0 0;
+        overflow: hidden;
+        background: var(--canvas);
+        color: var(--phone-ink);
+      }
+
+      .device.light {
+        --canvas: #f4efe4;
+        --phone-raised: #fbf8f0;
+        --phone-ink: #191d20;
+        --phone-muted: #5c5b55;
+        --phone-blue: #2f5f8f;
+        --phone-ochre: #d7ad4b;
+        --phone-rule: #b7ab96;
+        --phone-error: #8e3f34;
+      }
+
+      .device.dark {
+        --canvas: #111b25;
+        --phone-raised: #182733;
+        --phone-ink: #f1ebdd;
+        --phone-muted: #aeb7ba;
+        --phone-blue: #a9c6d5;
+        --phone-ochre: #d8b75c;
+        --phone-rule: #51606b;
+        --phone-error: #e1a49d;
+      }
+
+      .device-inner {
+        height: 100%;
+        padding: 0 24px 24px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .phone-head {
+        min-height: 80px;
+        display: flex;
+        align-items: center;
+      }
+
+      .phone-lockup {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+      }
+
+      .phone-lockup .voice {
+        font:
+          29px/34px "Hiragino Mincho ProN",
+          serif;
+      }
+
+      .phone-lockup .koe,
+      .phone-state {
+        color: var(--phone-muted);
+        font:
+          700 8px/12px ui-monospace,
+          monospace;
+        letter-spacing: 0.18em;
+      }
+
+      .phone-art {
+        align-self: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+
+      .phone-art.onboarding {
+        width: 310px;
+        height: 240px;
+      }
+
+      .phone-art.home {
+        width: 310px;
+        height: 248px;
+      }
+
+      .phone-art.recovery {
+        width: 144px;
+        height: 144px;
+        margin: 72px auto 20px;
+      }
+
+      .phone-art.ending {
+        width: 120px;
+        height: 96px;
+        margin: 96px auto 26px;
+      }
+
+      .phone-art.coda {
+        width: 280px;
+        height: 180px;
+        margin: 18px auto;
+      }
+
+      .phone-art img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+
+      .phone-art.coda img {
+        object-fit: cover;
+      }
+
+      .candidate-art img {
+        object-fit: contain;
+      }
+
+      .phone-title {
+        margin-top: 10px;
+        font:
+          36px/40px "Iowan Old Style",
+          Georgia,
+          serif;
+      }
+
+      .phone-title.medium {
+        font-size: 30px;
+        line-height: 35px;
+      }
+
+      .phone-jp {
+        margin-top: 8px;
+        font:
+          17px/26px "Hiragino Mincho ProN",
+          serif;
+      }
+
+      .phone-copy {
+        margin-top: 8px;
+        color: var(--phone-muted);
+        font-size: 15px;
+        line-height: 22px;
+      }
+
+      .phone-action {
+        min-height: 64px;
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-top: 1px solid var(--phone-blue);
+        border-bottom: 1px solid var(--phone-blue);
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .phone-secondary {
+        min-height: 52px;
+        margin-top: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-top: 1px solid var(--phone-rule);
+        border-bottom: 1px solid var(--phone-rule);
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .conversation-stage {
+        width: 300px;
+        height: 300px;
+        margin: 0 auto;
+        display: grid;
+        place-items: center;
+      }
+
+      .conversation-stage svg {
+        width: 204px;
+        height: 204px;
+        color: var(--phone-blue);
+      }
+
+      .centered {
+        text-align: center;
+      }
+
+      .utterance,
+      .moments {
+        margin-top: 28px;
+        padding: 16px 0;
+        border-top: 1px solid var(--phone-rule);
+        border-bottom: 1px solid var(--phone-rule);
+        font:
+          20px/29px "Hiragino Mincho ProN",
+          serif;
+      }
+
+      .moments {
+        font-size: 16px;
+        line-height: 24px;
+      }
+
+      .candidate-label {
+        margin-top: 8px;
+        display: flex;
+        gap: 6px;
+        color: var(--muted);
+        font:
+          700 10px/1.3 ui-monospace,
+          monospace;
+        letter-spacing: 0.08em;
+      }
+
+      .candidate-label .accepted {
+        color: var(--blue);
+      }
+
+      .candidate-label .rejected {
+        color: var(--error);
+      }
+
+      .final-grid {
+        display: grid;
+        gap: 22px;
+      }
+
+      .final-band {
+        padding: 22px;
+        border: 1px solid var(--hairline);
+        background: var(--paper);
+      }
+
+      .final-band h3 {
+        margin-bottom: 16px;
+        font-size: 16px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .only-candidates,
+      .only-finals {
+        display: block;
+      }
+
+      html[data-view="candidates"] .only-finals,
+      html[data-view="finals"] .only-candidates {
+        display: none;
+      }
+
+      @media (max-width: 1400px) {
+        .candidate-groups {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="page-head">
+        <div>
+          <div class="kicker">ZAN-910 · production art proof</div>
+          <h1>Blue Marginalia / 声の余白</h1>
+        </div>
+        <p class="intro">
+          Every phone below is a real 390×844 or 375×667 CSS canvas. Generated
+          rasters contain illustration only; all copy, state, actions, and the
+          live conversation plate remain code-native.
+        </p>
+      </header>
+
+      <section class="section only-candidates">
+        <div class="section-head">
+          <div>
+            <div class="kicker">01 · 16 generated candidates</div>
+            <h2>Placement-first curation</h2>
+          </div>
+          <p class="section-note">
+            Candidate crops are shown inside their intended 390×844 composition.
+            Final generation follows the chosen structure; a label marks what
+            was carried forward or rejected.
+          </p>
+        </div>
+        <div class="candidate-groups" id="candidate-groups"></div>
+      </section>
+
+      <section class="section only-finals">
+        <div class="section-head">
+          <div>
+            <div class="kicker">02 · accepted family</div>
+            <h2>Launch through coda, one art direction</h2>
+          </div>
+          <p class="section-note">
+            Conversation is intentionally raster-free. Ending reuses the home
+            plate at 120×96 pt. Recovery and coda remain subordinate to live
+            explanatory text.
+          </p>
+        </div>
+        <div class="final-grid" id="final-grid"></div>
+      </section>
+    </main>
+
+    <script>
+      const params = new URLSearchParams(location.search);
+      document.documentElement.dataset.view = params.get("view") || "all";
+
+      const base = "../../assets/illustrations/koe/";
+      const cropBase = "candidate-crops/";
+
+      const candidateGroups = [
+        {
+          title: "Fresh microphone education",
+          type: "onboarding",
+          body: "B supplied the open-plane structure. A read as anatomy, C as a wave, and D disappeared at placement size.",
+          candidates: [
+            ["microphone-a.webp", "A", "rejected"],
+            ["microphone-b.webp", "B · carried forward", "accepted"],
+            ["microphone-c.webp", "C", "rejected"],
+            ["microphone-d.webp", "D", "rejected"],
+          ],
+        },
+        {
+          title: "Home / start",
+          type: "home",
+          body: "B supplied the exchanged thread and asymmetry. A was too literal, C too dense, and D too slight beside the proposition.",
+          candidates: [
+            ["home-a.webp", "A", "rejected"],
+            ["home-b.webp", "B · carried forward", "accepted"],
+            ["home-c.webp", "C", "rejected"],
+            ["home-d.webp", "D", "rejected"],
+          ],
+        },
+        {
+          title: "Recoverable error",
+          type: "recovery",
+          body: "The proof rejected every literal result: A/B resembled loading, C collapsed below 7 pt high, and D invented a leaf. The accepted square plate recomposes the home contours around a broken thread.",
+          candidates: [
+            ["recovery-a.webp", "A", "rejected"],
+            ["recovery-b.webp", "B", "rejected"],
+            ["recovery-c.webp", "C · idea only", "rejected"],
+            ["recovery-d.webp", "D", "rejected"],
+          ],
+        },
+        {
+          title: "Ended / coda",
+          type: "coda",
+          body: "A supplied three threaded fragments. B became literal paper, C a braid, and D a landscape-like wave.",
+          candidates: [
+            ["coda-a.webp", "A · carried forward", "accepted"],
+            ["coda-b.webp", "B", "rejected"],
+            ["coda-c.webp", "C", "rejected"],
+            ["coda-d.webp", "D", "rejected"],
+          ],
+        },
+      ];
+
+      const screenNames = [
+        "onboarding",
+        "home",
+        "conversation",
+        "recovery",
+        "ending",
+        "coda",
+      ];
+
+      function illustration(type, src, theme, candidate = false) {
+        if (type === "conversation") return listeningPlate();
+        const asset =
+          src ||
+          `${base}${type === "onboarding" ? "microphone-education" : type === "home" || type === "ending" ? "home-start" : type}-${theme}.webp`;
+        return `<div class="phone-art ${type} ${candidate ? "candidate-art" : ""}"><img src="${asset}" alt="" /></div>`;
+      }
+
+      function listeningPlate() {
+        return `<div class="conversation-stage"><svg viewBox="0 0 204 204" aria-hidden="true"><g fill="none" stroke="currentColor"><circle cx="102" cy="102" r="82" opacity=".24"/><circle cx="102" cy="102" r="58" opacity=".48"/><path d="M74 128c14-48 42-48 56 0M80 105c12-34 32-34 44 0M91 82c7-17 15-17 22 0" stroke-width="2"/><path d="M102 20v24M102 160v24M20 102h24M160 102h24" opacity=".55"/></g></svg></div>`;
+      }
+
+      function phoneBody(type, art) {
+        const body = {
+          onboarding: `${art}<div class="phone-state centered">FIRST VOICE</div><div class="phone-title">Let Koe hear your voice.</div><div class="phone-jp">声を聞かせてください。</div><div class="phone-copy">Microphone access keeps one open conversation moving.</div><div class="phone-action"><span>Continue</span><span>→</span></div>`,
+          home: `${art}<div class="phone-title">Speak, and let the conversation follow.</div><div class="phone-jp">声を出す。会話になる。</div><div class="phone-copy">Japanese or English. Koe listens, answers aloud, and keeps the exchange open.</div><div class="phone-action"><span>Start speaking</span><span>→</span></div>`,
+          conversation: `${art}<div class="phone-state centered">LISTENING / 聞いています</div><div class="phone-title centered">どうぞ、続けて。</div><div class="phone-copy centered">Koe is listening. Pause naturally when you are finished.</div><div class="utterance">「週末は友達と京都へ行きます。」</div><div class="phone-action"><span>Listening · tap to pause</span><span>声</span></div>`,
+          recovery: `${art}<div class="phone-state centered" style="color:var(--phone-error)">CONNECTION PAUSED</div><div class="phone-title medium">Koe lost that part of the exchange.</div><div class="phone-copy">Your last spoken turn did not reach Koe. Nothing was added.</div><div class="phone-action"><span>Try again</span><span>→</span></div><div class="phone-secondary">End conversation</div>`,
+          ending: `${art}<div class="phone-state centered">ENDING / 終わりますか</div><div class="phone-title">Leave the conversation here?</div><div class="phone-copy">Koe will keep the moments you saved. You can continue speaking instead.</div><div class="phone-action"><span>Keep talking</span><span>→</span></div><div class="phone-secondary">Finish session</div>`,
+          coda: `${art}<div class="phone-state centered">TODAY’S THREAD</div><div class="phone-title medium">Three moments worth keeping.</div><div class="moments">週末は友達と京都へ行きます。<br/>「に」と「で」の使い分け<br/>もう少しゆっくり話す</div><div class="phone-action"><span>Return home</span><span>→</span></div>`,
+        };
+        return body[type];
+      }
+
+      function phone(type, theme, options = {}) {
+        const art = illustration(type, options.src, theme, options.candidate);
+        return `<div class="proof-device ${options.final ? "final" : ""} ${options.compact ? "compact" : ""}"><div class="device-viewport"><div class="device ${theme}"><div class="device-inner"><div class="phone-head"><div class="phone-lockup"><span class="voice">声</span><span class="koe">KOE</span></div></div>${phoneBody(type, art)}</div></div></div>${options.label ? `<div class="candidate-label"><span class="${options.verdict}">${options.label}</span></div>` : ""}</div>`;
+      }
+
+      document.getElementById("candidate-groups").innerHTML = candidateGroups
+        .map(
+          (group) =>
+            `<article class="candidate-group"><div class="candidate-group-head"><h3>${group.title}</h3><p>${group.body}</p></div><div class="candidate-row">${group.candidates
+              .map(([file, label, verdict]) =>
+                phone(group.type, "light", {
+                  candidate: true,
+                  label,
+                  src: cropBase + file,
+                  verdict,
+                }),
+              )
+              .join("")}</div></article>`,
+        )
+        .join("");
+
+      const finalBands = [
+        ["390×844 · light", "light", false],
+        ["390×844 · dark", "dark", false],
+        ["375×667 · compact light", "light", true],
+      ];
+
+      document.getElementById("final-grid").innerHTML = finalBands
+        .map(
+          ([title, theme, compact]) =>
+            `<div class="final-band"><h3>${title}</h3><div class="final-row">${screenNames
+              .map((screen) => phone(screen, theme, { compact, final: true }))
+              .join("")}</div></div>`,
+        )
+        .join("");
+    </script>
+  </body>
+</html>
