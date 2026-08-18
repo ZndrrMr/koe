@@ -6,9 +6,9 @@ export const HANDS_FREE_ENDPOINT = {
   /** Fillers and self-corrections need a wider pause window. */
   hesitationSilenceMs: 2_600,
   /** Native speech-end is a strong signal, but leaves room for a restart. */
-  speechEndGraceMs: 550,
+  speechEndGraceMs: 350,
   /** A provider final result is the strongest endpoint signal. */
-  finalResultGraceMs: 300,
+  finalResultGraceMs: 120,
   /** Avoid turning a tap, cough, or audio-session warmup into a turn. */
   minimumCaptureMs: 400,
   /** Prevent an abandoned recognizer from owning the microphone forever. */

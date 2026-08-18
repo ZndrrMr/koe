@@ -21,6 +21,7 @@ import {
 import {
   INWORLD_ROUTER_AUDIO_CONTRACT,
   INWORLD_STANDALONE_AUDIO_CONTRACT,
+  KOE_V1_MAX_REPLY_TOKENS,
   KOE_V1_ROUTER_MODEL,
 } from "../../shared/inworld";
 
@@ -138,7 +139,7 @@ export async function* streamConversation(opts: {
     // The deployed Worker accepts this field too, so current app builds avoid
     // its retired historical default even before the Worker is redeployed.
     model: KOE_V1_ROUTER_MODEL,
-    maxTokens: 300,
+    maxTokens: KOE_V1_MAX_REPLY_TOKENS,
     stream: true,
   };
 

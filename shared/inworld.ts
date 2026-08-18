@@ -15,6 +15,19 @@ export const KOE_V1_VOICE_ID = "Asuka" as const;
  */
 export const KOE_V1_ROUTER_MODEL = "auto" as const;
 
+/**
+ * Keep conversational replies bounded to the one-or-two-sentence product
+ * contract. This prevents an obsolete or newly deployed Worker default from
+ * silently lengthening a spoken turn.
+ */
+export const KOE_V1_MAX_REPLY_TOKENS = 160 as const;
+
+/**
+ * Inworld documents 1.5 Mini as its latency-first stable model (~120 ms
+ * median) while retaining Japanese support and the same Router PCM contract.
+ */
+export const KOE_V1_TTS_MODEL = "inworld-tts-1.5-mini" as const;
+
 export const INWORLD_ROUTER_AUDIO_CONTRACT = {
   encoding: "pcm_s16le",
   sampleRate: 48_000,

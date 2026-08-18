@@ -27,6 +27,9 @@ for (let offset = 0; offset < pcm.length; offset += 1_920) {
   chunks.push(pcm.subarray(offset, offset + 1_920).toString("base64"));
 }
 const routerChunkDelayMs = Number(process.env.KOE_ROUTER_CHUNK_DELAY_MS ?? 0);
+const routerInitialDelayMs = Number(
+  process.env.KOE_ROUTER_INITIAL_DELAY_MS ?? 0,
+);
 
 const recordedFixtureDirectory = process.env.KOE_RECORDED_FIXTURE_DIR;
 const recordedContentTypes = {
@@ -44,6 +47,9 @@ function json(response, status, value, headers = {}) {
 }
 
 async function streamRouterFixture(response) {
+  if (routerInitialDelayMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, routerInitialDelayMs));
+  }
   response.writeHead(200, {
     "Content-Type": "text/event-stream; charset=utf-8",
     "Cache-Control": "no-store",

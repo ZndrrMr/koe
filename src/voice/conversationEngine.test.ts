@@ -9,6 +9,7 @@ import type { ChatTurn } from "../stores/useSession";
 import { INITIAL_VOICE_LIFECYCLE, type VoiceLifecycle } from "./lifecycle";
 import {
   ConversationEngine,
+  REPLY_HISTORY_MESSAGE_LIMIT,
   RecordedAudioInjectionUnavailableError,
   type ConversationDependencies,
   type ConversationPhase,
@@ -176,6 +177,7 @@ function createHarness(
   }> = [];
   let audioStopped = 0;
   let queueCreated = 0;
+  let queuePrepared = 0;
   let queueFinished = 0;
   let queueStopped = 0;
   let queueRequestedEnergy = false;
@@ -299,6 +301,9 @@ function createHarness(
           gate.resolve();
         };
         return {
+          prepare: async () => {
+            queuePrepared += 1;
+          },
           enqueue: async () => {
             if (playbackBehavior === "fail-enqueue") {
               const error = new Error("invalid encoded audio");
@@ -490,6 +495,9 @@ function createHarness(
     get queueCreated() {
       return queueCreated;
     },
+    get queuePrepared() {
+      return queuePrepared;
+    },
     get queueFinished() {
       return queueFinished;
     },
@@ -639,6 +647,26 @@ test("long speech keeps extending the endpoint and hesitant speech gets a wider 
   assert.equal(harness.engine.getState().phase, "listening");
 });
 
+test("long sessions send only the recent local context to the reply model", async () => {
+  const harness = createHarness();
+  harness.setReplyFactory(({ userTurn }) => reply(`reply:${userTurn}`));
+
+  for (let index = 0; index < 12; index += 1) {
+    await harness.injectRecorded(`turn ${index}`);
+  }
+
+  const finalRequest = harness.replyRequests.at(-1)!;
+  assert.equal(finalRequest.history.length, REPLY_HISTORY_MESSAGE_LIMIT);
+  assert.deepEqual(finalRequest.history[0], {
+    role: "user",
+    content: "turn 3",
+  });
+  assert.deepEqual(finalRequest.history.at(-1), {
+    role: "assistant",
+    content: "reply:turn 10",
+  });
+});
+
 test("no speech and a false start retry quietly while hands-free remains active", async () => {
   const harness = createHarness();
   await harness.engine.startHandsFree();
@@ -736,6 +764,7 @@ test("streamed playback does not request acoustic meter work", async () => {
   await flush();
 
   assert.equal(harness.queueCreated, 1);
+  assert.equal(harness.queuePrepared, 1);
   assert.equal(harness.queueRequestedEnergy, false);
 });
 
@@ -826,7 +855,9 @@ test("a validated provider MP3 is persisted and played without a second synthesi
   assert.equal(harness.savedAudio.length, 1);
   assert.deepEqual(harness.synthesizedTexts, []);
   assert.deepEqual(harness.playedAudioUris, [assistant.audioUri]);
-  assert.equal(harness.queueCreated, 0);
+  assert.equal(harness.queueCreated, 1);
+  assert.equal(harness.queuePrepared, 1);
+  assert.equal(harness.queueStopped, 1);
   assert.equal(harness.engine.getState().phase, "idle");
 });
 

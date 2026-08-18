@@ -31,9 +31,16 @@ validated as raw signed 16-bit little-endian PCM, 48,000 Hz, mono. Standalone
 Inworld TTS is requested and validated as MP3, 24,000 Hz, mono. The canonical
 values live in `shared/inworld.ts`; app and Worker tests import the same values
 so a voice, encoding, sample-rate, or channel disagreement fails the build.
+Conversation requests use Inworld's latency-ranked `auto` router (including
+eligible Cerebras-backed models), retain only the latest eight exchanges, and
+cap a reply at 160 tokens. Asuka synthesis uses the latency-first stable
+`inworld-tts-1.5-mini` model; provider documentation reports about 120 ms
+median synthesis latency while retaining Japanese support.
 Streaming PCM chunks are converted to native audio buffers and fed to one
 gapless queue; the completed stream is saved as one WAV only after every chunk
-has arrived. The app also understands the deployed Worker's older JSON reply
+has arrived. The app prepares that native queue while the Router is generating,
+so audio-session startup does not extend the pause before Koe begins speaking.
+The app also understands the deployed Worker's older JSON reply
 shape by validating and directly playing its 24 kHz mono MP3. A text-only
 reply deliberately uses standalone `Asuka` TTS, and a missing or malformed
 fallback remains a recoverable error rather than a silent successful turn.

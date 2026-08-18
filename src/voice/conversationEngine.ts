@@ -10,6 +10,7 @@ import {
   endpointDelayMs,
   type EndpointSignal,
 } from "./turnTaking";
+import { INWORLD_ROUTER_AUDIO_CONTRACT } from "../../shared/inworld";
 
 export type ConversationPhase =
   | "idle"
@@ -73,6 +74,7 @@ export type SpeechInputHandle = {
 };
 
 export type PlaybackQueue = {
+  prepare?: (sampleRate: number, channels: number) => Promise<void>;
   enqueue: (
     audioBase64: string,
     sampleRate: number,
@@ -260,6 +262,12 @@ type ActiveCapture = {
   handle?: SpeechInputHandle;
   finalTranscript: string;
 };
+
+/**
+ * Sixteen prior messages retain eight local exchanges while preventing long
+ * sessions from growing the model's prefill cost on every spoken turn.
+ */
+export const REPLY_HISTORY_MESSAGE_LIMIT = 16;
 
 const LEGAL_TRANSITIONS: Record<ConversationPhase, ConversationPhase[]> = {
   idle: [
@@ -1000,8 +1008,10 @@ export class ConversationEngine {
     this.cancelPendingEnrichment("dispose");
     const capture = this.capture;
     this.capture = undefined;
+    const responseQueue = this.responseQueue;
+    this.responseQueue = undefined;
     void capture?.ready.then((handle) => handle.cancel()).catch(() => {});
-    void this.responseQueue?.stop().catch(() => {});
+    void responseQueue?.stop().catch(() => {});
     void this.dependencies.audio.stop();
     this.listeners.clear();
   }
@@ -1317,6 +1327,20 @@ export class ConversationEngine {
       });
     };
 
+    // The native playback graph has meaningful cold-start cost. Prepare it
+    // while the Router is generating so the first PCM chunk can play instead
+    // of waiting for audio-session setup after it arrives.
+    const preparedQueue = responseQueue();
+    void preparedQueue
+      .prepare?.(
+        INWORLD_ROUTER_AUDIO_CONTRACT.sampleRate,
+        INWORLD_ROUTER_AUDIO_CONTRACT.channels,
+      )
+      .catch(() => {
+        // enqueue() observes the same serialized preparation failure and sends
+        // it through the normal playback recovery path.
+      });
+
     try {
       const historyWithUser = this.dependencies.session
         .snapshot()
@@ -1325,7 +1349,9 @@ export class ConversationEngine {
         )
         .map((turn) => ({ role: turn.role, content: turn.textJa }));
       const generator = this.dependencies.replyStream({
-        history: historyWithUser.slice(0, -1),
+        history: historyWithUser
+          .slice(0, -1)
+          .slice(-REPLY_HISTORY_MESSAGE_LIMIT),
         userTurn: input.trimmed,
         signal: input.responseRun.signal,
         trace: input.trace,
@@ -1393,8 +1419,12 @@ export class ConversationEngine {
           if (receivedStreamAudio) {
             await responseQueue().finish();
           } else if (providerAudioUri) {
+            await queue?.stop();
+            this.responseQueue = undefined;
             await playAudioFile(providerAudioUri);
           } else {
+            await queue?.stop();
+            this.responseQueue = undefined;
             if (!isCurrent()) return;
             this.dependencies.telemetry(
               "response_fallback",

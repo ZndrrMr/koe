@@ -16,7 +16,9 @@ import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import {
   INWORLD_STANDALONE_AUDIO_CONTRACT,
+  KOE_V1_MAX_REPLY_TOKENS,
   KOE_V1_ROUTER_MODEL,
+  KOE_V1_TTS_MODEL,
   KOE_V1_VOICE_ID,
 } from "../../shared/inworld";
 import {
@@ -140,7 +142,8 @@ app.post("/tts", async (c) => {
   if (!ok) return c.text("rate limit", 429);
 
   // Cache key (KV holds pointer to R2 object; in v1 we just re-synth if missing).
-  const cacheKey = `tts:${await sha256Hex(`v1:${KOE_V1_VOICE_ID}|${text}|${speed}`)}`;
+  const ttsModel = c.env.INWORLD_MODEL || KOE_V1_TTS_MODEL;
+  const cacheKey = `tts:${await sha256Hex(`v2:${KOE_V1_VOICE_ID}|${ttsModel}|${text}|${speed}`)}`;
   const cached = await c.env.KOE_KV.get(cacheKey, "arrayBuffer");
   if (cached) {
     workerEvent("standalone_tts_cache_hit", trace, {
@@ -166,7 +169,7 @@ app.post("/tts", async (c) => {
     body: JSON.stringify({
       text,
       voiceId: KOE_V1_VOICE_ID,
-      modelId: c.env.INWORLD_MODEL || "inworld-tts-1.5-max",
+      modelId: ttsModel,
       audioConfig: { audioEncoding: "MP3", sampleRateHertz: 24000 },
     }),
   });
@@ -626,7 +629,7 @@ app.get("/stt/token", async (c) => {
   });
 });
 
-// ---- LLM chat (Inworld Router: Claude Opus 4.7 + Asuka TTS) -----------
+// ---- LLM chat (Inworld latency routing + Asuka TTS) -------------------
 
 app.post("/llm/chat", async (c) => {
   const trace = workerTrace(c.req.raw.headers);
@@ -666,7 +669,7 @@ app.post("/llm/chat", async (c) => {
       },
       body: JSON.stringify({
         model: body.model ?? KOE_V1_ROUTER_MODEL,
-        max_tokens: body.maxTokens ?? 600,
+        max_tokens: body.maxTokens ?? KOE_V1_MAX_REPLY_TOKENS,
         stream,
         ...((body.model ?? KOE_V1_ROUTER_MODEL) === "auto"
           ? { extra_body: { sort: ["latency"] } }
@@ -675,7 +678,7 @@ app.post("/llm/chat", async (c) => {
           ? {
               audio: {
                 voice: KOE_V1_VOICE_ID,
-                model: c.env.INWORLD_MODEL || "inworld-tts-1.5-max",
+                model: c.env.INWORLD_MODEL || KOE_V1_TTS_MODEL,
               },
             }
           : {}),
@@ -736,7 +739,7 @@ app.post("/llm/chat", async (c) => {
     body: JSON.stringify({
       text,
       voiceId: KOE_V1_VOICE_ID,
-      modelId: c.env.INWORLD_MODEL || "inworld-tts-1.5-max",
+      modelId: c.env.INWORLD_MODEL || KOE_V1_TTS_MODEL,
       audioConfig: { audioEncoding: "MP3", sampleRateHertz: 24000 },
     }),
   });

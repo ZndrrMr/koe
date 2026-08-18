@@ -25,6 +25,7 @@ import {
 } from "@/utils/telemetry";
 import {
   INWORLD_STANDALONE_AUDIO_CONTRACT,
+  KOE_V1_TTS_MODEL,
   KOE_V1_VOICE_ID,
 } from "../../shared/inworld";
 import { pcmBase64ChunksToWavBase64 } from "@/services/pcm";
@@ -91,9 +92,11 @@ export async function synthesize(
     return { audioUri: "", durationMs: 0 };
   }
   const speed = opts?.speed ?? 1.0;
-  // Version the cache around the one V1 voice so audio created by a removed
-  // voice preference can never leak into a current conversation.
-  const key = await sha256(`v1-asuka|${text}|${speed}`);
+  // Version the cache around the fixed V1 voice and synthesis model so audio
+  // from a slower retired model never leaks into a current conversation.
+  const key = await sha256(
+    `v2-${KOE_V1_VOICE_ID}-${KOE_V1_TTS_MODEL}|${text}|${speed}`,
+  );
   await ensureCacheDir();
   const file = `${CACHE_DIR}/${key}.mp3`;
   const meta = `${CACHE_DIR}/${key}.json`;
@@ -430,6 +433,28 @@ export class PCMPlaybackQueue {
 
   constructor(private readonly options: PCMPlaybackQueueOptions = {}) {
     currentStream = this;
+  }
+
+  prepare(sampleRate = 48_000, channels = 1): Promise<void> {
+    if (this.stopped) return Promise.resolve();
+    if (
+      (this.captureSampleRate !== undefined &&
+        this.captureSampleRate !== sampleRate) ||
+      (this.captureChannels !== undefined && this.captureChannels !== channels)
+    ) {
+      return Promise.reject(
+        new AudioPlaybackError(
+          "audio-session",
+          "Prepared stream format does not match the response",
+        ),
+      );
+    }
+    this.captureSampleRate = sampleRate;
+    this.captureChannels = channels;
+    this.writeChain = this.writeChain.then(() =>
+      this.ensureAudioGraph(sampleRate),
+    );
+    return this.writeChain;
   }
 
   enqueue(

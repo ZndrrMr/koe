@@ -20,6 +20,8 @@ test("hands-free endpoint thresholds preserve hesitation but close final speech 
     endpointDelayMs("speechEnd"),
     HANDS_FREE_ENDPOINT.speechEndGraceMs,
   );
+  assert.ok(HANDS_FREE_ENDPOINT.finalResultGraceMs <= 150);
+  assert.ok(HANDS_FREE_ENDPOINT.speechEndGraceMs <= 350);
   assert.ok(
     HANDS_FREE_ENDPOINT.maximumUtteranceMs >
       HANDS_FREE_ENDPOINT.initialSilenceMs,

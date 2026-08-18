@@ -4,7 +4,9 @@ import { app } from "./index";
 import {
   INWORLD_ROUTER_AUDIO_CONTRACT,
   INWORLD_STANDALONE_AUDIO_CONTRACT,
+  KOE_V1_MAX_REPLY_TOKENS,
   KOE_V1_ROUTER_MODEL,
+  KOE_V1_TTS_MODEL,
   KOE_V1_VOICE_ID,
 } from "../../shared/inworld";
 import audioFixture from "../../shared/fixtures/inworldAudioContract.json";
@@ -24,7 +26,7 @@ function testEnv() {
     RATE_LIMIT_TTS: "500",
     RATE_LIMIT_LLM: "200",
     RATE_LIMIT_STT_SECONDS: "360000",
-    INWORLD_MODEL: "inworld-tts-1.5-max",
+    INWORLD_MODEL: KOE_V1_TTS_MODEL,
     INWORLD_API_BASE_URL: "https://provider.test",
     SONIOX_API_BASE_URL: "https://soniox.test",
     GEMINI_API_BASE_URL: "https://gemini.test",
@@ -346,10 +348,11 @@ test("llm chat passes SSE through and pins the one V1 voice", async () => {
     assert.equal(response.headers.get("X-Koe-Response-Run-Id"), "run-test");
     assert.equal(upstreamBody?.stream, true);
     assert.equal(upstreamBody?.model, KOE_V1_ROUTER_MODEL);
+    assert.equal(upstreamBody?.max_tokens, KOE_V1_MAX_REPLY_TOKENS);
     assert.deepEqual(upstreamBody?.extra_body, { sort: ["latency"] });
     assert.deepEqual(upstreamBody?.audio, {
       voice: KOE_V1_VOICE_ID,
-      model: "inworld-tts-1.5-max",
+      model: KOE_V1_TTS_MODEL,
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -665,6 +668,7 @@ test("standalone TTS validates representative MP3 speech and declares its contra
       String(INWORLD_STANDALONE_AUDIO_CONTRACT.sampleRate),
     );
     assert.equal(providerBody?.voiceId, KOE_V1_VOICE_ID);
+    assert.equal(providerBody?.modelId, KOE_V1_TTS_MODEL);
     assert.deepEqual(providerBody?.audioConfig, {
       audioEncoding: "MP3",
       sampleRateHertz: INWORLD_STANDALONE_AUDIO_CONTRACT.sampleRate,
