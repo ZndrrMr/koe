@@ -2,7 +2,7 @@
 
 Koe is a voice-first Japanese conversation partner. Speak in Japanese or English, hear a natural response, and get pronunciation or correction feedback without entering a lesson, choosing a scenario, or managing a course.
 
-The client is React Native with Expo Router and TypeScript. Conversation runs through a Cloudflare Worker that keeps provider credentials off-device and connects Inworld TTS, Soniox STT, and Gemini conversation feedback. Local SQLite persistence restores interrupted conversations and retains the audio, pronunciation alignment, retry lineage, and learning moments the voice loop actively uses.
+The client is React Native with Expo Router and TypeScript. Conversation runs through a Cloudflare Worker that keeps provider credentials off-device and connects Inworld TTS, Soniox STT, and Gemini conversation feedback. Live microphone audio uses Soniox real-time v5 with English and Japanese language hints, language identification, and semantic endpointing, so one utterance can contain both languages without choosing a locale first. Local SQLite persistence restores interrupted conversations and retains the audio, pronunciation alignment, retry lineage, and learning moments the voice loop actively uses.
 
 ## Quickstart
 
@@ -12,7 +12,7 @@ cp .env.example .env.local
 npm run ios
 ```
 
-Set `EXPO_PUBLIC_WORKER_URL` in `.env.local` to the deployed Worker URL. This app uses native audio, storage, and speech-recognition modules, so use a development build rather than Expo Go.
+Set `EXPO_PUBLIC_WORKER_URL` in `.env.local` to the deployed Worker URL. This app uses native audio and storage modules, so use a development build rather than Expo Go.
 
 To run the Worker locally:
 
@@ -52,6 +52,13 @@ byte counts, queue depth, fallback, timeout, cancellation, retry, playback, and
 persistence. Logs intentionally omit transcript text, request bodies, audio
 payloads, authorization data, and secrets. Search one of the three correlation
 IDs to reconstruct a turn without exposing what the learner said.
+
+Microphone capture produces 16 kHz mono signed PCM in 100 ms buffers and sends
+it directly to Soniox using a single-use, short-lived key minted by the Worker.
+Final and provisional tokens are accumulated separately so code-switched text
+stays ordered as it stabilizes. Soniox semantic endpoints use its recommended
+lower-latency voice-assistant profile; Inworld Router already combines the LLM
+and Asuka TTS into one audio stream and selects its automatic route by latency.
 
 The checked-in audio fixture contains non-silent Japanese speech for decoder
 and framing tests and labels its provenance explicitly. It is not claimed to be

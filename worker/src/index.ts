@@ -592,9 +592,10 @@ function scheduleCleanup(c: AppContext, cleanup: Promise<void>): void {
   }
 }
 
-// ---- STT token (deprecated: kept for dev-client fallback) --------------
+// ---- STT real-time temporary key ---------------------------------------
 
 app.get("/stt/token", async (c) => {
+  const trace = workerTrace(c.req.raw.headers);
   const dev = deviceId(c);
   const ok = await bumpCounter(
     c.env.KOE_KV,
@@ -604,8 +605,10 @@ app.get("/stt/token", async (c) => {
   );
   if (!ok) return c.text("rate limit", 429);
 
-  // Soniox issues a short-lived "temporary API key" from an admin key.
-  const res = await fetch("https://api.soniox.com/v1/auth/temporary-api-key", {
+  // The device talks directly to Soniox for minimum audio latency, but it
+  // receives only a single-use key bound to this one short conversation turn.
+  const sonioxBaseUrl = c.env.SONIOX_API_BASE_URL.replace(/\/+$/, "");
+  const res = await fetch(`${sonioxBaseUrl}/v1/auth/temporary-api-key`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${c.env.SONIOX_API_KEY}`,
@@ -613,18 +616,33 @@ app.get("/stt/token", async (c) => {
     },
     body: JSON.stringify({
       usage_type: "transcribe_websocket",
-      expires_in_seconds: 600,
+      expires_in_seconds: 60,
+      single_use: true,
+      max_session_duration_seconds: 125,
+      client_reference_id: trace.turnId || trace.sessionId || undefined,
     }),
   });
+  workerEvent(
+    "provider_response",
+    trace,
+    {
+      endpoint: "stt-temporary-key",
+      status: res.status,
+      providerRequestId: providerRequestId(res),
+    },
+    res.ok ? "info" : "error",
+  );
   if (!res.ok) {
     return c.text("soniox token failed", 502);
   }
   const data = (await res.json()) as { api_key?: string; expires_at?: string };
+  if (!data.api_key) return c.text("soniox token missing", 502);
+  c.header("Cache-Control", "no-store");
   return c.json({
-    token: data.api_key ?? "",
+    token: data.api_key,
     url: "wss://stt-rt.soniox.com/transcribe-websocket",
     expiresAt: Date.parse(
-      data.expires_at ?? new Date(Date.now() + 10 * 60_000).toISOString(),
+      data.expires_at ?? new Date(Date.now() + 60_000).toISOString(),
     ),
   });
 });

@@ -217,6 +217,57 @@ test("recorded MP3, M4A, and WAV use one truthful Soniox file-transcription path
   }
 });
 
+test("real-time STT issues a no-store single-use key bound to the trace turn", async () => {
+  const originalFetch = globalThis.fetch;
+  let providerUrl = "";
+  let providerBody: Record<string, unknown> | undefined;
+  let authorization = "";
+  globalThis.fetch = async (input, init) => {
+    providerUrl = String(input);
+    providerBody = JSON.parse(String(init?.body));
+    authorization = new Headers(init?.headers).get("Authorization") ?? "";
+    return Response.json(
+      {
+        api_key: "temporary-device-key",
+        expires_at: "2026-08-18T14:01:00.000Z",
+      },
+      { status: 201, headers: { "X-Request-Id": "soniox-key-request" } },
+    );
+  };
+
+  try {
+    const response = await app.request(
+      "/stt/token",
+      {
+        headers: {
+          "X-Device-Id": "device-test",
+          "X-Koe-Session-Id": "session-bilingual",
+          "X-Koe-Turn-Id": "turn-bilingual",
+        },
+      },
+      testEnv(),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("Cache-Control"), "no-store");
+    assert.equal(providerUrl, "https://soniox.test/v1/auth/temporary-api-key");
+    assert.equal(authorization, "Bearer test-key");
+    assert.deepEqual(providerBody, {
+      usage_type: "transcribe_websocket",
+      expires_in_seconds: 60,
+      single_use: true,
+      max_session_duration_seconds: 125,
+      client_reference_id: "turn-bilingual",
+    });
+    assert.deepEqual(await response.json(), {
+      token: "temporary-device-key",
+      url: "wss://stt-rt.soniox.com/transcribe-websocket",
+      expiresAt: Date.parse("2026-08-18T14:01:00.000Z"),
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("recorded STT rejects invalid inputs explicitly without contacting Soniox", async () => {
   const originalFetch = globalThis.fetch;
   let providerRequests = 0;

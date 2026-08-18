@@ -54,8 +54,15 @@ export async function postJson<T>(
   return (await res.json()) as T;
 }
 
-export async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(workerUrl(path), { headers: authHeaders() });
+export async function getJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  for (const [name, value] of Object.entries(authHeaders())) {
+    headers.set(name, value);
+  }
+  const res = await fetch(workerUrl(path), {
+    ...init,
+    headers,
+  });
   if (!res.ok) {
     throw new WorkerError(
       res.statusText || "Worker request failed",

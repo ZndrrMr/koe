@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { extname, join } from "node:path";
 
@@ -30,6 +31,29 @@ const routerChunkDelayMs = Number(process.env.KOE_ROUTER_CHUNK_DELAY_MS ?? 0);
 const routerInitialDelayMs = Number(
   process.env.KOE_ROUTER_INITIAL_DELAY_MS ?? 0,
 );
+const realtimeSttFixture = process.env.KOE_REALTIME_STT_FIXTURE === "1";
+let realtimeConnectionCount = 0;
+let realtimeReplyCount = 0;
+
+const realtimeTurns = [
+  [
+    { text: "日本語は", is_final: true, confidence: 0.99, language: "ja" },
+    {
+      text: " okay, but can we switch to English?",
+      is_final: true,
+      confidence: 0.99,
+      language: "en",
+    },
+  ],
+  [
+    {
+      text: "はい、日本語に戻りましょう。",
+      is_final: true,
+      confidence: 0.99,
+      language: "ja",
+    },
+  ],
+];
 
 const recordedFixtureDirectory = process.env.KOE_RECORDED_FIXTURE_DIR;
 const recordedContentTypes = {
@@ -46,7 +70,7 @@ function json(response, status, value, headers = {}) {
   response.end(JSON.stringify(value));
 }
 
-async function streamRouterFixture(response) {
+async function streamRouterFixture(response, transcript = "こんにちは。") {
   if (routerInitialDelayMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, routerInitialDelayMs));
   }
@@ -60,7 +84,7 @@ async function streamRouterFixture(response) {
   });
   response.write(
     `data: ${JSON.stringify({
-      choices: [{ delta: { audio: { transcript: "こんにちは。" } } }],
+      choices: [{ delta: { audio: { transcript } } }],
     })}\n\n`,
   );
   for (const data of chunks) {
@@ -86,6 +110,22 @@ const server = createServer((request, response) => {
     }),
   );
 
+  if (request.method === "GET" && requestUrl.pathname === "/stt/token") {
+    json(
+      response,
+      200,
+      {
+        token: "fixture-invalid-soniox-temporary-key",
+        url: realtimeSttFixture
+          ? "ws://127.0.0.1:8790/soniox-realtime"
+          : "wss://stt-rt.soniox.com/transcribe-websocket",
+        expiresAt: Date.now() + 60_000,
+      },
+      { "Cache-Control": "no-store" },
+    );
+    return;
+  }
+
   if (request.method === "POST" && requestUrl.pathname === "/stt/transcribe") {
     request.resume();
     const encodedFilename = request.headers["x-koe-audio-filename"];
@@ -103,7 +143,12 @@ const server = createServer((request, response) => {
 
   if (request.method === "POST" && requestUrl.pathname === "/llm/chat") {
     request.resume();
-    void streamRouterFixture(response);
+    const reply = realtimeSttFixture
+      ? realtimeReplyCount++ === 0
+        ? "Of course—we can switch to English. How was your day?"
+        : "はい、日本語に戻りましょう。今日はどうでしたか？"
+      : "こんにちは。";
+    void streamRouterFixture(response, reply);
     return;
   }
 
@@ -265,6 +310,152 @@ const server = createServer((request, response) => {
   }
 
   json(response, 404, { error: "not-found" });
+});
+
+function websocketTextFrame(value) {
+  const payload = Buffer.from(value, "utf8");
+  if (payload.length < 126) {
+    return Buffer.concat([Buffer.from([0x81, payload.length]), payload]);
+  }
+  const header = Buffer.alloc(4);
+  header[0] = 0x81;
+  header[1] = 126;
+  header.writeUInt16BE(payload.length, 2);
+  return Buffer.concat([header, payload]);
+}
+
+function decodeWebSocketFrames(pending) {
+  const frames = [];
+  let offset = 0;
+  while (pending.length - offset >= 2) {
+    const first = pending[offset];
+    const second = pending[offset + 1];
+    let length = second & 0x7f;
+    let headerLength = 2;
+    if (length === 126) {
+      if (pending.length - offset < 4) break;
+      length = pending.readUInt16BE(offset + 2);
+      headerLength = 4;
+    } else if (length === 127) {
+      if (pending.length - offset < 10) break;
+      const extendedLength = Number(pending.readBigUInt64BE(offset + 2));
+      if (!Number.isSafeInteger(extendedLength)) break;
+      length = extendedLength;
+      headerLength = 10;
+    }
+    const masked = (second & 0x80) !== 0;
+    const maskLength = masked ? 4 : 0;
+    const frameLength = headerLength + maskLength + length;
+    if (pending.length - offset < frameLength) break;
+    const maskOffset = offset + headerLength;
+    const payloadOffset = maskOffset + maskLength;
+    const payload = Buffer.from(
+      pending.subarray(payloadOffset, payloadOffset + length),
+    );
+    if (masked) {
+      for (let index = 0; index < payload.length; index += 1) {
+        payload[index] ^= pending[maskOffset + (index % 4)];
+      }
+    }
+    frames.push({ opcode: first & 0x0f, payload });
+    offset += frameLength;
+  }
+  return { frames, pending: pending.subarray(offset) };
+}
+
+server.on("upgrade", (request, socket) => {
+  if (!realtimeSttFixture || request.url !== "/soniox-realtime") {
+    socket.destroy();
+    return;
+  }
+  const key = request.headers["sec-websocket-key"];
+  if (typeof key !== "string") {
+    socket.destroy();
+    return;
+  }
+  const accept = createHash("sha1")
+    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest("base64");
+  socket.write(
+    [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${accept}`,
+      "",
+      "",
+    ].join("\r\n"),
+  );
+
+  const turn = realtimeTurns[realtimeConnectionCount++];
+  let pending = Buffer.alloc(0);
+  let configured = false;
+  socket.on("data", (data) => {
+    pending = Buffer.concat([pending, data]);
+    const decoded = decodeWebSocketFrames(pending);
+    pending = decoded.pending;
+    for (const frame of decoded.frames) {
+      if (frame.opcode !== 1) continue;
+      const text = frame.payload.toString("utf8");
+      if (!configured && text) {
+        configured = true;
+        const config = JSON.parse(text);
+        console.log(
+          JSON.stringify({
+            event: "realtime_stt_fixture_configured",
+            model: config.model,
+            languageHints: config.language_hints,
+            languageIdentification: config.enable_language_identification,
+            endpointDetection: config.enable_endpoint_detection,
+            endpointLatencyAdjustmentLevel:
+              config.endpoint_latency_adjustment_level,
+            endpointSensitivity: config.endpoint_sensitivity,
+            maxEndpointDelayMs: config.max_endpoint_delay_ms,
+            audioFormat: config.audio_format,
+            sampleRate: config.sample_rate,
+            channels: config.num_channels,
+          }),
+        );
+        if (!turn) {
+          console.log(
+            JSON.stringify({ event: "realtime_stt_fixture_exhausted" }),
+          );
+          continue;
+        }
+        setTimeout(() => {
+          if (socket.destroyed) return;
+          socket.write(
+            websocketTextFrame(
+              JSON.stringify({
+                tokens: turn.map((token) => ({
+                  ...token,
+                  is_final: false,
+                })),
+              }),
+            ),
+          );
+        }, 350);
+        setTimeout(() => {
+          if (socket.destroyed) return;
+          socket.write(
+            websocketTextFrame(
+              JSON.stringify({
+                tokens: [
+                  ...turn,
+                  { text: "<end>", is_final: true, confidence: 1 },
+                ],
+              }),
+            ),
+          );
+        }, 700);
+      } else if (configured && text.length === 0) {
+        socket.write(
+          websocketTextFrame(JSON.stringify({ tokens: [], finished: true })),
+        );
+        setTimeout(() => socket.end(), 50);
+      }
+    }
+  });
 });
 
 server.listen(8_790, "127.0.0.1", () => {

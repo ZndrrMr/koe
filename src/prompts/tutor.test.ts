@@ -15,13 +15,14 @@ test("neutral conversation is the only default", () => {
   assert.doesNotMatch(prompt, /optional context|preferred reply style/i);
 });
 
-test("representative conversation, confusion, correction, and roleplay cases are included", () => {
+test("representative conversation, teaching, roleplay, and language switching cases are included", () => {
   const prompt = tutorSystemPrompt();
   const expectedCases = [
     "natural-conversation",
     "confusion",
     "correction-request",
     "roleplay-request",
+    "language-switching",
   ];
 
   assert.deepEqual(
@@ -32,6 +33,21 @@ test("representative conversation, confusion, correction, and roleplay cases are
     assert.match(prompt, new RegExp(`\\[${example.id}\\]`));
     assert.ok(prompt.includes(example.transcript));
   }
+});
+
+test("English and Japanese switch fluidly, including inside one utterance", () => {
+  const prompt = tutorSystemPrompt();
+  const switching = CONVERSATION_BEHAVIOR_CASES.find(
+    ({ id }) => id === "language-switching",
+  );
+
+  assert.ok(switching);
+  assert.match(prompt, /Choose the reply language again on every turn/i);
+  assert.match(prompt, /Koe is never Japanese-only/i);
+  assert.match(prompt, /English and Japanese in the same utterance/i);
+  assert.match(prompt, /switch back immediately/i);
+  assert.ok(switching.transcript.includes("仕事は楽しかったです"));
+  assert.ok(switching.transcript.includes("日本語に戻りましょう"));
 });
 
 test("natural behavior example sustains conversation without a teaching interruption", () => {

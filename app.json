@@ -12,7 +12,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.zndrr.koe",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "Koe needs the microphone to hear your Japanese so we can coach your pronunciation and pitch accent.",
+        "NSMicrophoneUsageDescription": "Koe needs the microphone to hear your English and Japanese conversation.",
         "UIBackgroundModes": ["audio"],
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -37,13 +37,6 @@
         "expo-audio",
         {
           "microphonePermission": "Allow Koe to access your microphone."
-        }
-      ],
-      [
-        "expo-speech-recognition",
-        {
-          "microphonePermission": "Allow Koe to hear your Japanese while you speak.",
-          "speechRecognitionPermission": "Allow Koe to show and correct your words in real time."
         }
       ],
       [
