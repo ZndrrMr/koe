@@ -9,6 +9,10 @@ import {
   KOE_V1_TTS_MODEL,
   KOE_V1_VOICE_ID,
 } from "../../shared/inworld";
+import {
+  TUTOR_PROMPT_VERSION,
+  tutorSystemPrompt,
+} from "../../shared/conversationPrompts";
 import audioFixture from "../../shared/fixtures/inworldAudioContract.json";
 
 function testEnv() {
@@ -341,12 +345,17 @@ test("recorded STT rejects invalid inputs explicitly without contacting Soniox",
   }
 });
 
-test("llm chat passes SSE through and pins the one V1 voice", async () => {
+test("llm chat passes SSE through and pins the V1 voice and server tutor prompt", async () => {
   const originalFetch = globalThis.fetch;
+  const originalConsoleLog = console.log;
+  const workerLogs: string[] = [];
   let upstreamBody: Record<string, unknown> | undefined;
   const upstreamSSE =
-    'data: {"choices":[{"delta":{"audio":{"data":"AAE=","transcript":"こんにちは"}}}]}\n\n' +
+    'data: {"choices":[{"delta":{"audio":{"data":"AAE=","transcript":"ほかに何かありますか？"}}}]}\n\n' +
     "data: [DONE]\n\n";
+  console.log = (...values: unknown[]) => {
+    workerLogs.push(values.map(String).join(" "));
+  };
   globalThis.fetch = async (_input, init) => {
     upstreamBody = JSON.parse(String(init?.body));
     return new Response(upstreamSSE, {
@@ -365,6 +374,7 @@ test("llm chat passes SSE through and pins the one V1 voice", async () => {
           "X-Koe-Session-Id": "session-test",
           "X-Koe-Turn-Id": "turn-test",
           "X-Koe-Response-Run-Id": "run-test",
+          "X-Koe-Tutor-Prompt-Version": "stale-client-prompt",
         },
         body: JSON.stringify({
           system: "Be concise.",
@@ -397,6 +407,10 @@ test("llm chat passes SSE through and pins the one V1 voice", async () => {
     );
     assert.equal(response.headers.get("X-Koe-Voice-Id"), KOE_V1_VOICE_ID);
     assert.equal(response.headers.get("X-Koe-Response-Run-Id"), "run-test");
+    assert.equal(
+      response.headers.get("X-Koe-Tutor-Prompt-Version"),
+      TUTOR_PROMPT_VERSION,
+    );
     assert.equal(upstreamBody?.stream, true);
     assert.equal(upstreamBody?.model, KOE_V1_ROUTER_MODEL);
     assert.equal(upstreamBody?.max_tokens, KOE_V1_MAX_REPLY_TOKENS);
@@ -405,8 +419,27 @@ test("llm chat passes SSE through and pins the one V1 voice", async () => {
       voice: KOE_V1_VOICE_ID,
       model: KOE_V1_TTS_MODEL,
     });
+    const upstreamMessages = upstreamBody?.messages as
+      | Array<{ role: string; content: string }>
+      | undefined;
+    assert.equal(upstreamMessages?.[0]?.role, "system");
+    assert.equal(upstreamMessages?.[0]?.content, tutorSystemPrompt());
+    assert.notEqual(upstreamMessages?.[0]?.content, "Be concise.");
+
+    const parsedLogs = workerLogs.map((line) => JSON.parse(line));
+    const requestLog = parsedLogs.find(
+      ({ event }) => event === "provider_request_started",
+    );
+    assert.equal(requestLog?.tutorPromptVersion, TUTOR_PROMPT_VERSION);
+    assert.equal(requestLog?.clientTutorPromptVersion, "stale-client-prompt");
+    const completionLog = parsedLogs.find(
+      ({ event }) => event === "provider_stream_completed",
+    );
+    assert.equal(completionLog?.genericFollowUpOffer, true);
+    assert.ok(completionLog?.replyChars > 0);
   } finally {
     globalThis.fetch = originalFetch;
+    console.log = originalConsoleLog;
   }
 });
 

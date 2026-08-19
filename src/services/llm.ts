@@ -1,5 +1,6 @@
 import { postJson, postStream } from "@/services/api";
-import { tutorSystemPrompt } from "@/prompts/tutor";
+import { TUTOR_PROMPT_VERSION, tutorSystemPrompt } from "@/prompts/tutor";
+import { endsWithGenericFollowUpOffer } from "../../shared/conversationBehavior";
 import { hasWorker } from "@/utils/config";
 import { log } from "@/utils/log";
 import {
@@ -171,6 +172,7 @@ export async function* streamConversation(opts: {
         "X-Koe-Session-Id": opts.trace?.sessionId ?? "",
         "X-Koe-Turn-Id": opts.trace?.turnId ?? "",
         "X-Koe-Response-Run-Id": opts.trace?.responseRunId ?? "",
+        "X-Koe-Tutor-Prompt-Version": TUTOR_PROMPT_VERSION,
       },
     });
     const providerRequestId =
@@ -181,6 +183,8 @@ export async function* streamConversation(opts: {
       encoding: response.headers.get("X-Koe-Audio-Encoding") ?? "",
       sampleRate: Number(response.headers.get("X-Koe-Audio-Sample-Rate")),
       channels: Number(response.headers.get("X-Koe-Audio-Channels")),
+      tutorPromptVersion:
+        response.headers.get("X-Koe-Tutor-Prompt-Version") ?? "unreported",
     };
     voiceEvent("provider_response", opts.trace, {
       status: response.status,
@@ -189,6 +193,7 @@ export async function* streamConversation(opts: {
       declaredEncoding: declared.encoding || "missing",
       sampleRate: declared.sampleRate,
       channels: declared.channels,
+      tutorPromptVersion: declared.tutorPromptVersion,
     });
 
     const contentType = response.headers.get("Content-Type") ?? "";
@@ -254,6 +259,8 @@ export async function* streamConversation(opts: {
         path: "provider-json-compat",
         eventCount,
         byteCount: audioBytes,
+        replyChars: fullText.trim().length,
+        genericFollowUpOffer: endsWithGenericFollowUpOffer(fullText),
       });
     } else {
       if (!response.body) {
@@ -359,6 +366,8 @@ export async function* streamConversation(opts: {
         path: "sse",
         eventCount,
         byteCount: audioBytes,
+        replyChars: fullText.trim().length,
+        genericFollowUpOffer: endsWithGenericFollowUpOffer(fullText),
       });
     }
   } catch (error) {
