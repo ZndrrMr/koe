@@ -14,6 +14,7 @@ import {
 import { INWORLD_ROUTER_AUDIO_CONTRACT } from "../../shared/inworld";
 import {
   deterministicChecks,
+  endsWithGenericFollowUpOffer,
   loadQualityFixtures,
   parseLiveConversationResponse,
   runLiveQualitySuite,
@@ -130,7 +131,7 @@ test("each expanded artifact is self-contained, reproducible, and fully versione
   }
 });
 
-test("deterministic contracts reject prompt drift, irrelevant replies, drills, and excess correction", async () => {
+test("deterministic contracts reject prompt drift, generic offers, drills, and excess correction", async () => {
   const fixtures = await loadQualityFixtures();
   const { artifacts } = await runRecordedQualitySuite();
   const scenario = fixtures.manifest.scenarios.find(
@@ -180,6 +181,55 @@ test("deterministic contracts reject prompt drift, irrelevant replies, drills, a
   assert.ok(failed.has("correction-policy"));
   assert.ok(failed.has("compact-feedback"));
   assert.ok(failed.has("no-forced-retry-or-drill"));
+
+  const genericOfferChecks = deterministicChecks({
+    scenario,
+    contract: scenarioTurn.contracts,
+    asset,
+    actualInputHash: artifactTurn.inputAudio.sha256,
+    transcript: artifactTurn.transcript,
+    history: artifactTurn.history,
+    replyText: "友達と映画を見たんですね。ほかに何か知りたいことはありますか？",
+    replyAudio: artifactTurn.replyAudio,
+    feedback: artifactTurn.feedback,
+    providerTrace: artifactTurn.providerTrace,
+    lifecycleTrace: artifactTurn.lifecycleTrace,
+    prompts: artifactTurn.prompts,
+  });
+  const genericOfferFailures = new Set(
+    genericOfferChecks.filter((check) => !check.pass).map((check) => check.id),
+  );
+
+  assert.ok(genericOfferFailures.has("conversational-continuity"));
+  assert.ok(genericOfferFailures.has("no-generic-follow-up-offer"));
+});
+
+test("generic follow-up offer detection covers English and Japanese turn endings", () => {
+  for (const reply of [
+    "That's the difference. Is there anything else you'd like to know?",
+    "Anything else?",
+    "Would you like to know anything else?",
+    "That form is more natural. What else would you like to ask about?",
+    "Any other questions?",
+    "How else can I help?",
+    "Let me know if you have any more questions.",
+    "この形が自然です。ほかに何か知りたいことはありますか？",
+    "この形が自然です。他にご質問はございますか。",
+    "この形が自然です。他に何かありますか？",
+    "もちろんです。何について話したいですか？",
+  ]) {
+    assert.equal(endsWithGenericFollowUpOffer(reply), true, reply);
+  }
+
+  for (const reply of [
+    "That's the difference.",
+    "You mentioned a busy morning. What made work enjoyable?",
+    "この形が自然です。",
+    "大阪のお好み焼きは、どんな味でしたか？",
+    "ほかに食べたいものはありますか？",
+  ]) {
+    assert.equal(endsWithGenericFollowUpOffer(reply), false, reply);
+  }
 });
 
 test("silence produces no fabricated transcript, provider request, reply, audio, or feedback", async () => {
@@ -249,7 +299,7 @@ test("guarded live lane retains real response bytes, traces, feedback, and model
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
   const reply =
-    "That sounds like a busy morning. We can keep the Japanese low-pressure—what would you like to talk about?";
+    "That sounds like a busy morning. Let's keep the Japanese low-pressure for a few minutes.";
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push(url);

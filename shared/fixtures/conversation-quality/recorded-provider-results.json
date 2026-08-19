@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "suiteVersion": "1.0.0",
+  "suiteVersion": "1.1.0",
   "provenance": "Approved golden outputs shaped like recorded provider responses. Fixture request IDs are stable replay identities, not claims of a live capture. Semantic quality is graded from reply text; deterministic audio handling uses the checked-in representative PCM speech fixture.",
   "recordedEvaluator": {
     "id": "koe-conversation-quality",
     "model": "OpenAI Codex (GPT-5 family)",
-    "modelVersion": "axis-agent-session-85211854-1129-423C-A809-D845CF91F94E",
-    "promptVersion": "koe-conversation-quality-2026-08-17.v1",
-    "recordedAt": "2026-08-17T01:30:00Z"
+    "modelVersion": "axis-agent-session-626AF61A-A2DE-4EA0-A085-22DC9BDAD7E9",
+    "promptVersion": "koe-conversation-quality-2026-08-18.v2",
+    "recordedAt": "2026-08-19T01:09:36Z"
   },
   "promptContractHashes": {
-    "tutor": "2cd33885d5963301f2f8d18167df7c940e51d772ecd329949889f8c35fe703ea",
+    "tutor": "ae4afb08a3559297c7a9d458ca085a6eedb03ed890dd34142c5fa90cdfbbc6ea",
     "feedbackTemplate": "cb4e982650160bd9d3eac035c2116b87342a988f589959b75ee1e95bc1fde39c",
-    "evaluatorTemplate": "33e23ae6ea1538753f73a02d38cb37048da500d54a4b247e0cc5396616c76cbe"
+    "evaluatorTemplate": "14744d9287753f0a59f9a13e15aa4bb61ca24f8ca53de05a11c83ca875b027f6"
   },
   "replyAudioFixture": {
     "path": "shared/fixtures/inworldAudioContract.json",
@@ -242,11 +242,11 @@
       "scenarioId": "english-meta-request",
       "turns": [
         {
-          "replyText": "That sounds like a busy morning. We can keep the Japanese low-pressure—what would you like to talk about?",
+          "replyText": "That sounds like a busy morning. Let's keep the Japanese low-pressure for a few minutes.",
           "feedback": {
             "translations": {
               "user": "I had a busy morning, but I would still like to practice Japanese for a few minutes.",
-              "tutor": "That sounds like a busy morning. We can keep the Japanese low-pressure—what would you like to talk about?"
+              "tutor": "That sounds like a busy morning. Let's keep the Japanese low-pressure for a few minutes."
             },
             "corrections": {
               "particles": [],
@@ -254,7 +254,7 @@
               "other": []
             }
           },
-          "gradeEvidence": "Replies in the learner's English, acknowledges the morning, and offers conversation rather than assigning an exercise."
+          "gradeEvidence": "Replies in the learner's English, directly commits to the requested low-pressure Japanese practice, and stops without a generic open-ended offer."
         }
       ]
     },

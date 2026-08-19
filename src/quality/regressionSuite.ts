@@ -299,6 +299,31 @@ function orderedSubsequence(values: string[], expected: string[]): boolean {
   return expected.length === 0;
 }
 
+export function endsWithGenericFollowUpOffer(reply: string): boolean {
+  const ending = reply
+    .trim()
+    .replace(/[.!?。！？]+$/u, "")
+    .trim()
+    .replace(/[’]/g, "'");
+
+  return [
+    /(?:^|[.!?]\s+|[—–-]\s*)(?:is there )?anything else$/i,
+    /(?:^|[.!?]\s+|[—–-]\s*)(?:is there )?anything else (?:you(?:'d| would) like to (?:know|ask(?: about)?|talk about|discuss)|i can (?:help(?: you)? with|do for you))$/i,
+    /(?:^|[.!?]\s+|[—–-]\s*)would you like to (?:know|ask(?: about)?) anything else$/i,
+    /(?:^|[.!?]\s+|[—–-]\s*)what (?:else )?would you like to (?:know|ask(?: about)?|talk about|discuss)$/i,
+    /(?:^|[.!?]\s+|[—–-]\s*)(?:(?:do|would) you have )?any (?:other|more) questions$/i,
+    /(?:^|[.!?]\s+|[—–-]\s*)how else can i help(?: you)?$/i,
+    /(?:^|[.!?]\s+|[—–-]\s*)feel free to ask(?: me)?(?: anything| any(?: other| more)? questions?)?$/i,
+    /(?:^|[.!?]\s+|[—–-]\s*)let me know if (?:you have any(?: other| more)? questions|there is anything else|you(?:'d| would) like (?:more|anything else))$/i,
+    /(?:^|[。！？]\s*)(?:ほか|他)に(?:何か)?(?:知りたい|聞きたい|質問したい|話したい)(?:こと|もの)?(?:は)?(?:ありますか|ございますか)$/u,
+    /(?:^|[。！？]\s*)(?:何か)?(?:ほか|他)に(?:質問|聞きたいこと|知りたいこと)(?:は)?(?:ありますか|ございますか)$/u,
+    /(?:^|[。！？]\s*)(?:ほか|他)に(?:何か)?(?:お手伝いできること|ご質問)(?:は)?(?:ありますか|ございますか)$/u,
+    /(?:^|[。！？]\s*)(?:ほか|他)に(?:は)?(?:何か)?(?:ありますか|ございますか)$/u,
+    /(?:^|[。！？]\s*)(?:ほか|他)には$/u,
+    /(?:^|[。！？]\s*)何について話したいですか$/u,
+  ].some((pattern) => pattern.test(ending));
+}
+
 export function deterministicChecks(input: {
   scenario: QualityScenario;
   contract: ScenarioTurnContract;
@@ -349,6 +374,7 @@ export function deterministicChecks(input: {
     /練習しましょう|文法のレッスン|今日の課題|lesson for today|quiz/i.test(
       replyText,
     );
+  const genericFollowUpOffer = endsWithGenericFollowUpOffer(replyText);
   const forbiddenTerms = contract.forbiddenReplyTerms ?? [];
   const retainedHistory = history.map(({ content }) => content).join("\n");
   const requiredHistoryTerms = contract.requiredHistoryTerms ?? [];
@@ -422,9 +448,13 @@ export function deterministicChecks(input: {
     },
     {
       id: "conversational-continuity",
-      pass: shouldReply ? replyText.trim().length > 0 && !forcedRetry : true,
+      pass: shouldReply
+        ? replyText.trim().length > 0 && !forcedRetry && !genericFollowUpOffer
+        : true,
       evidence: shouldReply
-        ? "reply continues or directly resolves the exchange without a forced retry"
+        ? genericFollowUpOffer
+          ? "reply ends with a generic offer instead of the current topic"
+          : "reply continues or directly resolves the exchange without a forced retry or generic offer"
         : "silence leaves the exchange open without inventing a turn",
     },
     {
@@ -463,6 +493,13 @@ export function deterministicChecks(input: {
       pass: !forcedRetry && !unsolicitedLesson,
       evidence:
         "no forced retry, quiz, assignment, or unsolicited lesson marker",
+    },
+    {
+      id: "no-generic-follow-up-offer",
+      pass: !genericFollowUpOffer,
+      evidence: genericFollowUpOffer
+        ? "reply ends with a canned offer for more questions, help, or an unspecified topic"
+        : "reply ends on its direct answer, reaction, clarification, or topic-specific continuation",
     },
     {
       id: "natural-reply-shape",

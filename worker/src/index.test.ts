@@ -561,13 +561,14 @@ test("live quality evaluation is versioned, deterministic, and server-prompted",
     };
     assert.equal(payload.evaluator.id, "koe-conversation-quality");
     assert.equal(payload.evaluator.model, "gemini-test");
-    assert.match(payload.evaluator.promptVersion, /2026-08-17\.v1/);
+    assert.match(payload.evaluator.promptVersion, /2026-08-18\.v2/);
     assert.match(payload.evaluator.promptSha256, /^[a-f0-9]{64}$/);
     assert.equal(payload.evaluator.providerRequestId, "quality-grade-request");
     assert.equal(payload.verdict.pass, true);
     const prompt = upstreamBody?.contents?.[0]?.parts?.[0]?.text ?? "";
     assert.match(prompt, /responseRelevance/);
     assert.match(prompt, /Forced retries, unsolicited drills/);
+    assert.match(prompt, /generic follow-up offers/);
     assert.match(prompt, /今日は疲れました/);
     assert.equal(upstreamBody?.generationConfig?.temperature, 0);
   } finally {

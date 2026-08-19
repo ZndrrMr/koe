@@ -23,6 +23,7 @@ test("representative conversation, teaching, roleplay, and language switching ca
     "correction-request",
     "roleplay-request",
     "language-switching",
+    "direct-answer",
   ];
 
   assert.deepEqual(
@@ -60,6 +61,32 @@ test("natural behavior example sustains conversation without a teaching interrup
   assert.doesNotMatch(
     natural.transcript,
     /正しい|直して|もう一度|練習|try again/i,
+  );
+  assert.doesNotMatch(natural.transcript.trim(), /[?？]$/);
+});
+
+test("direct replies stop without a generic follow-up offer", () => {
+  const prompt = tutorSystemPrompt();
+  const directAnswer = CONVERSATION_BEHAVIOR_CASES.find(
+    ({ id }) => id === "direct-answer",
+  );
+  const languageSwitching = CONVERSATION_BEHAVIOR_CASES.find(
+    ({ id }) => id === "language-switching",
+  );
+
+  assert.ok(directAnswer);
+  assert.ok(languageSwitching);
+  assert.match(prompt, /A complete response is enough/i);
+  assert.match(prompt, /do not ask a question on every turn/i);
+  assert.match(prompt, /only when it refers to a concrete detail/i);
+  assert.match(prompt, /After responding, stop/i);
+  assert.match(prompt, /Never append a generic availability offer/i);
+  assert.match(directAnswer.transcript, /家にいることになった/);
+  assert.doesNotMatch(directAnswer.transcript.trim(), /[?？]$/);
+  assert.match(languageSwitching.transcript, /We can stay in English\./);
+  assert.doesNotMatch(
+    languageSwitching.transcript,
+    /What would you like to talk about/i,
   );
 });
 

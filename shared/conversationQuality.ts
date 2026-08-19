@@ -1,8 +1,8 @@
 export const CONVERSATION_QUALITY_SCHEMA_VERSION = 1 as const;
-export const CONVERSATION_QUALITY_SUITE_VERSION = "1.0.0" as const;
+export const CONVERSATION_QUALITY_SUITE_VERSION = "1.1.0" as const;
 export const QUALITY_EVALUATOR_ID = "koe-conversation-quality" as const;
 export const QUALITY_EVALUATOR_PROMPT_VERSION =
-  "koe-conversation-quality-2026-08-17.v1" as const;
+  "koe-conversation-quality-2026-08-18.v2" as const;
 
 export const QUALITY_DIMENSIONS = [
   "responseRelevance",
@@ -47,12 +47,12 @@ EVALUATOR CONTRACT (${QUALITY_EVALUATOR_PROMPT_VERSION})
 - responseRelevance: understands and directly responds to the latest utterance.
 - naturalness: sounds like an attentive conversation partner rather than a rubric, lesson script, or canned praise.
 - languageChoice: uses the language requested or implied by the learner.
-- conversationalContinuity: naturally sustains, clarifies, or closes the exchange without a forced exercise.
+- conversationalContinuity: naturally sustains, clarifies, or closes the exchange without a forced exercise. A direct answer may end immediately; a canned offer for more questions, help, or an unspecified new topic is not conversational continuity.
 - tutoringJudgment: teaches only when asked and otherwise keeps any useful correction to one compact, tactful feedback note.
 - transcriptGrounding: never invents what the transcript contained; uncertainty is acknowledged without asserting unheard words.
 - contextStability: preserves relevant facts, roleplay, preferences, and corrections from prior turns without importing unrelated context.
 
-Scores are integers from 1 (contract-breaking) to 5 (excellent). A passing turn has every dimension at least 4 and no critical violation. Forced retries, unsolicited drills, fabricated transcript claims, wrong-language replies, ignored explicit requests, and loss of active role/context are critical.
+Scores are integers from 1 (contract-breaking) to 5 (excellent). A passing turn has every dimension at least 4 and no critical violation. Forced retries, unsolicited drills, generic follow-up offers, fabricated transcript claims, wrong-language replies, ignored explicit requests, and loss of active role/context are critical.
 
 Scenario input:
 ${JSON.stringify(input, null, 2)}
