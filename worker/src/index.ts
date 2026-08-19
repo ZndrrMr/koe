@@ -28,7 +28,11 @@ import {
   type RecordedAudioFailureKind,
   type RecordedAudioMetadata,
 } from "../../shared/recordedAudio";
-import { feedbackPrompt } from "../../shared/conversationPrompts";
+import {
+  feedbackPrompt,
+  TUTOR_PROMPT_VERSION,
+  tutorSystemPrompt,
+} from "../../shared/conversationPrompts";
 import {
   QUALITY_EVALUATOR_ID,
   QUALITY_EVALUATOR_PROMPT_VERSION,
@@ -68,6 +72,7 @@ app.use(
       "X-Koe-Session-Id",
       "X-Koe-Turn-Id",
       "X-Koe-Response-Run-Id",
+      "X-Koe-Tutor-Prompt-Version",
       "X-Koe-Audio-Filename",
       "X-Koe-Audio-Sample-Rate",
       "X-Koe-Audio-Channels",
@@ -80,6 +85,7 @@ app.use(
       "X-Koe-Voice-Id",
       "X-Koe-Provider-Request-Id",
       "X-Koe-Response-Run-Id",
+      "X-Koe-Tutor-Prompt-Version",
     ],
   }),
 );
@@ -652,13 +658,15 @@ app.get("/stt/token", async (c) => {
 app.post("/llm/chat", async (c) => {
   const trace = workerTrace(c.req.raw.headers);
   const body = await c.req.json<{
-    system: string;
+    system?: string;
     messages: Array<{ role: "user" | "assistant"; content: string }>;
     model?: string;
     maxTokens?: number;
     noAudio?: boolean;
     stream?: boolean;
   }>();
+  const system = tutorSystemPrompt();
+  c.header("X-Koe-Tutor-Prompt-Version", TUTOR_PROMPT_VERSION);
 
   const dev = deviceId(c);
   const ok = await bumpCounter(
@@ -669,13 +677,19 @@ app.post("/llm/chat", async (c) => {
   );
   if (!ok) return c.text("rate limit", 429);
 
-  const messages = [{ role: "system", content: body.system }, ...body.messages];
+  // The tutor contract is server-owned. Older installed clients can carry an
+  // obsolete system prompt for months, so accepting body.system here would
+  // silently reintroduce behavior that the current contract explicitly bans.
+  const messages = [{ role: "system", content: system }, ...body.messages];
 
   const stream = body.stream !== false;
   workerEvent("provider_request_started", trace, {
     endpoint: "chat",
     stream,
     voiceId: KOE_V1_VOICE_ID,
+    tutorPromptVersion: TUTOR_PROMPT_VERSION,
+    clientTutorPromptVersion:
+      c.req.header("X-Koe-Tutor-Prompt-Version") ?? "unreported",
   });
   const chatRes = await fetch(
     `${c.env.INWORLD_API_BASE_URL}/v1/chat/completions`,
@@ -735,6 +749,7 @@ app.post("/llm/chat", async (c) => {
         "X-Koe-Voice-Id": KOE_V1_VOICE_ID,
         "X-Koe-Provider-Request-Id": chatRequestId ?? "unavailable",
         "X-Koe-Response-Run-Id": trace.responseRunId,
+        "X-Koe-Tutor-Prompt-Version": TUTOR_PROMPT_VERSION,
       },
     });
   }

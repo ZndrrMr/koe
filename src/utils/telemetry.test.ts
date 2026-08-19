@@ -15,6 +15,8 @@ test("voice telemetry preserves correlation but strips private payload fields", 
       {
         transcriptChars: 12,
         byteCount: 9_600,
+        tutorPromptVersion: "koe-tutor-test",
+        genericFollowUpOffer: true,
         transcript: "private words",
         audioBase64: "private-audio",
         authorization: "private-secret",
@@ -27,6 +29,8 @@ test("voice telemetry preserves correlation but strips private payload fields", 
   assert.equal(parsed.responseRunId, "run-1");
   assert.equal(parsed.transcriptChars, 12);
   assert.equal(parsed.byteCount, 9_600);
+  assert.equal(parsed.tutorPromptVersion, "koe-tutor-test");
+  assert.equal(parsed.genericFollowUpOffer, true);
   assert.equal(parsed.transcript, undefined);
   assert.equal(parsed.audioBase64, undefined);
   assert.equal(parsed.authorization, undefined);

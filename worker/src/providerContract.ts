@@ -3,6 +3,7 @@ import {
   INWORLD_STANDALONE_AUDIO_CONTRACT,
   observeMP3Audio,
 } from "../../shared/inworld";
+import { endsWithGenericFollowUpOffer } from "../../shared/conversationBehavior";
 import {
   providerRequestId,
   workerEvent,
@@ -164,6 +165,7 @@ export function inspectRouterStream(
   let sawDone = false;
   let eventCount = 0;
   let audioBytes = 0;
+  let replyText = "";
 
   const inspect = (flush: boolean) => {
     const extracted = extractEvents(buffer, flush);
@@ -196,6 +198,7 @@ export function inspectRouterStream(
         );
       }
       const delta = parsed.choices?.[0]?.delta;
+      replyText += delta?.audio?.transcript ?? delta?.content ?? "";
       const eventKind =
         delta?.audio && "data" in delta.audio
           ? "audio"
@@ -261,6 +264,8 @@ export function inspectRouterStream(
             providerRequestId: requestId,
             eventCount,
             byteCount: audioBytes,
+            replyChars: replyText.trim().length,
+            genericFollowUpOffer: endsWithGenericFollowUpOffer(replyText),
           });
         } catch (error) {
           workerEvent(
